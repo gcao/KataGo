@@ -34,7 +34,7 @@ echo "Beginning shuffle at" $(date "+%Y-%m-%d %H:%M:%S")
 (
     time python3 ./shuffle.py \
          "$BASEDIR"/selfplay/*/tdata/ \
-         -min-rows 250000 \
+         -min-rows 1 \
          -max-rows 1000000000 \
          -expand-window-per-row 0.4 \
          -taper-window-exponent 0.675 \
@@ -73,13 +73,15 @@ sleep 10
 rm -f "$BASEDIR"/shuffleddata/current_tmp
 
 ln -s $OUTDIR "$BASEDIR"/shuffleddata/current_tmp
-mv -Tf "$BASEDIR"/shuffleddata/current_tmp "$BASEDIR"/shuffleddata/current
+# mv -Tf "$BASEDIR"/shuffleddata/current_tmp "$BASEDIR"/shuffleddata/current
+mv -f "$BASEDIR"/shuffleddata/current_tmp "$BASEDIR"/shuffleddata/current
 
 #Among shuffled dirs older than 2 hours, remove all but the most recent 5 of them.
 #This should be very conservative and allow plenty of time for the training to switch
 #to newer ones as they get generated
 echo "Cleaning up any old dirs"
-find "$BASEDIR"/shuffleddata/ -mindepth 1 -maxdepth 1 -type d -mmin +120 | sort | head -n -5 | xargs --no-run-if-empty rm -r
+# find "$BASEDIR"/shuffleddata/ -mindepth 1 -maxdepth 1 -type d -mmin +120 | sort | head -n -5 | xargs --no-run-if-empty rm -r
+find "$BASEDIR"/shuffleddata/ -mindepth 1 -maxdepth 1 -type d -mmin +120 | sort | tail -n 5 | xargs rm -r
 
 echo "Finished shuffle at" $(date "+%Y-%m-%d %H:%M:%S")
 #Make a little space between shuffles

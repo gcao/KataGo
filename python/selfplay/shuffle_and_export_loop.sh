@@ -29,18 +29,20 @@ cp ./*.py ./selfplay/*.sh "$basedir"/scripts
 
 (
     cd "$basedir"/scripts
-    while true
-    do
+    # while true
+    # do
         ./shuffle.sh "$basedir" "$tmpdir" "$NTHREADS" "$@"
-        sleep 20
-    done
-) >> outshuffle.txt 2>&1 & disown
+    #     sleep 20
+    # done
+# ) >> outshuffle.txt 2>&1 & disown
+) >> "$basedir"/outshuffle.txt 2>&1
 
 (
     cd "$basedir"/scripts
-    while true
-    do
+    # while true
+    # do
         ./export_model_for_selfplay.sh "$NAMEPREFIX" "$basedir" "$USEGATING"
-        sleep 10
-    done
-) >> outexport.txt 2>&1 & disown
+    #     sleep 10
+    # done
+# ) >> outexport.txt 2>&1 & disown
+) >> "$basedir"/outexport.txt 2>&1 & disown

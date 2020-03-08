@@ -12,6 +12,7 @@ import psutil
 import json
 
 import multiprocessing
+multiprocessing.set_start_method('spawn', True)
 
 import numpy as np
 import tensorflow as tf

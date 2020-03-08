@@ -43,6 +43,7 @@ tmp.txt
 test.txt
 cpp/tmp
 out.txt
+log.txt
 
 # For clion IDE
 .idea
