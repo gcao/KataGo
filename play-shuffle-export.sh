@@ -9,6 +9,7 @@ do
     echo ==== Round $round start ====
     echo
     start=$SECONDS
+    cd $dir
 
     echo ==== Round $round self-play ====
     echo
@@ -17,7 +18,7 @@ do
     echo ==== Round $round shuffle and export ====
     echo
     cd python
-    ./selfplay/shuffle_and_export_loop.sh CAO ../shared/ ../shared/tmp 4 0
+    ./selfplay/shuffle_and_export_loop.sh CAO ../shared/ ../shared/tmp 4 1
 
     echo ==== Round $round end ====
     seconds=$((SECONDS - start))
