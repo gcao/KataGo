@@ -17,7 +17,7 @@ do
     echo ==== Round $round shuffle and export ====
     echo
     cd python
-    ./selfplay/shuffle_and_export_loop.sh CAO ../shared/ ../shared/tmp 4 1
+    ./selfplay/shuffle_and_export_loop.sh CAO ../shared/ ../shared/tmp 4 0
 
     echo ==== Round $round train ====
     echo
@@ -26,7 +26,13 @@ do
 
     # echo ==== Round $round gatekeeper ====
     # echo
-    # cpp/katago gatekeeper -rejected-models-dir shared/rejectedmodels -accepted-models-dir shared/models/ -sgf-output-dir shared/gatekeepersgf/ -test-models-dir shared/modelstobetested/ -config-file cpp/configs/gatekeeper1.cfg
+    # cpp/katago gatekeeper \
+    #   -rejected-models-dir shared/rejectedmodels/ \
+    #   -accepted-models-dir shared/models/ \
+    #   -sgf-output-dir shared/gatekeepersgf/ \
+    #   -test-models-dir shared/modelstobetested/ \
+    #   -config-file cpp/configs/gatekeeper1.cfg \
+    #   -quit-if-no-nets-to-test 1
 
     echo ==== Round $round end ====
     seconds=$((SECONDS - start))
