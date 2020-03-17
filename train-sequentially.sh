@@ -14,14 +14,22 @@ do
     echo
     cpp/katago selfplay -output-dir shared/selfplay -models-dir shared/models -config-file cpp/configs/selfplay1.cfg
 
-    echo ==== Round $round shuffle and export ====
+    echo ==== Round $round shuffle ====
     echo
-    cd python
-    ./selfplay/shuffle_and_export_loop.sh CAO ../shared/ ../shared/tmp 4 1
+    cd python/scripts
+    ./shuffle.sh CAO ../shared/tmp 1
+    cd ../..
 
     echo ==== Round $round train ====
     echo
+    cd python
     ./selfplay/train.sh ../shared/ CAO b6c96 main -lr-scale 1.0
+    cd ..
+
+    echo ==== Round $round export ====
+    echo
+    cd python
+    ./selfplay/export_model_for_selfplay.sh CAO ../shared/ 1
     cd ..
 
     echo ==== Round $round gatekeeper ====
