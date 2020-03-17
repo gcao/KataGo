@@ -32,7 +32,7 @@ do
       -sgf-output-dir shared/gatekeepersgf/ \
       -test-models-dir shared/modelstobetested/ \
       -config-file cpp/configs/gatekeeper1.cfg \
-      -quit-if-no-nets-to-test 1
+      -quit-if-no-nets-to-test
 
     echo ==== Round $round end ====
     seconds=$((SECONDS - start))
