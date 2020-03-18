@@ -16,7 +16,7 @@ do
 
     echo ==== Round $round shuffle ====
     echo
-    cd python/scripts
+    cd shared/scripts
     ./shuffle.sh CAO ../shared/tmp 1
     cd ../..
 
