@@ -81,6 +81,107 @@ class Board:
   def loc_y(self,loc):
     return (loc // self.dy)-1
 
+  def update_adj(self, loc):
+    x = self.loc_x(loc)
+    y = self.loc_y(loc)
+    size_1 = self.size - 1
+
+    if x == 0:
+      self.adj[1] = size_1
+      self.adj[2] = 1
+    elif x == size_1:
+      self.adj[1] = -1
+      self.adj[2] = -size_1
+    else:
+      self.adj[1] = -1
+      self.adj[2] = 1
+
+    if y == 0:
+      self.adj[0] = self.dy * size_1
+      self.adj[3] = self.dy
+    elif y == size_1:
+      self.adj[0] = -self.dy
+      self.adj[3] = -self.dy * size_1
+    else:
+      self.adj[0] = -self.dy
+      self.adj[3] = self.dy
+
+    return self.adj
+
+  def update_diag(self, loc):
+    x = self.loc_x(loc)
+    y = self.loc_y(loc)
+    size_1 = self.size - 1
+
+    if x == 0:
+      if y == 0:
+        self.diag = [
+          size_1 * self.dy + size_1,
+          size_1 * self.dy + 1,
+          self.dy + size_1,
+          self.dy + 1,
+        ]
+      elif y == size_1:
+        self.diag = [
+          size_1 * self.dy - 1,
+          size_1 * self.dy - size_1,
+          self.dy - 1,
+          self.dy - size_1,
+        ]
+      else:
+        self.diag = [
+          size_1 * self.dy - 1,
+          size_1 * self.dy + 1,
+          self.dy - 1,
+          self.dy + 1,
+        ]
+    elif x == size_1:
+      if y == 0:
+        self.diag = [
+          -self.dy + size_1,
+          -self.dy + 1,
+          -size_1 * self.dy + size_1,
+          -size_1 * self.dy + 1,
+        ]
+      elif y == size_1:
+        self.diag = [
+          -self.dy - 1,
+          -self.dy - size_1,
+          -size_1 * self.dy - 1,
+          -size_1 * self.dy - size_1,
+        ]
+      else:
+        self.diag = [
+          -self.dy - 1,
+          -self.dy + 1,
+          -size_1 * self.dy - 1,
+          -size_1 * self.dy + 1,
+        ]
+    else:
+      if y == 0:
+        self.diag = [
+          -self.dy + size_1,
+          -self.dy + 1,
+          self.dy + size_1,
+          self.dy + 1,
+        ]
+      elif y == size_1:
+        self.diag = [
+          -self.dy - 1,
+          -self.dy - size_1,
+          self.dy - 1,
+          self.dy - size_1,
+        ]
+      else:
+        self.diag = [
+          -self.dy - 1,
+          -self.dy + 1,
+          self.dy - 1,
+          self.dy + 1
+        ]
+
+    return self.diag
+
   def is_adjacent(self,loc1,loc2):
     return loc1 == loc2 + self.adj[0] or loc1 == loc2 + self.adj[1] or loc1 == loc2 + self.adj[2] or loc1 == loc2 + self.adj[3]
 
