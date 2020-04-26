@@ -601,21 +601,43 @@ class Model:
       self.reg_variables_tiny.append(variable)
     return variable
 
-  def conv2d(self, x, w):
-    # Cyclic update for y axis
-    x1 = x[:, :, -3:-1, :]
-    x2 = x[:, :,  0:2,  :]
-    x  = tf.concat([x1, x, x2], 2)
+  def conv2d(self, x, w, diam):
+    radius = diam//2
 
-    # Cyclic update for x axis
-    x1 = x[:, -3:-1, :, :]
-    x2 = x[:,  0:2,  :, :]
-    x  = tf.concat([x1, x, x2], 1)
+    if radius > 0:
+      # Cyclic update for y axis
+      x1 = x[:, :, -1-radius:-1, :]
+      x2 = x[:, :, 0:radius, :]
+      x  = tf.concat([x1, x, x2], 2)
 
-    return tf.nn.conv2d(x, w, strides=[1,1,1,1], padding='VALID')
+      # Cyclic update for x axis
+      x1 = x[:, -1-radius:-1, :, :]
+      x2 = x[:, 0:radius, :, :]
+      x  = tf.concat([x1, x, x2], 1)
 
-  def dilated_conv2d(self, x, w, dilation):
-    return tf.nn.atrous_conv2d(x, w, rate = dilation, padding='SAME')
+      return tf.nn.conv2d(x, w, strides=[1,1,1,1], padding='VALID')
+
+    else:
+      return tf.nn.conv2d(x, w, strides=[1,1,1,1], padding='SAME')
+
+  def dilated_conv2d(self, x, w, diam, dilation):
+    radius = diam//2
+
+    if radius > 0:
+      # Cyclic update for y axis
+      x1 = x[:, :, -1-radius:-1, :]
+      x2 = x[:, :, 0:radius, :]
+      x  = tf.concat([x1, x, x2], 2)
+
+      # Cyclic update for x axis
+      x1 = x[:, -1-radius:-1, :, :]
+      x2 = x[:, 0:radius, :, :]
+      x  = tf.concat([x1, x, x2], 1)
+
+      return tf.nn.atrous_conv2d(x, w, rate = dilation, padding='VALID')
+
+    else:
+      return tf.nn.atrous_conv2d(x, w, rate = dilation, padding='SAME')
 
   def apply_symmetry(self,tensor,symmetries,inverse):
     ud = symmetries[0]
@@ -703,7 +725,7 @@ class Model:
       scale_initial_weights=1.0, emphasize_center_weight=None, emphasize_center_lr=None
   ):
     weights = self.conv_weight_variable(name+"/w", diam, diam, in_channels, out_channels, scale_initial_weights, emphasize_center_weight, emphasize_center_lr)
-    convolved = self.conv2d(in_layer, weights)
+    convolved = self.conv2d(in_layer, weights, diam)
     self.outputs_by_layer.append((name+"/prenorm",convolved))
     out_layer = self.relu(name+"/relu",self.batchnorm_and_mask(name+"/norm",convolved,mask,mask_sum))
     self.outputs_by_layer.append((name,out_layer))
@@ -715,7 +737,7 @@ class Model:
       scale_initial_weights=1.0, emphasize_center_weight=None, emphasize_center_lr=None, reg=True
   ):
     weights = self.conv_weight_variable(name+"/w", diam, diam, in_channels, out_channels, scale_initial_weights, emphasize_center_weight, emphasize_center_lr, reg=reg)
-    out_layer = self.conv2d(in_layer, weights)
+    out_layer = self.conv2d(in_layer, weights, diam)
     self.outputs_by_layer.append((name,out_layer))
     return out_layer
 
@@ -729,7 +751,7 @@ class Model:
 
     fixup_scale = 1.0 / math.sqrt(self.num_blocks) if self.use_fixup else 1.0
     weights1 = self.conv_weight_variable(name+"/w1", diam, diam, main_channels, mid_channels, scale_initial_weights * fixup_scale, emphasize_center_weight, emphasize_center_lr)
-    conv1_layer = self.conv2d(trans1_layer, weights1)
+    conv1_layer = self.conv2d(trans1_layer, weights1, diam)
     self.outputs_by_layer.append((name+"/conv1",conv1_layer))
 
     trans2_layer = self.relu(name+"/relu2",(self.batchnorm_and_mask(name+"/norm2",conv1_layer,mask,mask_sum,use_gamma_in_fixup=True)))
@@ -737,7 +759,7 @@ class Model:
 
     fixup_scale_last_layer = 0.0 if self.use_fixup else 1.0
     weights2 = self.conv_weight_variable(name+"/w2", diam, diam, mid_channels, main_channels, scale_initial_weights*fixup_scale_last_layer, emphasize_center_weight, emphasize_center_lr)
-    conv2_layer = self.conv2d(trans2_layer, weights2)
+    conv2_layer = self.conv2d(trans2_layer, weights2, diam)
     self.outputs_by_layer.append((name+"/conv2",conv2_layer))
 
     return conv2_layer
@@ -755,8 +777,8 @@ class Model:
     fixup_scale4 = 1.0 / (self.num_blocks ** (1.0 / 4.0)) if self.use_fixup else 1.0
     weights1a = self.conv_weight_variable(name+"/w1a", diam, diam, main_channels, mid_channels, scale_initial_weights * fixup_scale2, emphasize_center_weight, emphasize_center_lr)
     weights1b = self.conv_weight_variable(name+"/w1b", diam, diam, main_channels, global_mid_channels, scale_initial_weights * fixup_scale4, emphasize_center_weight, emphasize_center_lr)
-    conv1a_layer = self.conv2d(trans1_layer, weights1a)
-    conv1b_layer = self.conv2d(trans1_layer, weights1b)
+    conv1a_layer = self.conv2d(trans1_layer, weights1a, diam)
+    conv1b_layer = self.conv2d(trans1_layer, weights1b, diam)
     self.outputs_by_layer.append((name+"/conv1a",conv1a_layer))
     self.outputs_by_layer.append((name+"/conv1b",conv1b_layer))
 
@@ -771,7 +793,7 @@ class Model:
 
     fixup_scale_last_layer = 0.0 if self.use_fixup else 1.0
     weights2 = self.conv_weight_variable(name+"/w2", diam, diam, mid_channels, main_channels, scale_initial_weights * fixup_scale_last_layer, emphasize_center_weight, emphasize_center_lr)
-    conv2_layer = self.conv2d(trans2_layer, weights2)
+    conv2_layer = self.conv2d(trans2_layer, weights2, diam)
     self.outputs_by_layer.append((name+"/conv2",conv2_layer))
 
     return conv2_layer
@@ -784,8 +806,8 @@ class Model:
     fixup_scale = 1.0 / math.sqrt(self.num_blocks) if self.use_fixup else 1.0
     weights1a = self.conv_weight_variable(name+"/w1a", diam, diam, main_channels, mid_channels, scale_initial_weights*fixup_scale, emphasize_center_weight, emphasize_center_lr)
     weights1b = self.conv_weight_variable(name+"/w1b", diam, diam, main_channels, dilated_mid_channels, scale_initial_weights*fixup_scale, emphasize_center_weight, emphasize_center_lr)
-    conv1a_layer = self.conv2d(trans1_layer, weights1a)
-    conv1b_layer = self.dilated_conv2d(trans1_layer, weights1b, dilation=dilation)
+    conv1a_layer = self.conv2d(trans1_layer, weights1a, diam)
+    conv1b_layer = self.dilated_conv2d(trans1_layer, weights1b, diam, dilation=dilation)
     self.outputs_by_layer.append((name+"/conv1a",conv1a_layer))
     self.outputs_by_layer.append((name+"/conv1b",conv1b_layer))
 
@@ -796,7 +818,7 @@ class Model:
 
     fixup_scale_last_layer = 0.0 if self.use_fixup else 1.0
     weights2 = self.conv_weight_variable(name+"/w2", diam, diam, mid_channels+dilated_mid_channels, main_channels, scale_initial_weights * fixup_scale_last_layer, emphasize_center_weight, emphasize_center_lr)
-    conv2_layer = self.conv2d(trans2_layer, weights2)
+    conv2_layer = self.conv2d(trans2_layer, weights2, diam)
     self.outputs_by_layer.append((name+"/conv2",conv2_layer))
 
     return conv2_layer
@@ -1001,22 +1023,22 @@ class Model:
       (name,kind) = block_kind[i]
       if kind == "regular":
         residual = self.res_conv_block(
-          name,trunk,mask,mask_sum,diam=3,main_channels=trunk_num_channels,mid_channels=mid_num_channels)
+          name,trunk,mask,mask_sum,diam=5,main_channels=trunk_num_channels,mid_channels=mid_num_channels)
         trunk = self.merge_residual(name,trunk,residual)
-        self.blocks.append(("ordinary_block",name,3,trunk_num_channels,mid_num_channels))
+        self.blocks.append(("ordinary_block",name,5,trunk_num_channels,mid_num_channels))
       elif kind == "dilated":
         residual = self.dilated_res_conv_block(
-          name,trunk,mask,mask_sum,diam=3,main_channels=trunk_num_channels,mid_channels=regular_num_channels, dilated_mid_channels=dilated_num_channels, dilation=2
+          name,trunk,mask,mask_sum,diam=5,main_channels=trunk_num_channels,mid_channels=regular_num_channels, dilated_mid_channels=dilated_num_channels, dilation=2
         )
         trunk = self.merge_residual(name,trunk,residual)
-        self.blocks.append(("dilated_block",name,3,trunk_num_channels,regular_num_channels,dilated_num_channels,3))
+        self.blocks.append(("dilated_block",name,5,trunk_num_channels,regular_num_channels,dilated_num_channels,3))
       elif kind == "gpool":
         residual = self.global_res_conv_block(
           name,trunk,mask,mask_sum,mask_sum_hw,mask_sum_hw_sqrt,
-          diam=3,main_channels=trunk_num_channels,mid_channels=regular_num_channels, global_mid_channels=gpool_num_channels
+          diam=5,main_channels=trunk_num_channels,mid_channels=regular_num_channels, global_mid_channels=gpool_num_channels
         )
         trunk = self.merge_residual(name,trunk,residual)
-        self.blocks.append(("gpool_block",name,3,trunk_num_channels,regular_num_channels,gpool_num_channels))
+        self.blocks.append(("gpool_block",name,5,trunk_num_channels,regular_num_channels,gpool_num_channels))
       else:
         assert(False)
 
