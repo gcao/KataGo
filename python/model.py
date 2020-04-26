@@ -602,7 +602,17 @@ class Model:
     return variable
 
   def conv2d(self, x, w):
-    return tf.nn.conv2d(x, w, strides=[1,1,1,1], padding='SAME')
+    # Cyclic update for y axis
+    x1 = x[:, :, -3:-1, :]
+    x2 = x[:, :,  0:2,  :]
+    x  = tf.concat([x1, x, x2], 2)
+
+    # Cyclic update for x axis
+    x1 = x[:, -3:-1, :, :]
+    x2 = x[:,  0:2,  :, :]
+    x  = tf.concat([x1, x, x2], 1)
+
+    return tf.nn.conv2d(x, w, strides=[1,1,1,1], padding='VALID')
 
   def dilated_conv2d(self, x, w, dilation):
     return tf.nn.atrous_conv2d(x, w, rate = dilation, padding='SAME')
