@@ -1004,7 +1004,7 @@ class Model:
     mask_sum_hw_sqrt = tf.sqrt(mask_sum_hw)
 
     #Initial convolutional layer-------------------------------------------------------------------------------------
-    trunk = self.conv_only_block("conv1",cur_layer,diam=3,in_channels=input_num_channels,out_channels=trunk_num_channels)
+    trunk = self.conv_only_block("conv1",cur_layer,diam=5,in_channels=input_num_channels,out_channels=trunk_num_channels)
     self.initial_conv = ("conv1",5,input_num_channels,trunk_num_channels)
 
     #Matrix multiply global inputs and accumulate them
@@ -1025,20 +1025,20 @@ class Model:
         residual = self.res_conv_block(
           name,trunk,mask,mask_sum,diam=3,main_channels=trunk_num_channels,mid_channels=mid_num_channels)
         trunk = self.merge_residual(name,trunk,residual)
-        self.blocks.append(("ordinary_block",name,5,trunk_num_channels,mid_num_channels))
+        self.blocks.append(("ordinary_block",name,3,trunk_num_channels,mid_num_channels))
       elif kind == "dilated":
         residual = self.dilated_res_conv_block(
           name,trunk,mask,mask_sum,diam=3,main_channels=trunk_num_channels,mid_channels=regular_num_channels, dilated_mid_channels=dilated_num_channels, dilation=2
         )
         trunk = self.merge_residual(name,trunk,residual)
-        self.blocks.append(("dilated_block",name,5,trunk_num_channels,regular_num_channels,dilated_num_channels,3))
+        self.blocks.append(("dilated_block",name,3,trunk_num_channels,regular_num_channels,dilated_num_channels,3))
       elif kind == "gpool":
         residual = self.global_res_conv_block(
           name,trunk,mask,mask_sum,mask_sum_hw,mask_sum_hw_sqrt,
           diam=3,main_channels=trunk_num_channels,mid_channels=regular_num_channels, global_mid_channels=gpool_num_channels
         )
         trunk = self.merge_residual(name,trunk,residual)
-        self.blocks.append(("gpool_block",name,5,trunk_num_channels,regular_num_channels,gpool_num_channels))
+        self.blocks.append(("gpool_block",name,3,trunk_num_channels,regular_num_channels,gpool_num_channels))
       else:
         assert(False)
 
