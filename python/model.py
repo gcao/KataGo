@@ -602,9 +602,12 @@ class Model:
     return variable
 
   def conv2d(self, x, w, diam):
-    radius = diam//2
+    padding = 'SAME'
+    radius  = diam//2
 
     if radius > 0:
+      padding = 'VALID'
+
       # Cyclic update for y axis
       x1 = x[:, :, -1-radius:-1, :]
       x2 = x[:, :, 0:radius, :]
@@ -615,15 +618,15 @@ class Model:
       x2 = x[:, 0:radius, :, :]
       x  = tf.concat([x1, x, x2], 1)
 
-      return tf.nn.conv2d(x, w, strides=[1,1,1,1], padding='VALID')
-
-    else:
-      return tf.nn.conv2d(x, w, strides=[1,1,1,1], padding='SAME')
+    return tf.nn.conv2d(x, w, strides=[1,1,1,1], padding=padding)
 
   def dilated_conv2d(self, x, w, diam, dilation):
-    radius = diam//2
+    padding = 'SAME'
+    radius  = diam//2
 
     if radius > 0:
+      padding = 'VALID'
+
       # Cyclic update for y axis
       x1 = x[:, :, -1-radius:-1, :]
       x2 = x[:, :, 0:radius, :]
@@ -634,10 +637,7 @@ class Model:
       x2 = x[:, 0:radius, :, :]
       x  = tf.concat([x1, x, x2], 1)
 
-      return tf.nn.atrous_conv2d(x, w, rate = dilation, padding='VALID')
-
-    else:
-      return tf.nn.atrous_conv2d(x, w, rate = dilation, padding='SAME')
+    return tf.nn.atrous_conv2d(x, w, rate = dilation, padding=padding)
 
   def apply_symmetry(self,tensor,symmetries,inverse):
     ud = symmetries[0]
