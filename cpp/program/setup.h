@@ -10,7 +10,14 @@ namespace Setup {
 
   void initializeSession(ConfigParser& cfg);
 
-  enum setup_for_t { SETUP_FOR_GTP, SETUP_FOR_BENCHMARK, SETUP_FOR_MATCH, SETUP_FOR_ANALYSIS, SETUP_FOR_OTHER };
+  enum setup_for_t {
+    SETUP_FOR_GTP,
+    SETUP_FOR_BENCHMARK,
+    SETUP_FOR_MATCH,
+    SETUP_FOR_ANALYSIS,
+    SETUP_FOR_OTHER,
+    SETUP_FOR_DISTRIBUTED
+  };
 
   NNEvaluator* initializeNNEvaluator(
     const std::string& nnModelNames,
@@ -56,6 +63,8 @@ namespace Setup {
     ConfigParser& cfg
   );
 
+  //Get sets of options that are mutually exclusive. Intended for use in configParser
+  std::vector<std::pair<std::set<std::string>,std::set<std::string>>> getMutexKeySets();
 }
 
 #endif  // PROGRAM_SETUP_H_

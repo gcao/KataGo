@@ -1,5 +1,6 @@
 #!/bin/bash -eu
-
+set -o pipefail
+{
 #Takes any models in tfsavedmodels_toexport/ and outputs a cuda-runnable model file to modelstobetested/
 #Takes any models in tfsavedmodels_toexport_extra/ and outputs a cuda-runnable model file to models_extra/
 #Should be run periodically.
@@ -7,6 +8,7 @@
 if [[ $# -ne 3 ]]
 then
     echo "Usage: $0 NAMEPREFIX BASEDIR USEGATING"
+    echo "Currently expects to be run from within the `python` directory of the KataGo repo, or otherwise in the same dir as export_model.py."
     echo "NAMEPREFIX string prefix for this training run, try to pick something globally unique. Will be displayed to users when KataGo loads the model."
     echo "BASEDIR containing selfplay data and models and related directories"
     echo "USEGATING = 1 to use gatekeeper, 0 to not use gatekeeper and output directly to models/"
@@ -101,3 +103,6 @@ else
     exportStuff "tfsavedmodels_toexport" "modelstobetested"
 fi
 exportStuff "tfsavedmodels_toexport_extra" "models_extra"
+
+exit 0
+}

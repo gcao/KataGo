@@ -8,6 +8,8 @@
 #include "program/gitinfo.h"
 #endif
 
+#include <sstream>
+
 using namespace std;
 
 static void printHelp(int argc, const char* argv[]) {
@@ -111,19 +113,12 @@ static int handleSubcommand(const string& subcommand, int argc, const char* argv
     return MainCmds::lzcost(argc-1,&argv[1]);
   else if(subcommand == "demoplay")
     return MainCmds::demoplay(argc-1,&argv[1]);
+  else if(subcommand == "printclockinfo")
+    return MainCmds::printclockinfo(argc-1,&argv[1]);
   else if(subcommand == "sandbox")
     return MainCmds::sandbox();
   else if(subcommand == "version") {
-    cout << Version::getKataGoVersionForHelp() << endl;
-    cout << "Git revision: " << Version::getGitRevision() << endl;
-    cout << "Compile Time: " << __DATE__ << " " << __TIME__ << endl;
-    #if defined(USE_CUDA_BACKEND)
-    cout << "Using CUDA backend" << endl;
-    #elif defined(USE_OPENCL_BACKEND)
-    cout << "Using OpenCL backend" << endl;
-    #else
-    cout << "Using dummy backend" << endl;
-    #endif
+    cout << Version::getKataGoVersionFullInfo() << std::flush;
     return 0;
   }
   else {
@@ -169,11 +164,26 @@ int main(int argc, const char* argv[]) {
 
 
 string Version::getKataGoVersion() {
-  return string("1.3.2");
+  return string("1.3.5");
 }
 
 string Version::getKataGoVersionForHelp() {
-  return string("KataGo v1.3.2");
+  return string("KataGo v1.3.5");
+}
+
+string Version::getKataGoVersionFullInfo() {
+  ostringstream out;
+  out << Version::getKataGoVersionForHelp() << endl;
+  out << "Git revision: " << Version::getGitRevision() << endl;
+  out << "Compile Time: " << __DATE__ << " " << __TIME__ << endl;
+#if defined(USE_CUDA_BACKEND)
+  out << "Using CUDA backend" << endl;
+#elif defined(USE_OPENCL_BACKEND)
+  out << "Using OpenCL backend" << endl;
+#else
+  out << "Using dummy backend" << endl;
+#endif
+  return out.str();
 }
 
 string Version::getGitRevision() {

@@ -42,8 +42,10 @@ SearchParams::SearchParams()
    conservativePass(false),
    fillDameBeforePass(false),
    localExplore(false),
+   avoidMYTDaggerHackPla(C_EMPTY),
    playoutDoublingAdvantage(0.0),
    playoutDoublingAdvantagePla(C_EMPTY),
+   nnPolicyTemperature(1.0f),
    mutexPoolSize(8192),
    numVirtualLossesPerThread(3),
    numThreads(1),
@@ -79,4 +81,13 @@ SearchParams SearchParams::forTestsV1() {
   params.rootPruneUselessMoves = true;
   params.conservativePass = true;
   return params;
+}
+
+void SearchParams::failIfParamsDifferOnUnchangeableParameter(const SearchParams& initial, const SearchParams& dynamic) {
+  if(dynamic.numThreads > initial.numThreads) {
+    throw StringError("Cannot increase number of search threads after initialization since this is used to initialize neural net buffer capacity");
+  }
+  if(dynamic.mutexPoolSize != initial.mutexPoolSize) {
+    throw StringError("Cannot change mutex pool size after initialization");
+  }
 }

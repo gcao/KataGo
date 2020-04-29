@@ -29,9 +29,13 @@ struct MiscNNInputParams {
   double drawEquivalentWinsForWhite = 0.5;
   bool conservativePass = false;
   double playoutDoublingAdvantage = 0.0;
+  float nnPolicyTemperature = 1.0f;
+  bool avoidMYTDaggerHack = false;
 
   static const Hash128 ZOBRIST_CONSERVATIVE_PASS;
   static const Hash128 ZOBRIST_PLAYOUT_DOUBLINGS;
+  static const Hash128 ZOBRIST_NN_POLICY_TEMP;
+  static const Hash128 ZOBRIST_AVOID_MYTDAGGER_HACK;
 };
 
 namespace NNInputs {
@@ -81,13 +85,11 @@ namespace NNInputs {
 
   //If groupTax is specified, for each color region of area, reduce weight on empty spaces equally to reduce the total sum by 2.
   //(but should handle seki correctly)
-  void fillOwnership(
+  void fillScoring(
     const Board& board,
     const Color* area,
     bool groupTax,
-    int nnXLen,
-    int nnYLen,
-    float* ownership
+    float* scoring
   );
 }
 

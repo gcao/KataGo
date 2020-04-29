@@ -37,6 +37,10 @@ const Hash128 MiscNNInputParams::ZOBRIST_CONSERVATIVE_PASS =
   Hash128(0x0c2b96f4b8ae2da9ULL, 0x5a14dee208fec0edULL);
 const Hash128 MiscNNInputParams::ZOBRIST_PLAYOUT_DOUBLINGS =
   Hash128(0xa5e6114d380bfc1dULL, 0x4160557f1222f4adULL);
+const Hash128 MiscNNInputParams::ZOBRIST_NN_POLICY_TEMP =
+  Hash128(0xebcbdfeec6f4334bULL, 0xb85e43ee243b5ad2ULL);
+const Hash128 MiscNNInputParams::ZOBRIST_AVOID_MYTDAGGER_HACK =
+  Hash128(0x612d22ec402ce054ULL, 0x0db915c49de527aeULL);
 
 //-----------------------------------------------------------------------------------------------------------
 //-----------------------------------------------------------------------------------------------------------
@@ -208,28 +212,25 @@ double ScoreValue::expectedWhiteScoreValue(double whiteScoreMean, double whiteSc
 //-----------------------------------------------------------------------------------------------------------
 //-----------------------------------------------------------------------------------------------------------
 
-void NNInputs::fillOwnership(
+void NNInputs::fillScoring(
   const Board& board,
   const Color* area,
   bool groupTax,
-  int nnXLen,
-  int nnYLen,
-  float* ownership
+  float* scoring
 ) {
   if(!groupTax) {
-    std::fill(ownership, ownership + nnXLen*nnYLen, 0.0f);
+    std::fill(scoring, scoring + Board::MAX_ARR_SIZE, 0.0f);
     for(int y = 0; y<board.y_size; y++) {
       for(int x = 0; x<board.x_size; x++) {
         Loc loc = Location::getLoc(x,y,board.x_size);
-        int pos = NNPos::locToPos(loc,board.x_size,nnXLen,nnYLen);
         Color areaColor = area[loc];
         if(areaColor == P_BLACK)
-          ownership[pos] = -1.0f;
+          scoring[loc] = -1.0f;
         else if(areaColor == P_WHITE)
-          ownership[pos] = 1.0f;
+          scoring[loc] = 1.0f;
         else {
           assert(areaColor == C_EMPTY);
-          ownership[pos] = 0;
+          scoring[loc] = 0;
         }
       }
     }
@@ -239,7 +240,7 @@ void NNInputs::fillOwnership(
     Loc queue[Board::MAX_ARR_SIZE];
 
     std::fill(visited, visited + Board::MAX_ARR_SIZE, false);
-    std::fill(ownership, ownership + nnXLen*nnYLen, 0.0f);
+    std::fill(scoring, scoring + Board::MAX_ARR_SIZE, 0.0f);
     for(int y = 0; y<board.y_size; y++) {
       for(int x = 0; x<board.x_size; x++) {
         Loc loc = Location::getLoc(x,y,board.x_size);
@@ -276,17 +277,15 @@ void NNInputs::fillOwnership(
           for(int j = 0; j<queueTail; j++) {
             Loc next = queue[j];
             queueHead++;
-            int pos = NNPos::locToPos(next,board.x_size,nnXLen,nnYLen);
             if(board.colors[next] != areaColor)
-              ownership[pos] = territoryValue;
+              scoring[next] = territoryValue;
             else
-              ownership[pos] = fullValue;
+              scoring[next] = fullValue;
           }
         }
         else {
           assert(areaColor == C_EMPTY);
-          int pos = NNPos::locToPos(loc,board.x_size,nnXLen,nnYLen);
-          ownership[pos] = 0;
+          scoring[loc] = 0;
         }
       }
     }
@@ -649,6 +648,19 @@ Hash128 NNInputs::getHash(
     hash.hash1 += Hash::basicLCong((uint64_t)playoutDoublingsDiscretized);
     hash ^= MiscNNInputParams::ZOBRIST_PLAYOUT_DOUBLINGS;
   }
+
+  //Fold in policy temperature
+  if(nnInputParams.nnPolicyTemperature != 1.0f) {
+    int64_t nnPolicyTemperatureDiscretized = (int64_t)(nnInputParams.nnPolicyTemperature*2048.0f);
+    hash.hash0 ^= Hash::basicLCong2((uint64_t)nnPolicyTemperatureDiscretized);
+    hash.hash1 = Hash::splitMix64(hash.hash1 + (uint64_t)nnPolicyTemperatureDiscretized);
+    hash.hash0 += hash.hash1;
+    hash ^= MiscNNInputParams::ZOBRIST_NN_POLICY_TEMP;
+  }
+
+  if(nnInputParams.avoidMYTDaggerHack)
+    hash ^= MiscNNInputParams::ZOBRIST_AVOID_MYTDAGGER_HACK;
+
   return hash;
 }
 

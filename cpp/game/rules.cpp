@@ -47,6 +47,16 @@ bool Rules::operator!=(const Rules& other) const {
     komi != other.komi;
 }
 
+bool Rules::equalsIgnoringKomi(const Rules& other) const {
+  return
+    koRule == other.koRule &&
+    scoringRule == other.scoringRule &&
+    taxRule == other.taxRule &&
+    multiStoneSuicideLegal == other.multiStoneSuicideLegal &&
+    hasButton == other.hasButton &&
+    whiteHandicapBonusRule == other.whiteHandicapBonusRule;
+}
+
 bool Rules::gameResultWillBeInteger() const {
   bool komiIsInteger = ((int)komi) == komi;
   return komiIsInteger != hasButton;
@@ -234,7 +244,10 @@ static Rules parseRulesHelper(const string& sOrig, bool allowKomi) {
     rules.whiteHandicapBonusRule = Rules::WHB_N;
     rules.komi = 7.5;
   }
-  else if(lowercased == "chinese-ogs") {
+  else if(
+    lowercased == "chineseogs" || lowercased == "chinese_ogs" || lowercased == "chinese-ogs" ||
+    lowercased == "chinesekgs" || lowercased == "chinese_kgs" || lowercased == "chinese-kgs"
+  ) {
     rules.scoringRule = Rules::SCORING_AREA;
     rules.koRule = Rules::KO_POSITIONAL;
     rules.taxRule = Rules::TAX_NONE;
@@ -244,8 +257,8 @@ static Rules parseRulesHelper(const string& sOrig, bool allowKomi) {
     rules.komi = 7.5;
   }
   else if(
-    lowercased == "ancient-area" || lowercased == "ancient_area" || lowercased == "ancient area" ||
-    lowercased == "stone-scoring" || lowercased == "stone_scoring" || lowercased == "stone scoring"
+    lowercased == "ancientarea" || lowercased == "ancient-area" || lowercased == "ancient_area" || lowercased == "ancient area" ||
+    lowercased == "stonescoring" || lowercased == "stone-scoring" || lowercased == "stone_scoring" || lowercased == "stone scoring"
   ) {
     rules.scoringRule = Rules::SCORING_AREA;
     rules.koRule = Rules::KO_SIMPLE;
@@ -255,7 +268,7 @@ static Rules parseRulesHelper(const string& sOrig, bool allowKomi) {
     rules.whiteHandicapBonusRule = Rules::WHB_ZERO;
     rules.komi = 7.5;
   }
-  else if(lowercased == "ancient-territory" || lowercased == "ancient_territory" || lowercased == "ancient territory") {
+  else if(lowercased == "ancientterritory" || lowercased == "ancient-territory" || lowercased == "ancient_territory" || lowercased == "ancient territory") {
     rules.scoringRule = Rules::SCORING_TERRITORY;
     rules.koRule = Rules::KO_SIMPLE;
     rules.taxRule = Rules::TAX_ALL;
@@ -264,7 +277,7 @@ static Rules parseRulesHelper(const string& sOrig, bool allowKomi) {
     rules.whiteHandicapBonusRule = Rules::WHB_ZERO;
     rules.komi = 6.5;
   }
-  else if(lowercased == "aga-button" || lowercased == "aga_button" || lowercased == "aga button") {
+  else if(lowercased == "agabutton" || lowercased == "aga-button" || lowercased == "aga_button" || lowercased == "aga button") {
     rules.scoringRule = Rules::SCORING_AREA;
     rules.koRule = Rules::KO_SITUATIONAL;
     rules.taxRule = Rules::TAX_NONE;
@@ -282,7 +295,7 @@ static Rules parseRulesHelper(const string& sOrig, bool allowKomi) {
     rules.whiteHandicapBonusRule = Rules::WHB_N_MINUS_ONE;
     rules.komi = 7.5;
   }
-  else if(lowercased == "nz" || lowercased == "new zealand" || lowercased == "new-zealand" || lowercased == "new_zealand") {
+  else if(lowercased == "nz" || lowercased == "newzealand" || lowercased == "new zealand" || lowercased == "new-zealand" || lowercased == "new_zealand") {
     rules.scoringRule = Rules::SCORING_AREA;
     rules.koRule = Rules::KO_SITUATIONAL;
     rules.taxRule = Rules::TAX_NONE;
@@ -492,6 +505,25 @@ bool Rules::tryParseRulesWithoutKomi(const string& sOrig, Rules& buf, float komi
   buf = rules;
   return true;
 }
+
+string Rules::toStringNoKomiMaybeNice() const {
+  if(equalsIgnoringKomi(parseRulesHelper("TrompTaylor",false)))
+    return "TrompTaylor";
+  if(equalsIgnoringKomi(parseRulesHelper("Japanese",false)))
+    return "Japanese";
+  if(equalsIgnoringKomi(parseRulesHelper("Chinese",false)))
+    return "Chinese";
+  if(equalsIgnoringKomi(parseRulesHelper("Chinese-OGS",false)))
+    return "Chinese-OGS";
+  if(equalsIgnoringKomi(parseRulesHelper("AGA",false)))
+    return "AGA";
+  if(equalsIgnoringKomi(parseRulesHelper("StoneScoring",false)))
+    return "StoneScoring";
+  if(equalsIgnoringKomi(parseRulesHelper("NewZealand",false)))
+    return "NewZealand";
+  return toStringNoKomi();
+}
+
 
 const Hash128 Rules::ZOBRIST_KO_RULE_HASH[4] = {
   Hash128(0x3cc7e0bf846820f6ULL, 0x1fb7fbde5fc6ba4eULL),  //Based on sha256 hash of Rules::KO_SIMPLE

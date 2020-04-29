@@ -57,7 +57,6 @@ def shardify(input_idx, input_file, num_out_files, out_tmp_dirs, keep_prob):
   scoreDistrN = npz["scoreDistrN"]
   valueTargetsNCHW = npz["valueTargetsNCHW"]
 
-  #print("Shardify shuffling... (mem usage %dMB)" % memusage_mb())
   joint_shuffle((binaryInputNCHWPacked,globalInputNC,policyTargetsNCMove,globalTargetsNC,scoreDistrN,valueTargetsNCHW))
 
   num_rows_to_keep = binaryInputNCHWPacked.shape[0]
@@ -91,7 +90,6 @@ def shardify(input_idx, input_file, num_out_files, out_tmp_dirs, keep_prob):
   return num_out_files
 
 def merge_shards(filename, num_shards_to_merge, out_tmp_dir, batch_size, ensure_batch_multiple):
-  #print("Merging shards for output file: %s (%d shards to merge)" % (filename,num_shards_to_merge))
   tfoptions = TFRecordOptions(TFRecordCompressionType.ZLIB)
   record_writer = TFRecordWriter(filename,tfoptions)
 
@@ -104,8 +102,6 @@ def merge_shards(filename, num_shards_to_merge, out_tmp_dir, batch_size, ensure_
 
   for input_idx in range(num_shards_to_merge):
     shard_filename = os.path.join(out_tmp_dir, str(input_idx) + ".npz")
-    #print("Merge loading shard: %d (mem usage %dMB)" % (input_idx,memusage_mb()))
-
     npz = np.load(shard_filename)
     assert(set(npz.keys()) == set(keys))
 
@@ -126,7 +122,6 @@ def merge_shards(filename, num_shards_to_merge, out_tmp_dir, batch_size, ensure_
   ###
   #WARNING - if adding anything here, also add it to joint_shuffle below!
   ###
-  #print("Merge concatenating... (mem usage %dMB)" % memusage_mb())
   binaryInputNCHWPacked = np.concatenate(binaryInputNCHWPackeds)
   globalInputNC = np.concatenate(globalInputNCs)
   policyTargetsNCMove = np.concatenate(policyTargetsNCMoves)
@@ -134,10 +129,8 @@ def merge_shards(filename, num_shards_to_merge, out_tmp_dir, batch_size, ensure_
   scoreDistrN = np.concatenate(scoreDistrNs)
   valueTargetsNCHW = np.concatenate(valueTargetsNCHWs)
 
-  #print("Merge shuffling... (mem usage %dMB)" % memusage_mb())
   joint_shuffle((binaryInputNCHWPacked,globalInputNC,policyTargetsNCMove,globalTargetsNC,scoreDistrN,valueTargetsNCHW))
 
-  #print("Merge writing in batches...")
   num_rows = binaryInputNCHWPacked.shape[0]
   #Just truncate and lose the batch at the end, it's fine
   num_batches = (num_rows // (batch_size * ensure_batch_multiple)) * ensure_batch_multiple
@@ -161,8 +154,6 @@ def merge_shards(filename, num_shards_to_merge, out_tmp_dir, batch_size, ensure_
   with open(jsonfilename,"w") as f:
     json.dump({"num_rows":num_rows,"num_batches":num_batches},f)
 
-  #print("Merge done %s (%d rows)" % (filename, num_batches * batch_size))
-
   record_writer.close()
   return num_batches * batch_size
 
@@ -170,9 +161,9 @@ def merge_shards(filename, num_shards_to_merge, out_tmp_dir, batch_size, ensure_
 if __name__ == '__main__':
   parser = argparse.ArgumentParser(description='Shuffle data files')
   parser.add_argument('dirs', metavar='DIR', nargs='+', help='Directories of training data files')
-  parser.add_argument('-min-rows', type=int, required=True, help='Minimum training rows to use')
-  parser.add_argument('-max-rows', type=int, required=True, help='Maximum training rows to use')
-  parser.add_argument('-keep-target-rows', type=int, required=False, help='Target number of rows to actually keep in the final data set')
+  parser.add_argument('-min-rows', type=int, required=False, help='Minimum training rows to use, default 250k')
+  parser.add_argument('-max-rows', type=int, required=False, help='Maximum training rows to use, default unbounded')
+  parser.add_argument('-keep-target-rows', type=int, required=False, help='Target number of rows to actually keep in the final data set, default 1.2M')
   parser.add_argument('-expand-window-per-row', type=float, required=True, help='Beyond min rows, initially expand the window by this much every post-random data row')
   parser.add_argument('-taper-window-exponent', type=float, required=True, help='Make the window size asymtotically grow as this power of the data rows')
   parser.add_argument('-out-dir', required=True, help='Dir to output training files')
@@ -197,10 +188,17 @@ if __name__ == '__main__':
   ensure_batch_multiple = 1
   if args.ensure_batch_multiple is not None:
     ensure_batch_multiple = args.ensure_batch_multiple
+  if min_rows is None:
+    print("NOTE: -min-rows was not specified, defaulting to requiring 250K rows before shuffling.")
+    min_rows = 250000
+  if keep_target_rows is None:
+    print("NOTE: -keep-target-rows was not specified, defaulting to keeping the first 1.2M rows.")
+    print("(slightly larger than default training epoch size of 1M, to give 1 epoch of data regardless of discreteness rows or batches per output file)")
+    print("If you intended to shuffle the whole dataset instead, pass in -keep-target-rows <very large number>")
+    keep_target_rows = 1200000
 
   all_files = []
   for d in dirs:
-    # print(d)
     for (path,dirnames,filenames) in os.walk(d):
       filenames = [os.path.join(path,filename) for filename in filenames if filename.endswith('.npz')]
       filenames = [(filename,os.path.getmtime(filename)) for filename in filenames]
@@ -264,11 +262,10 @@ if __name__ == '__main__':
     else:
       num_random_rows_capped = min(num_random_rows_capped + num_rows, min_rows)
 
-    #print("Training data file %s: %d rows" % (filename,num_rows))
     files_with_row_range.append((filename,row_range))
 
     #If we already have a window size bigger than max, then just stop
-    if num_desired_rows() >= max_rows:
+    if max_rows is not None and num_desired_rows() >= max_rows:
       break
 
   if os.path.exists(out_dir):
@@ -292,18 +289,22 @@ if __name__ == '__main__':
   #Now assemble only the files we need to hit our desired window size
   desired_num_rows = num_desired_rows()
   desired_num_rows = max(desired_num_rows,min_rows)
-  desired_num_rows = min(desired_num_rows,max_rows)
+  desired_num_rows = min(desired_num_rows,max_rows) if max_rows is not None else desired_num_rows
   print("Desired num rows: %d / %d" % (desired_num_rows,num_rows_total))
 
   desired_input_files = []
   desired_input_files_with_row_range = []
   num_rows_total = 0
-  for (filename,(start_row,end_row)) in files_with_row_range:
+  len_files_with_row_range = len(files_with_row_range)
+  print_stride = 1 + len(files_with_row_range) // 40
+  for i in range(len(files_with_row_range)):
+    (filename,(start_row,end_row)) = files_with_row_range[i]
     desired_input_files.append(filename)
     desired_input_files_with_row_range.append((filename,(start_row,end_row)))
 
     num_rows_total += (end_row - start_row)
-    print("Using: %s (%d-%d) (%d/%d desired rows)" % (filename,start_row,end_row,num_rows_total,desired_num_rows))
+    if i % print_stride == 0 or num_rows_total >= desired_num_rows or i == len_files_with_row_range - 1:
+      print("Using: %s (%d-%d) (%d/%d desired rows)" % (filename,start_row,end_row,num_rows_total,desired_num_rows))
     if num_rows_total >= desired_num_rows:
       break
 

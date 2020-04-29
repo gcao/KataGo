@@ -54,9 +54,12 @@ struct SearchParams {
   bool conservativePass; //Never assume one's own pass will end the game.
   bool fillDameBeforePass; //When territory scoring, heuristically discourage passing before filling the dame.
   bool localExplore; //Explore local tacticy moves a little more, to try to find some blind spots.
+  Player avoidMYTDaggerHackPla; //Hacky hack to avoid a particular pattern that gives some KG nets some trouble. Should become unnecessary in the future.
 
   double playoutDoublingAdvantage; //Play as if we have this many doublings of playouts vs the opponent
   Player playoutDoublingAdvantagePla; //Negate playoutDoublingAdvantage when making a move for the opponent of this player. If empty, opponent of the root player.
+
+  float nnPolicyTemperature; //Scale neural net policy probabilities by this temperature, applies everywhere in the tree
 
   //Threading-related
   uint32_t mutexPoolSize; //Size of mutex pool for synchronizing access to all search nodes
@@ -85,6 +88,8 @@ struct SearchParams {
 
   //Params to use for testing, with some more recent values representative of more real use (as of Jan 2019)
   static SearchParams forTestsV1();
+
+  static void failIfParamsDifferOnUnchangeableParameter(const SearchParams& initial, const SearchParams& dynamic);
 };
 
 #endif  // SEARCH_SEARCHPARAMS_H_

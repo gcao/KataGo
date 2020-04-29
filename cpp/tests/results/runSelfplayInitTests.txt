@@ -71,11 +71,9 @@ gameHash 7F48C0E836FB2B6C0F04DD17145EFDB5
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 B3 77 J7 10 D3 3 J4 8 D4 1 
 whiteValueTargetsByTurn 0 0.555213 0.444787 0 2.28382 - 
@@ -125,9 +123,6 @@ whiteValueTargetsByTurn 1 1 0 0 7.5 7.5
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -197,11 +192,9 @@ gameHash 2958C4761F4F334A313EF0FAF8BB6F33
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 policyTargetsByTurn 0 unreducedNumVisits 20 J8 6 H9 10 H8 6 J4 4 H4 1 
 whiteValueTargetsByTurn 0 0.53378 0.46622 0 1.80453 - 
@@ -337,9 +330,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves D3 D9 E11 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -409,11 +399,9 @@ gameHash 25C7D373FF7C30836F5270797454D889
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 E4 36 C4 58 E2 4 
 whiteValueTargetsByTurn 0 0.524619 0.475381 0 1.06717 - 
@@ -491,9 +479,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves D4 D9 H8 J4 C7 D3 E3 C3 E4 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -563,11 +548,9 @@ gameHash 39B1487679A09D8A816FF7F111CB39E4
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 C8 13 D4 12 C4 7 D3 5 D9 6 D8 11 H8 9 H9 9 J8 7 H3 8 J4 5 H4 5 
 whiteValueTargetsByTurn 0 0.511855 0.488145 0 0.875535 - 
@@ -617,9 +600,6 @@ XXXXXXXXXXX
  -1.000 -1.000 -1.000 -1.000 -1.000 -1.000 -1.000 -1.000 -1.000 -1.000 -1.000
  -1.000 -1.000 -1.000 -1.000 -1.000 -1.000 -1.000 -1.000 -1.000 -1.000 -1.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -689,11 +669,9 @@ gameHash 5957716B3684D45E721D2728ACD79642
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 policyTargetsByTurn 0 unreducedNumVisits 20 C8 10 D4 2 C4 2 D3 2 D9 2 D8 10 H8 2 H9 2 J8 2 
 whiteValueTargetsByTurn 0 0.523714 0.476286 0 1.28118 - 
@@ -771,9 +749,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves H4 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -843,11 +818,9 @@ gameHash B6FA504A9744852383DECB275DA70708
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 policyTargetsByTurn 0 unreducedNumVisits 20 H8 19 
 whiteValueTargetsByTurn 0 0.421813 0.578187 0 -2.89874 - 
@@ -897,9 +870,6 @@ whiteValueTargetsByTurn 1 1 0 0 6.5 6.5
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -969,11 +939,9 @@ gameHash C4CA85CF93309DA12400D24AF3209C6C
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 policyTargetsByTurn 0 unreducedNumVisits 20 G9 10 G8 10 J6 1 
 whiteValueTargetsByTurn 0 0.489236 0.510764 0 -0.0560741 - 
@@ -1023,9 +991,6 @@ whiteValueTargetsByTurn 1 1 0 0 7.5 7.5
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -1095,11 +1060,9 @@ gameHash F0C3A205E81485880626D9CBB1F22C66
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 C4 21 H3 29 H4 15 D3 14 D4 14 J4 5 
 whiteValueTargetsByTurn 0 0.525839 0.474161 0 1.36822 - 
@@ -1149,9 +1112,6 @@ whiteValueTargetsByTurn 1 1 0 0 6.5 6.5
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -1221,11 +1181,9 @@ gameHash B5862C4371380EA82F8ADC75B032A670
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 D3 28 C4 34 D4 33 C3 1 
 whiteValueTargetsByTurn 0 0.523102 0.476898 0 1.14998 - 
@@ -1275,9 +1233,6 @@ whiteValueTargetsByTurn 1 1 0 0 7.5 7.5
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -1347,11 +1302,9 @@ gameHash 18164CE8164D05B4F78F602C9AE31025
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 policyTargetsByTurn 0 unreducedNumVisits 20 G4 10 G9 6 G2 3 C8 1 H2 1 
 whiteValueTargetsByTurn 0 0.564559 0.435441 0 2.39098 - 
@@ -1401,9 +1354,6 @@ whiteValueTargetsByTurn 1 1 0 0 6.5 6.5
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -1472,12 +1422,10 @@ Last moves D8 H4 H8 E3 D4 E4 J4
 gameHash D95FC0973336CC48E6972AF3116C5676
 hitTurnLimit 1
 numExtraBlack 1
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 D5 25 J4 56 E5 16 D6 1 
 whiteValueTargetsByTurn 0 0.509799 0.490201 0 1.32181 - 
@@ -1585,9 +1533,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves D8 H4 F7 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -1656,12 +1601,10 @@ Last moves F1 D9
 gameHash C955C93B23BDC7F989693877BB05C707
 hitTurnLimit 1
 numExtraBlack 1
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 policyTargetsByTurn 0 unreducedNumVisits 20 D9 10 C8 8 J8 6 H9 4 D8 6 H8 4 
 whiteValueTargetsByTurn 0 0.679427 0.320573 0 8.68437 - 
@@ -1769,9 +1712,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves F1 J8 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -1840,12 +1780,10 @@ Last moves J8 D3 H4 C6 E8
 gameHash 96201DE2ACCCAC23493F193881269A7D
 hitTurnLimit 1
 numExtraBlack 1
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 E8 62 E9 23 F8 10 F9 1 D4 1 
 whiteValueTargetsByTurn 0 0.475394 0.524606 0 0.0513598 - 
@@ -1953,9 +1891,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves J8 D3 J10 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -2024,12 +1959,10 @@ Last moves J8 C4
 gameHash 2BB4F269E8391F77E62A23BDA5BA4365
 hitTurnLimit 1
 numExtraBlack 1
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 20 C4 10 D3 3 H3 4 D4 1 H4 1 
 whiteValueTargetsByTurn 0 0.527197 0.472803 0 2.32894 - 
@@ -2109,9 +2042,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves J8 J5 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -2180,12 +2110,10 @@ Last moves C4 J4 G3 C8 J6
 gameHash AC5F3AA1F3A3CB687CBE89DE85436AF0
 hitTurnLimit 1
 numExtraBlack 1
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 policyTargetsByTurn 0 unreducedNumVisits 20 J6 12 E9 3 D9 3 J7 1 
 whiteValueTargetsByTurn 0 0.538327 0.461673 0 2.81561 - 
@@ -2293,9 +2221,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves C4 J4 G3 C8 B11 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -2364,12 +2289,10 @@ Last moves J2 D8 H9 F9 H7 J4 G3
 gameHash 8A52A576B6EAB7F2E5477B5BCC2636CC
 hitTurnLimit 1
 numExtraBlack 1
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 G3 71 G4 15 H3 9 H4 3 
 whiteValueTargetsByTurn 0 0.525389 0.474611 0 1.69337 - 
@@ -2449,9 +2372,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves J2 D8 H9 F9 L3 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -2520,12 +2440,10 @@ Last moves C4 C8 E9 D4 C5
 gameHash A67FA30DCD5DB1C7C2D4E51F52D68606
 hitTurnLimit 1
 numExtraBlack 1
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 C5 46 D3 14 C3 15 D5 22 
 whiteValueTargetsByTurn 0 0.476108 0.523893 0 -0.203081 - 
@@ -2603,9 +2521,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves C4 C8 E9 D4 D5 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -2674,12 +2589,10 @@ Last moves H9 D3 C8 C5 H7 J5 H5
 gameHash 6559E5DFDB9F3EE7BD5C3845E0D09191
 hitTurnLimit 1
 numExtraBlack 1
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 policyTargetsByTurn 0 unreducedNumVisits 20 H5 11 E3 6 J4 1 F3 1 
 whiteValueTargetsByTurn 0 0.434649 0.565351 0 -2.09095 - 
@@ -2785,9 +2698,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves H9 D3 C8 C5 H7 J5 E3 E4 F3 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -2856,12 +2766,10 @@ Last moves F9 D4 C8 J8
 gameHash AF0DF292550206975B2A6639C1A3D35B
 hitTurnLimit 1
 numExtraBlack 1
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 J8 50 H8 35 H9 12 C7 1 F3 1 
 whiteValueTargetsByTurn 0 0.493782 0.506218 0 0.516775 - 
@@ -2941,9 +2849,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves F9 A8 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -3012,12 +2917,10 @@ Last moves K8 J4 H3 J8 J9 H9 H8 J7 G9 H10 J10 K7 G10 H7 G8
 gameHash 19008B1DB1B6459D38E62D5875FCBCC6
 hitTurnLimit 1
 numExtraBlack 1
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 policyTargetsByTurn 0 unreducedNumVisits 20 G8 18 H11 1 
 whiteValueTargetsByTurn 0 0.426293 0.573707 0 -1.87102 - 
@@ -3125,9 +3028,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves K8 J4 H3 J8 J9 H9 H8 J7 C1 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -3196,12 +3096,10 @@ Last moves J6 D7 D9 C9 C10
 gameHash 7E84011A7DDC3872C809446E4F7FF594
 hitTurnLimit 1
 numExtraBlack 2
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 C10 92 C8 7 
 whiteValueTargetsByTurn 0 0.477875 0.522125 0 -0.239921 - 
@@ -3281,9 +3179,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves J6 A8 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -3352,12 +3247,10 @@ Last moves J8 J3 H3 J4 F3 J6 G8
 gameHash 6A9CEB8D996D7BAB79906B4049E78B1F
 hitTurnLimit 1
 numExtraBlack 2
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 G8 93 H7 5 G7 0 
 whiteValueTargetsByTurn 0 0.558538 0.441462 0 4.02049 - 
@@ -3465,9 +3358,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves J8 J3 H3 J4 F3 J6 F7 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -3536,12 +3426,10 @@ Last moves K5 D9
 gameHash E7EB57DE5C2CE1F2D610B58027D2087D
 hitTurnLimit 1
 numExtraBlack 2
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 policyTargetsByTurn 0 unreducedNumVisits 20 D9 13 D8 3 C8 3 
 whiteValueTargetsByTurn 0 0.565377 0.434623 0 4.00981 - 
@@ -3649,9 +3537,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves K5 G8 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -3720,12 +3605,10 @@ Last moves H8 D3 C5 J6 F3 E4 H5 J4 J5 K5 J3
 gameHash DAD52EDB23D1D37CED8AAC10B7DDECB4
 hitTurnLimit 1
 numExtraBlack 2
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 J3 62 H6 20 H4 15 K6 1 
 whiteValueTargetsByTurn 0 0.454822 0.545178 0 -1.61142 - 
@@ -3775,9 +3658,6 @@ whiteValueTargetsByTurn 1 1 0 0 33.5 33.5
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -3846,12 +3726,10 @@ Last moves H8 H3
 gameHash B76AFD8D35B1E47D4EFD571400824109
 hitTurnLimit 1
 numExtraBlack 2
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 J4 28 H3 44 H4 22 J3 1 
 whiteValueTargetsByTurn 0 0.607812 0.392188 0 6.23538 - 
@@ -3901,9 +3779,6 @@ whiteValueTargetsByTurn 1 1 0 0 39 39
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -3972,12 +3847,10 @@ Last moves H8 H4 J3 J4 H3 F9 G9 F8 D9 G4
 gameHash B9DE6E77FD2D5F504DF3846C64D1E504
 hitTurnLimit 1
 numExtraBlack 2
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 F4 32 G3 17 G4 44 H7 0 F5 1 
 whiteValueTargetsByTurn 0 0.560364 0.439636 0 3.8811 - 
@@ -4083,9 +3956,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves H8 H4 J3 J4 H3 F9 G9 F8 D9 F5 F3 J9 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -4154,12 +4024,10 @@ Last moves J9 D3 C6 C5 D6 J8 H8 J7
 gameHash B635C197BBEACDDAB2C6E69F14460906
 hitTurnLimit 1
 numExtraBlack 2
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 J7 99 
 whiteValueTargetsByTurn 0 0.485836 0.514164 0 0.148094 - 
@@ -4239,9 +4107,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves J9 D3 C6 C5 D6 J8 H8 C3 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -4310,12 +4175,10 @@ Last moves J9 C3 C6 F3 G3
 gameHash 7034EA379A2CA8F9957D39FC5538D083
 hitTurnLimit 1
 numExtraBlack 2
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 G3 72 F4 10 G5 6 F5 3 C4 5 H6 1 D3 1 
 whiteValueTargetsByTurn 0 0.556808 0.443192 0 3.67258 - 
@@ -4421,9 +4284,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves J9 C3 C6 F3 J2 G5 J6 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -4492,12 +4352,10 @@ Last moves J5 D9 F9 C7 C5 J3 H3 J4 H4 K5 J6 K6 K7 J7 J8 H2 G2 K2 K4 G3
 gameHash 575B57E7CCA7198399B9823D4159B648
 hitTurnLimit 1
 numExtraBlack 2
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 L4 11 H5 10 K3 7 G3 66 L7 1 
 whiteValueTargetsByTurn 0 0.672111 0.327889 0 7.02181 - 
@@ -4547,9 +4405,6 @@ whiteValueTargetsByTurn 1 1 0 0 35 35
  0.000 0.000 0.000 0.000 0.000 0.000 -1.000 1.000 0.000 1.000 0.000
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -4618,12 +4473,10 @@ Last moves J8 D9 C7 G9 H9
 gameHash 092A9EBF79E6116CB0ABF2E90249B771
 hitTurnLimit 1
 numExtraBlack 2
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 H9 65 H7 26 C9 5 E8 1 G8 1 H6 0 
 whiteValueTargetsByTurn 0 0.491386 0.508614 0 0.667169 - 
@@ -4673,9 +4526,6 @@ whiteValueTargetsByTurn 1 1 0 0 33.5 33.5
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -4745,11 +4595,9 @@ gameHash 9431DF76147417EFB9DD588EDD41DCCC
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 H5 79 E3 12 C9 6 
 whiteValueTargetsByTurn 0 0.427882 0.572118 0 -2.40332 - 
@@ -4827,9 +4675,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves H8 J4 D8 D4 G3 C6 J6 H3 G4 K6 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -4898,12 +4743,10 @@ Last moves J8 D9 C6 H9 J9 J4 G3
 gameHash 898004BD8463A055DF9463DCA0262323
 hitTurnLimit 1
 numExtraBlack 1
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 G3 51 H3 24 F9 21 G9 3 
 whiteValueTargetsByTurn 0 0.193147 0.806853 0 -11.6092 - 
@@ -4983,9 +4826,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves J8 D9 C6 H9 J9 J4 J3 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -5054,12 +4894,10 @@ Last moves C8 D4 B4 C6 B6 B7
 gameHash 9BCA2570417C0EFBDEBF2A97E14AD90E
 hitTurnLimit 1
 numExtraBlack 2
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 100 C5 37 B7 42 C7 7 B5 5 H8 6 D8 2 
 whiteValueTargetsByTurn 0 0.0585428 0.941457 0 -24.0108 - 
@@ -5137,9 +4975,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves C8 D4 B4 C6 B6 F2 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -5209,11 +5044,9 @@ gameHash 7776EFC4A6065CF09458404D8A9F94F5
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 policyTargetsByTurn 0 unreducedNumVisits 20 J4 10 H3 7 H4 4 
 whiteValueTargetsByTurn 0 0.552598 0.447402 0 2.5188 - 
@@ -5321,9 +5154,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves D10 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -5393,11 +5223,9 @@ gameHash B4A990616A0DF276B610DBEDD12D3AB7
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 policyTargetsByTurn 0 unreducedNumVisits 20 D8 10 D9 7 C8 2 
 whiteValueTargetsByTurn 0 0.535342 0.464658 0 2.11885 - 
@@ -5447,9 +5275,6 @@ whiteValueTargetsByTurn 1 1 0 0 7 7
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -5518,12 +5343,10 @@ Last moves H7 C8 B7 C4
 gameHash BEC4490547C8EF200593CC971C46DE00
 hitTurnLimit 1
 numExtraBlack 1
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 policyTargetsByTurn 0 unreducedNumVisits 20 C4 16 D4 1 H9 2 
 whiteValueTargetsByTurn 0 0.579835 0.420165 0 4.30861 - 
@@ -5573,9 +5396,6 @@ whiteValueTargetsByTurn 1 1 0 0 19 19
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -5644,12 +5464,10 @@ Last moves J8
 gameHash C87A8530B346956ECA97B5FD82AF894E
 hitTurnLimit 1
 numExtraBlack 1
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 policyTargetsByTurn 0 unreducedNumVisits 20 J8 16 H9 1 J9 1 H8 1 
 whiteValueTargetsByTurn 0 0.490642 0.509358 0 0.646035 - 
@@ -5757,9 +5575,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves H7 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -5828,12 +5643,10 @@ Last moves J3 C3 B5 E3 B3 G8 E8 H5 G3 J4
 gameHash CA1F9BC46A1FEDDC841ECC408E887FBE
 hitTurnLimit 1
 numExtraBlack 2
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 policyTargetsByTurn 0 unreducedNumVisits 20 J4 10 G4 6 F5 4 J9 1 
 whiteValueTargetsByTurn 0 0.512217 0.487783 0 1.34971 - 
@@ -5941,9 +5754,6 @@ Past normal phase end 0
 Game result 0 Empty 0 0 0 0
 Last moves J3 C3 B5 E3 B3 G8 D3 
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -6012,12 +5822,10 @@ Last moves H3 D9 C7 C8
 gameHash 788E431D29772F19CB9EA9ACB8775605
 hitTurnLimit 1
 numExtraBlack 2
-mode 0
-modeMeta1 0
-modeMeta2 0
+mode 3
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 policyTargetsByTurn 0 unreducedNumVisits 20 C8 13 J5 5 F9 1 
 whiteValueTargetsByTurn 0 0.463259 0.536741 0 -0.734867 - 
@@ -6140,11 +5948,9 @@ gameHash 9B9773F98CDC7DFB3FC3B09AEAFF2EB0
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 targetWeightByTurn 1 1
 targetWeightByTurn 2 1
@@ -6236,9 +6042,6 @@ whiteValueTargetsByTurn 15 1 0 0 7.5 7.5
  0.000 0.000 0.000 -1.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -6308,11 +6111,9 @@ gameHash 6E9BCF43AD35F4582B86F89C41FE99CD
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 1
 targetWeightByTurn 1 1
 targetWeightByTurn 2 1
@@ -6449,9 +6250,6 @@ whiteValueTargetsByTurn 30 1 0 0 7.5 7.5
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -6521,11 +6319,9 @@ gameHash FEEA12FFA8E8B8D2AF727B35B7D0A7DE
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 targetWeightByTurn 1 1
 targetWeightByTurn 2 1
@@ -6662,9 +6458,6 @@ whiteValueTargetsByTurn 30 1 0 0 7 7
  0.000 0.000 0.000 1.000 1.000 -1.000 1.000 0.000 0.000 0.000 0.000
  0.000 0.000 0.000 0.000 0.000 1.000 0.000 0.000 0.000 0.000 0.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 ====================================================================================================
 ====================================================================================================
 ====================================================================================================
@@ -6686,6 +6479,7 @@ seedBase: test surprise!
 
 Root visits: 100
 Policy surprise 0.104435
+Raw WL -0.0148067
 PV: H9 H4 J6 C6 C5 D6
 Tree:
 : T   5.53c W   4.75c S   0.78c ( +1.3 L  +1.3) N     100  --  H9 H4 J6 C6 C5 D6
@@ -6714,6 +6508,7 @@ H3  : T   9.99c W   8.81c S   1.17c ( +2.0 L  +2.0) LCB   43.92c P  9.64% WF 15.
 
 Root visits: 50
 Policy surprise 0.0891616
+Raw WL 0.092012
 PV: J4 G3 J7 J8 H7 F9 H3 G4 C4
 Tree:
 : T   4.60c W   3.92c S   0.68c ( +1.2 L  +1.2) N      50  --  J4 G3 J7 J8 H7 F9 H3
@@ -6739,6 +6534,7 @@ H4  : T   3.62c W   3.05c S   0.57c ( +1.0 L  +1.0) LCB  -10.11c P 32.77% WF 32.
 
 Root visits: 100
 Policy surprise 0.105007
+Raw WL -0.0817821
 PV: G3 J7 J8 H7 F9 H3 G4 C4 C5 C3 D5 E2
 Tree:
 : T   5.51c W   4.80c S   0.71c ( +1.2 L  +1.2) N     100  --  G3 J7 J8 H7 F9 H3 G4
@@ -6766,6 +6562,7 @@ G4  : T  23.99c W  21.04c S   2.95c ( +5.1 L  +5.1) LCB  260.00c P  3.53% WF 17.
 
 Root visits: 100
 Policy surprise 0.0842742
+Raw WL 0.162377
 PV: J7 J8 H7 F9 H3 G4 C4 C5 C3 D5 E2
 Tree:
 : T   4.81c W   4.17c S   0.63c ( +1.1 L  +1.1) N     100  --  J7 J8 H7 F9 H3 G4 C4
@@ -6793,6 +6590,7 @@ C4  : T  -6.02c W  -5.52c S  -0.49c ( -0.8 L  -0.8) LCB -260.00c P  2.92% WF 18.
 
 Root visits: 100
 Policy surprise 0.130182
+Raw WL -0.0671026
 PV: J8 H7 F9 H3 G4 C4 C5 C3 D5 E2 F2 E3
 Tree:
 : T   5.85c W   5.12c S   0.73c ( +1.2 L  +1.2) N     100  --  J8 H7 F9 H3 G4 C4 C5
@@ -6820,6 +6618,7 @@ F9  : T  22.64c W  19.76c S   2.88c ( +5.0 L  +5.0) LCB  260.00c P  2.83% WF 18.
 
 Root visits: 100
 Policy surprise 0.104439
+Raw WL 0.144677
 PV: H7 F9 H3 G4 C4 C5 C3 D5 E2 F2 E3 F5
 Tree:
 : T   6.49c W   5.71c S   0.78c ( +1.3 L  +1.3) N     100  --  H7 F9 H3 G4 C4 C5 C3
@@ -6843,6 +6642,7 @@ H7  : T   6.39c W   5.62c S   0.77c ( +1.3 L  +1.3) LCB    0.85c P 90.08% WF 100
 
 Root visits: 100
 Policy surprise 0.128561
+Raw WL -0.089275
 PV: F9 H3 G4 C4 C5 C3 D5 E2 F2 E3 F5
 Tree:
 : T   6.64c W   5.84c S   0.79c ( +1.3 L  +1.3) N     100  --  F9 H3 G4 C4 C5 C3 D5
@@ -6868,6 +6668,7 @@ D9  : T  10.00c W   8.76c S   1.23c ( +2.1 L  +2.1) LCB  138.19c P  2.90% WF 32.
 
 Root visits: 100
 Policy surprise 0.19233
+Raw WL 0.147448
 PV: H3 G4 C4 C5 C3 D5 E2 F2 E3 F5 F8
 Tree:
 : T   6.18c W   5.47c S   0.72c ( +1.2 L  +1.2) N     100  --  H3 G4 C4 C5 C3 D5 E2
@@ -6895,6 +6696,7 @@ C6  : T -14.49c W -13.40c S  -1.09c ( -1.8 L  -1.8) LCB -260.00c P  5.73% WF 17.
 
 Root visits: 100
 Policy surprise 0.0959179
+Raw WL -0.0507668
 PV: G4 C4 C5 C3 D5 E2 F2 E3 F5 H2 B8
 Tree:
 : T   7.40c W   6.57c S   0.83c ( +1.4 L  +1.4) N     100  --  G4 C4 C5 C3 D5 E2 F2
@@ -6921,6 +6723,7 @@ H2  : T   4.20c W   3.53c S   0.68c ( +1.1 L  +1.1) LCB   28.15c P  4.67% WF 25.
 
 Root visits: 50
 Policy surprise 0.268884
+Raw WL 0.157433
 PV: C4 C5 C3 D5 E2 F2 E3 F5 H2 B8
 Tree:
 : T   9.86c W   8.83c S   1.03c ( +1.7 L  +1.7) N      50  --  C4 C5 C3 D5 E2 F2 E3
@@ -6946,6 +6749,7 @@ C6  : T -13.02c W -11.97c S  -1.05c ( -1.8 L  -1.8) LCB -260.00c P  9.52% WF 28.
 
 Root visits: 50
 Policy surprise 0.134046
+Raw WL -0.134252
 PV: C5 C3 D5 E2 F2 E3 F5 H2 B8
 Tree:
 : T   9.51c W   8.51c S   1.00c ( +1.7 L  +1.7) N      50  --  C5 C3 D5 E2 F2 E3 F5
@@ -6970,6 +6774,7 @@ C3  : T  19.90c W  18.07c S   1.83c ( +2.9 L  +2.9) LCB   36.94c P 44.69% WF 43.
 
 Root visits: 50
 Policy surprise 0.0583133
+Raw WL 0.154526
 PV: C3 D5 E2 F2 E3 F5 H2 B8
 Tree:
 : T   5.35c W   4.71c S   0.64c ( +1.1 L  +1.1) N      50  --  C3 D5 E2 F2 E3 F5 H2
@@ -6993,6 +6798,7 @@ C3  : T   5.10c W   4.49c S   0.61c ( +1.1 L  +1.1) LCB   -1.85c P 94.34% WF 100
 
 Root visits: 100
 Policy surprise 0.109673
+Raw WL 0.00285947
 PV: D5 E2 F7 E9 C9 C8 E10 F8 G8
 Tree:
 : T   3.10c W   2.68c S   0.42c ( +0.7 L  +0.7) N     100  --  D5 E2 F7 E9 C9 C8 E10
@@ -7019,6 +6825,7 @@ D6  : T  10.33c W   9.03c S   1.30c ( +2.3 L  +2.3) LCB  260.00c P  4.96% WF 24.
 
 Root visits: 50
 Policy surprise 0.102461
+Raw WL 0.0389491
 PV: E2 F2 E3 F5 C7 B4
 Tree:
 : T   4.31c W   3.75c S   0.56c ( +1.0 L  +1.0) N      50  --  E2 F2 E3 F5 C7 B4
@@ -7044,6 +6851,7 @@ E9  : T -14.20c W -13.09c S  -1.11c ( -2.0 L  -2.0) LCB -260.00c P  6.74% WF 29.
 
 Root visits: 100
 Policy surprise 0.425297
+Raw WL -0.117405
 PV: B8 F8 G8 G7 F7 E8
 Tree:
 : T   3.21c W   2.76c S   0.46c ( +0.8 L  +0.8) N     100  --  B8 F8 G8 G7 F7 E8
@@ -7076,6 +6884,7 @@ G2  : T  22.96c W  20.57c S   2.39c ( +4.2 L  +4.2) LCB  260.00c P  3.53% WF  8.
 
 Root visits: 50
 Policy surprise 0.195535
+Raw WL 0.103196
 PV: F8 G8 G7 F7 E8 F6
 Tree:
 : T  -2.64c W  -2.51c S  -0.13c ( -0.2 L  -0.2) N      50  --  F8 G8 G7 F7 E8 F6
@@ -7105,6 +6914,7 @@ B7  : T -13.02c W -11.90c S  -1.12c ( -2.0 L  -2.0) LCB -250.06c P  7.01% WF 12.
 
 Root visits: 50
 Policy surprise 0.530993
+Raw WL -0.0801108
 PV: G8 G7 F7 E8 F6 H8 G9 J9 J10 K8 K9 E10
 Tree:
 : T  -8.88c W  -8.15c S  -0.74c ( -1.3 L  -1.3) N      50  --  G8 G7 F7 E8 F6 H8 G9
@@ -7131,6 +6941,7 @@ F2  : T  26.46c W  23.57c S   2.89c ( +5.0 L  +5.0) LCB  260.00c P  4.17% WF 21.
 
 Root visits: 50
 Policy surprise 0.131949
+Raw WL -0.0589053
 PV: G7 F7 E8 F6 H8 G9 J9 J10 K8 K9 E10
 Tree:
 : T -14.34c W -13.06c S  -1.29c ( -2.3 L  -2.3) N      50  --  G7 F7 E8 F6 H8 G9 J9
@@ -7156,6 +6967,7 @@ E9  : T -18.45c W -16.73c S  -1.73c ( -3.1 L  -3.1) LCB -176.32c P  6.65% WF 32.
 
 Root visits: 50
 Policy surprise 0.385972
+Raw WL -0.0126394
 PV: F7 E8 F6 H8 G9 J9 J10 K8 K9 B7 C7 C8
 Tree:
 : T -12.91c W -11.83c S  -1.08c ( -2.0 L  -2.0) N      50  --  F7 E8 F6 H8 G9 J9 J10
@@ -7181,6 +6993,7 @@ H4  : T  26.47c W  23.61c S   2.86c ( +5.0 L  +5.0) LCB  260.00c P  5.63% WF 26.
 
 Root visits: 50
 Policy surprise 0.0890754
+Raw WL -0.0789392
 PV: E8 F6 H8 G9 J9 J10 K8 K9 E10 C9 K10
 Tree:
 : T -15.13c W -13.81c S  -1.32c ( -2.4 L  -2.4) N      50  --  E8 F6 H8 G9 J9 J10 K8
@@ -7205,6 +7018,7 @@ H8  : T -33.29c W -30.25c S  -3.04c ( -5.0 L  -5.0) LCB -260.00c P 10.42% WF 44.
 
 Root visits: 100
 Policy surprise 0.256813
+Raw WL -0.0709497
 PV: F6 H8 G9 J9 J10 K8 K9 E9 C9 K10 J8 L9
 Tree:
 : T  -7.10c W  -6.61c S  -0.50c ( -0.9 L  -0.9) N     100  --  F6 H8 G9 J9 J10 K8 K9
@@ -7232,6 +7046,7 @@ J5  : T  13.52c W  12.11c S   1.41c ( +2.5 L  +2.5) LCB  260.00c P  3.98% WF 18.
 
 Root visits: 100
 Policy surprise 0.75396
+Raw WL -0.0293048
 PV: B9 D10 B7 C8 C7 C9 B5 D7 H8 G9
 Tree:
 : T  -7.44c W  -6.90c S  -0.54c ( -1.0 L  -1.0) N     100  --  B9 D10 B7 C8 C7 C9 B5
@@ -7262,6 +7077,7 @@ F10 : T -33.37c W -30.38c S  -3.00c ( -5.4 L  -5.4) LCB -260.00c P  3.39% WF 11.
 
 Root visits: 50
 Policy surprise 0.346897
+Raw WL -0.139907
 PV: D10 B7 C8 C7 C9 B5 D7 H8 G9
 Tree:
 : T   1.50c W   1.15c S   0.35c ( +0.6 L  +0.6) N      50  --  D10 B7 C8 C7 C9 B5 D7
@@ -7291,6 +7107,7 @@ D3  : T   2.71c W   2.22c S   0.49c ( +0.9 L  +0.9) LCB  260.00c P  4.55% WF 14.
 
 Root visits: 50
 Policy surprise 0.370288
+Raw WL -0.136439
 PV: B7 C8 C7 C9 B5 D7 H8 G9 J9 B6 C6 D6
 Tree:
 : T  -1.60c W  -1.38c S  -0.22c ( -0.5 L  -0.5) N      50  --  B7 C8 C7 C9 B5 D7 H8
@@ -7319,6 +7136,7 @@ C8  : T -30.07c W -27.38c S  -2.68c ( -4.9 L  -4.9) LCB -260.00c P  7.09% WF 14.
 
 Root visits: 50
 Policy surprise 0.26411
+Raw WL 0.0181588
 PV: C8 C7 C9 B5 D7 H8 G9 J9 B6 C6 B4 A6 B3
 Tree:
 : T   6.29c W   5.71c S   0.58c ( +1.0 L  +1.0) N      50  --  C8 C7 C9 B5 D7 H8 G9
@@ -7346,6 +7164,7 @@ D3  : T  22.04c W  19.75c S   2.29c ( +4.0 L  +4.0) LCB  260.00c P  4.31% WF 18.
 
 Root visits: 100
 Policy surprise 0.344215
+Raw WL 0.102318
 PV: C7 C9 B5 D7 H8 G9 J9 B6 C6 B4 A6 B3 B2 D3 C2 D2
 Tree:
 : T   6.75c W   6.18c S   0.57c ( +0.9 L  +0.9) N     100  --  C7 C9 B5 D7 H8 G9 J9
@@ -7373,6 +7192,7 @@ E10 : T -37.28c W -33.57c S  -3.72c ( -6.8 L  -6.8) LCB -260.00c P  3.20% WF 16.
 
 Root visits: 100
 Policy surprise 0.0199884
+Raw WL -0.0184343
 PV: C9 B5 D7 H8 G9 J9 B6 C6 B4 A6 B3 B2 D3 C2 D2
 Tree:
 : T   9.66c W   8.79c S   0.86c ( +1.4 L  +1.4) N     100  --  C9 B5 D7 H8 G9 J9 B6
@@ -7396,6 +7216,7 @@ C9  : T   9.77c W   8.90c S   0.87c ( +1.4 L  +1.4) LCB   21.92c P 98.02% WF 100
 
 Root visits: 50
 Policy surprise 0.172673
+Raw WL 0.0968913
 PV: B5 D7 H8 G9 J9 B6 C6 B4 A6 B3 B2 D3 C2
 Tree:
 : T  16.80c W  15.41c S   1.39c ( +2.2 L  +2.2) N      50  --  B5 D7 H8 G9 J9 B6 C6
@@ -7420,6 +7241,7 @@ H8  : T -23.92c W -21.87c S  -2.05c ( -3.6 L  -3.6) LCB -260.00c P  7.96% WF 39.
 
 Root visits: 50
 Policy surprise 0.156967
+Raw WL 0.186426
 PV: D7 H8 G9 J9 B6 C6 B4 A6 B3 B2 D3 C2
 Tree:
 : T  18.22c W  16.75c S   1.47c ( +2.3 L  +2.3) N      50  --  D7 H8 G9 J9 B6 C6 B4
@@ -7445,6 +7267,7 @@ B4  : T  37.74c W  33.43c S   4.32c ( +7.8 L  +7.8) LCB  260.00c P  7.79% WF 29.
 
 Root visits: 50
 Policy surprise 0.606059
+Raw WL -0.0282618
 PV: H8 G9 J9 B6 C6 B4 A6 B3 B2 D3 C2 D2
 Tree:
 : T  20.07c W  18.51c S   1.57c ( +2.4 L  +2.4) N      50  --  H8 G9 J9 B6 C6 B4 A6
@@ -7520,11 +7343,9 @@ gameHash A279FB3BA70021780D44E8F3D8A33018
 hitTurnLimit 1
 numExtraBlack 0
 mode 0
-modeMeta1 0
-modeMeta2 0
+beganInEncorePhase 0
+usedInitialPosition 0
 hasFullData 1
-dataXLen 11
-dataYLen 11
 targetWeightByTurn 0 0
 targetWeightByTurn 1 0
 targetWeightByTurn 2 0
@@ -7661,9 +7482,214 @@ whiteValueTargetsByTurn 30 1 0 0 7.5 7.5
  0.000 0.000 0.000 0.000 1.000 0.000 0.000 0.000 0.000 0.000 0.000
  0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
 
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
+====================================================================================================
+====================================================================================================
+====================================================================================================
+seedBase: test value surprise!
+bName test
+wName test
+bIdx 0
+wIdx 0
+startPla X
+start
+HASH: 02CC2C75236DC4CE6B76B77510259151
+   A B C D E F G H J K L
+11 . . . . . . . . . . .
+10 . . . . . . . . . . .
+ 9 . . . X . O . X . . .
+ 8 . . . . . . . . . . .
+ 7 . . . . . . . . . . .
+ 6 . . . . . . . . . . .
+ 5 . . . . . . . . . . .
+ 4 . . . O . . . . . . .
+ 3 . . . . . . . . . . .
+ 2 . . . . . . . . . . .
+ 1 . . . . . . . . . . .
+
+
+Initial pla Black
+Encore phase 0
+Turns this phase 4
+Rules koPOSITIONALscoreAREAtaxNONEsui1komi7.5
+Ko recap block hash 00000000000000000000000000000000
+White bonus score 0
+White handicap bonus score 0
+Has button 0
+Presumed next pla Black
+Past normal phase end 0
+Game result 0 Empty 0 0 0 0
+Last moves D9 F9 H9 D4 
+end
+HASH: 309534CB6E278CA08BB3FAEC2BF11E9F
+   A B C D E F G H J K L
+11 . . . . . . . . . . .
+10 . . . . . . . . . . .
+ 9 . . . X . O . X X . .
+ 8 . . . . . . . . . X .
+ 7 . . X X . O O X X O .
+ 6 . . O O O . X O O O .
+ 5 . . . . . X X X O . .
+ 4 . . . O . X O O X O .
+ 3 . . . . . X . . X O .
+ 2 . . . . . . . . X O .
+ 1 . . . . . . . . . . .
+
+
+Initial pla Black
+Encore phase 0
+Turns this phase 34
+Rules koPOSITIONALscoreAREAtaxNONEsui1komi7.5
+Ko recap block hash 00000000000000000000000000000000
+White bonus score 0
+White handicap bonus score 0
+Has button 0
+Presumed next pla Black
+Past normal phase end 0
+Game result 0 Empty 0 0 0 0
+Last moves D9 F9 H9 D4 D7 H4 H7 F7 G5 G4 F5 E6 F4 D6 C7 C6 F3 J6 J7 H6 G6 G7 H5 J5 J4 K4 J3 K3 J2 K7 K8 K6 J9 K2 
+gameHash 4BDE43E0F1C397716C7FAAEF32C50572
+hitTurnLimit 1
+numExtraBlack 0
+mode 0
+beganInEncorePhase 0
+usedInitialPosition 0
+hasFullData 1
+targetWeightByTurn 0 0.890113
+targetWeightByTurn 1 0.871235
+targetWeightByTurn 2 0.394177
+targetWeightByTurn 3 0.888174
+targetWeightByTurn 4 0.393331
+targetWeightByTurn 5 0.400336
+targetWeightByTurn 6 0.85903
+targetWeightByTurn 7 0.423557
+targetWeightByTurn 8 0.393757
+targetWeightByTurn 9 0.891493
+targetWeightByTurn 10 0.894511
+targetWeightByTurn 11 0.879742
+targetWeightByTurn 12 0.399085
+targetWeightByTurn 13 0.951275
+targetWeightByTurn 14 0.85018
+targetWeightByTurn 15 0.447477
+targetWeightByTurn 16 0.392731
+targetWeightByTurn 17 1.12869
+targetWeightByTurn 18 0.995277
+targetWeightByTurn 19 0.503249
+targetWeightByTurn 20 0.404562
+targetWeightByTurn 21 0.408738
+targetWeightByTurn 22 0.393603
+targetWeightByTurn 23 0.853761
+targetWeightByTurn 24 0.412706
+targetWeightByTurn 25 0.398897
+targetWeightByTurn 26 1.04071
+targetWeightByTurn 27 0.585216
+targetWeightByTurn 28 1.15341
+targetWeightByTurn 29 1.25298
+policyTargetsByTurn 0 unreducedNumVisits 100 H4 19 H3 19 D7 24 J4 20 H7 6 C7 7 C6 3 
+policyTargetsByTurn 1 unreducedNumVisits 100 H4 43 J4 42 H3 3 H8 3 J7 6 
+policyTargetsByTurn 2 unreducedNumVisits 50 H7 38 J7 10 J6 1 
+policyTargetsByTurn 3 unreducedNumVisits 100 F7 39 F4 19 J5 14 J6 10 C6 5 C5 10 
+policyTargetsByTurn 4 unreducedNumVisits 50 G5 14 J4 10 F6 9 C4 11 E5 3 
+policyTargetsByTurn 5 unreducedNumVisits 50 G4 32 E6 10 H6 6 H5 1 
+policyTargetsByTurn 6 unreducedNumVisits 100 F5 61 E5 19 H5 9 E6 9 F4 1 
+policyTargetsByTurn 7 unreducedNumVisits 50 E6 27 H5 12 F4 6 H6 4 
+policyTargetsByTurn 8 unreducedNumVisits 50 F4 40 H5 7 E5 0 E4 1 
+policyTargetsByTurn 9 unreducedNumVisits 100 D6 76 F3 10 C6 4 H6 4 H5 4 J6 1 
+policyTargetsByTurn 10 unreducedNumVisits 100 C7 75 F3 10 C6 6 H5 7 F2 0 
+policyTargetsByTurn 11 unreducedNumVisits 100 C6 40 H6 5 H5 26 F3 12 J5 7 J6 9 
+policyTargetsByTurn 12 unreducedNumVisits 50 F3 23 H5 9 F2 7 E3 6 J5 3 G3 1 
+policyTargetsByTurn 13 unreducedNumVisits 100 J5 25 J6 60 H5 7 H6 6 
+policyTargetsByTurn 14 unreducedNumVisits 100 J7 58 H6 20 J3 9 
+policyTargetsByTurn 15 unreducedNumVisits 50 H6 41 H2 5 J3 3 
+policyTargetsByTurn 16 unreducedNumVisits 50 G6 41 G7 2 H2 1 H5 2 J3 1 
+policyTargetsByTurn 17 unreducedNumVisits 100 G7 67 H2 4 J3 28 
+policyTargetsByTurn 18 unreducedNumVisits 100 J3 7 J4 3 H5 84 H2 2 K6 2 
+policyTargetsByTurn 19 unreducedNumVisits 50 J5 29 K6 20 
+policyTargetsByTurn 20 unreducedNumVisits 50 J4 48 J3 1 
+policyTargetsByTurn 21 unreducedNumVisits 50 K4 37 K7 8 J3 3 
+policyTargetsByTurn 22 unreducedNumVisits 50 J3 49 
+policyTargetsByTurn 23 unreducedNumVisits 100 K3 93 K7 5 
+policyTargetsByTurn 24 unreducedNumVisits 50 J2 46 K2 2 K7 1 
+policyTargetsByTurn 25 unreducedNumVisits 50 K7 44 K2 4 J9 1 
+policyTargetsByTurn 26 unreducedNumVisits 100 K8 99 
+policyTargetsByTurn 27 unreducedNumVisits 50 K6 27 L6 17 L7 2 J8 2 
+policyTargetsByTurn 28 unreducedNumVisits 50 K2 5 J9 27 K9 9 J8 3 
+policyTargetsByTurn 29 unreducedNumVisits 50 K2 45 L5 2 E2 1 
+whiteValueTargetsByTurn 0 0.471729 0.528271 0 -0.61909 - 
+whiteValueTargetsByTurn 1 0.463663 0.536337 0 -0.867334 - 
+whiteValueTargetsByTurn 2 0.450546 0.549454 0 -1.34756 - 
+whiteValueTargetsByTurn 3 0.452402 0.547598 0 -1.32916 - 
+whiteValueTargetsByTurn 4 0.458073 0.541928 0 -1.20088 - 
+whiteValueTargetsByTurn 5 0.443511 0.556489 0 -1.77169 - 
+whiteValueTargetsByTurn 6 0.443142 0.556858 0 -1.71979 - 
+whiteValueTargetsByTurn 7 0.435006 0.564994 0 -2.29439 - 
+whiteValueTargetsByTurn 8 0.436501 0.563499 0 -2.42045 - 
+whiteValueTargetsByTurn 9 0.438304 0.561696 0 -2.37519 - 
+whiteValueTargetsByTurn 10 0.451615 0.548385 0 -1.8641 - 
+whiteValueTargetsByTurn 11 0.444078 0.555922 0 -2.23586 - 
+whiteValueTargetsByTurn 12 0.441299 0.558701 0 -2.22468 - 
+whiteValueTargetsByTurn 13 0.436279 0.563721 0 -2.5608 - 
+whiteValueTargetsByTurn 14 0.422892 0.577108 0 -3.23157 - 
+whiteValueTargetsByTurn 15 0.417362 0.582638 0 -3.53815 - 
+whiteValueTargetsByTurn 16 0.386287 0.613713 0 -5.16823 - 
+whiteValueTargetsByTurn 17 0.396158 0.603842 0 -4.60188 - 
+whiteValueTargetsByTurn 18 0.346224 0.653776 0 -6.96084 - 
+whiteValueTargetsByTurn 19 0.325912 0.674088 0 -7.92808 - 
+whiteValueTargetsByTurn 20 0.311902 0.688098 0 -8.31736 - 
+whiteValueTargetsByTurn 21 0.303763 0.696237 0 -8.78838 - 
+whiteValueTargetsByTurn 22 0.328709 0.671291 0 -7.62566 - 
+whiteValueTargetsByTurn 23 0.313211 0.686789 0 -8.4206 - 
+whiteValueTargetsByTurn 24 0.328144 0.671856 0 -7.64552 - 
+whiteValueTargetsByTurn 25 0.321762 0.678238 0 -7.95775 - 
+whiteValueTargetsByTurn 26 0.32558 0.67442 0 -7.79538 - 
+whiteValueTargetsByTurn 27 0.325389 0.674611 0 -7.81701 - 
+whiteValueTargetsByTurn 28 0.335171 0.664829 0 -6.97736 - 
+whiteValueTargetsByTurn 29 0.323511 0.676489 0 -7.38849 - 
+whiteValueTargetsByTurn 30 1 0 0 7.5 7.5 
+...........
+...........
+...X.O.XX..
+.........X.
+..XX.OOXXO.
+..OOO.XOOO.
+.....XXXO..
+...O.XOOXO.
+.....X..XO.
+........XO.
+...........
+...........
+...........
+...X.O.XX..
+.........X.
+..XX.OOXXO.
+..OOO.XOOO.
+.....XXXO..
+...O.XOOXO.
+.....X..XO.
+........XO.
+...........
+00000000000
+00000000000
+00010101100
+00000000010
+00110111110
+00111011110
+00000111100
+00010111110
+00000100110
+00000000110
+00000000000
+ 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
+ 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
+ 0.000 0.000 0.000 -1.000 0.000 1.000 0.000 -1.000 -1.000 0.000 0.000
+ 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 -1.000 0.000
+ 0.000 0.000 -1.000 -1.000 0.000 1.000 1.000 -1.000 -1.000 1.000 0.000
+ 0.000 0.000 1.000 1.000 1.000 0.000 -1.000 1.000 1.000 1.000 0.000
+ 0.000 0.000 0.000 0.000 0.000 -1.000 -1.000 -1.000 1.000 0.000 0.000
+ 0.000 0.000 0.000 1.000 0.000 -1.000 1.000 1.000 -1.000 1.000 0.000
+ 0.000 0.000 0.000 0.000 0.000 -1.000 0.000 0.000 -1.000 1.000 0.000
+ 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 -1.000 1.000 0.000
+ 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000
+
 HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
    A B C D E F G H J
  9 . . . . . . . . .
@@ -7678,9 +7704,6 @@ HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
 
 
 LEAD: -3.55227
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
    A B C D E F G H J
  9 . . . . . . . . .
@@ -7695,9 +7718,6 @@ HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
 
 
 LEAD: -3.05227
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
    A B C D E F G H J
  9 . . . . . . . . .
@@ -7712,9 +7732,6 @@ HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
 
 
 LEAD: -2.55227
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
    A B C D E F G H J
  9 . . . . . . . . .
@@ -7729,9 +7746,6 @@ HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
 
 
 LEAD: -2.05227
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
    A B C D E F G H J
  9 . . . . . . . . .
@@ -7746,9 +7760,6 @@ HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
 
 
 LEAD: -1.55227
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 HASH: E47BBD59BA73650CEBCE64675EBBF366
    A B C D E F G H J
  9 . X . . . . . . .
@@ -7763,9 +7774,6 @@ HASH: E47BBD59BA73650CEBCE64675EBBF366
 
 
 LEAD: -40.2736
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 HASH: E47BBD59BA73650CEBCE64675EBBF366
    A B C D E F G H J
  9 . X . . . . . . .
@@ -7780,9 +7788,6 @@ HASH: E47BBD59BA73650CEBCE64675EBBF366
 
 
 LEAD: -39.7736
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 HASH: E47BBD59BA73650CEBCE64675EBBF366
    A B C D E F G H J
  9 . X . . . . . . .
@@ -7797,9 +7802,6 @@ HASH: E47BBD59BA73650CEBCE64675EBBF366
 
 
 LEAD: -39.2736
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 HASH: E47BBD59BA73650CEBCE64675EBBF366
    A B C D E F G H J
  9 . X . . . . . . .
@@ -7814,9 +7816,6 @@ HASH: E47BBD59BA73650CEBCE64675EBBF366
 
 
 LEAD: -38.7736
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 HASH: E47BBD59BA73650CEBCE64675EBBF366
    A B C D E F G H J
  9 . X . . . . . . .
@@ -7831,9 +7830,6 @@ HASH: E47BBD59BA73650CEBCE64675EBBF366
 
 
 LEAD: -38.2736
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
    A B C D E F G H J
  9 . . . . . . . . .
@@ -7848,9 +7844,6 @@ HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
 
 
 LEAD: -3.91506
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
    A B C D E F G H J
  9 . . . . . . . . .
@@ -7865,9 +7858,6 @@ HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
 
 
 LEAD: -3.41506
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
    A B C D E F G H J
  9 . . . . . . . . .
@@ -7882,9 +7872,6 @@ HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
 
 
 LEAD: -2.91506
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
    A B C D E F G H J
  9 . . . . . . . . .
@@ -7899,9 +7886,6 @@ HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
 
 
 LEAD: -2.41506
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
    A B C D E F G H J
  9 . . . . . . . . .
@@ -7916,206 +7900,203 @@ HASH: 718CF87DDD7BB3C9003DC76AFC3C2A11
 
 
 LEAD: -1.91506
-: Cuda backend: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
-: Cuda backend: Model version 4 useFP16 = false useNHWC = false
-: Cuda backend: Model name: b6c96-s156348160-d118286860
 koSIMPLEscoreTERRITORYtaxNONEsui0komi-9.5
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.782389 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.782389 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxSEKIsui1button1komi6
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.44435 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.44435 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxNONEsui0komi7
-Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.0538644 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.0538644 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreTERRITORYtaxALLsui0komi18
-Start moves size 0 Start pla Black XY 12 12 Extra black 1 Draw equiv 0.491469 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 1 Draw equiv 0.491469 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxSEKIsui1komi31.5
-Start moves size 0 Start pla White XY 11 11 Extra black 1 Draw equiv 0.876903 Modes 1 2 0 Forkstuff 0 0
+Start moves size 0 Start pla White XY 11 11 Extra black 1 Draw equiv 0.876903 Mode 1 BeganInEncorePhase 2 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxSEKIsui0komi7.5
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.572023 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.572023 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxALLsui0button1komi7
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.735347 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.735347 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxSEKIsui1komi7
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.0643361 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.0643361 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreTERRITORYtaxNONEsui1komi8.5
-Start moves size 0 Start pla Black XY 11 11 Extra black 1 Draw equiv 0.397424 Modes 1 2 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 1 Draw equiv 0.397424 Mode 1 BeganInEncorePhase 2 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxNONEsui0komi5
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.416968 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.416968 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreAREAtaxNONEsui1komi7
-Start moves size 0 Start pla Black XY 12 11 Extra black 0 Draw equiv 0.856658 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 11 Extra black 0 Draw equiv 0.856658 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxALLsui0komi5.5
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.134713 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.134713 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxSEKIsui1komi38.5
-Start moves size 0 Start pla Black XY 10 13 Extra black 1 Draw equiv 0.382626 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 10 13 Extra black 1 Draw equiv 0.382626 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxNONEsui1komi24
-Start moves size 0 Start pla Black XY 12 11 Extra black 1 Draw equiv 0.189278 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 11 Extra black 1 Draw equiv 0.189278 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreTERRITORYtaxNONEsui0komi8
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.495124 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.495124 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreTERRITORYtaxALLsui1komi21.5
-Start moves size 0 Start pla Black XY 12 12 Extra black 1 Draw equiv 0.82974 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 1 Draw equiv 0.82974 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxNONEsui1button1komi5.5
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.842711 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.842711 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxNONEsui0komi7.5
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.532994 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.532994 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxSEKIsui0komi7
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.643769 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.643769 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreTERRITORYtaxNONEsui1komi5.5
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.573125 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.573125 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreAREAtaxNONEsui1komi7
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.534287 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.534287 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxSEKIsui1komi19.5
-Start moves size 0 Start pla Black XY 13 11 Extra black 1 Draw equiv 0.986959 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 13 11 Extra black 1 Draw equiv 0.986959 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreTERRITORYtaxALLsui0komi7.5
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.590173 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.590173 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxALLsui1komi12
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.561192 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.561192 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreAREAtaxSEKIsui1komi-27
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.0561838 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.0561838 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxSEKIsui1komi9
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.447224 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.447224 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxNONEsui0komi5
-Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.450143 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.450143 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxSEKIsui0komi6
-Start moves size 0 Start pla White XY 12 12 Extra black 0 Draw equiv 0.0704366 Modes 1 2 0 Forkstuff 0 0
+Start moves size 0 Start pla White XY 12 12 Extra black 0 Draw equiv 0.0704366 Mode 1 BeganInEncorePhase 2 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxALLsui1komi7.5
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.980525 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.980525 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxSEKIsui0komi8.5
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.925035 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.925035 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxSEKIsui0button1komi4.5
-Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.764252 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.764252 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreTERRITORYtaxSEKIsui1komi23
-Start moves size 0 Start pla Black XY 11 11 Extra black 1 Draw equiv 0.53329 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 1 Draw equiv 0.53329 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxSEKIsui0komi16.5
-Start moves size 0 Start pla Black XY 12 10 Extra black 1 Draw equiv 0.875989 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 10 Extra black 1 Draw equiv 0.875989 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxSEKIsui1komi53.5
-Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.115341 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.115341 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreTERRITORYtaxNONEsui1komi3.5
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.725991 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.725991 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreAREAtaxNONEsui1komi7.5
-Start moves size 0 Start pla Black XY 10 12 Extra black 0 Draw equiv 0.854431 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 10 12 Extra black 0 Draw equiv 0.854431 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxNONEsui1komi-17.5
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.452704 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.452704 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxNONEsui0button1komi7
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.0962235 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.0962235 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreTERRITORYtaxNONEsui0komi7
-Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.660394 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.660394 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreAREAtaxALLsui1button1komi6
-Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.651574 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.651574 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxALLsui0komi7
-Start moves size 0 Start pla Black XY 10 11 Extra black 0 Draw equiv 0.661512 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 10 11 Extra black 0 Draw equiv 0.661512 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxSEKIsui1button1komi4.5
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.502035 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.502035 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxSEKIsui1komi20.5
-Start moves size 0 Start pla Black XY 11 12 Extra black 1 Draw equiv 0.888297 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 12 Extra black 1 Draw equiv 0.888297 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxSEKIsui0button1komi21
-Start moves size 0 Start pla Black XY 13 13 Extra black 1 Draw equiv 0.241839 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 13 13 Extra black 1 Draw equiv 0.241839 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxNONEsui0komi-1
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.675057 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.675057 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreTERRITORYtaxNONEsui0komi8
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.554516 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.554516 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxNONEsui1komi5
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.312943 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.312943 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreTERRITORYtaxNONEsui1komi8
-Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.697103 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.697103 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreAREAtaxNONEsui1komi21.5
-Start moves size 0 Start pla Black XY 12 12 Extra black 1 Draw equiv 0.271769 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 1 Draw equiv 0.271769 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreAREAtaxNONEsui0komi21
-Start moves size 0 Start pla Black XY 13 13 Extra black 1 Draw equiv 0.699855 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 13 13 Extra black 1 Draw equiv 0.699855 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreAREAtaxNONEsui0komi32.5
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.832645 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.832645 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxSEKIsui1button1komi6
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.10975 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.10975 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxSEKIsui0button1komi5
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.655228 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.655228 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreTERRITORYtaxSEKIsui0komi17.5
-Start moves size 0 Start pla Black XY 12 12 Extra black 1 Draw equiv 0.286754 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 1 Draw equiv 0.286754 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreTERRITORYtaxALLsui0komi7
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.629894 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.629894 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxSEKIsui1komi7.5
-Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.102152 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.102152 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxNONEsui1komi7
-Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.544082 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.544082 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreTERRITORYtaxALLsui0komi6.5
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.170022 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.170022 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreAREAtaxNONEsui1button1komi32
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.292293 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.292293 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreTERRITORYtaxSEKIsui1komi6
-Start moves size 0 Start pla White XY 12 12 Extra black 0 Draw equiv 0.884977 Modes 1 1 0 Forkstuff 0 0
+Start moves size 0 Start pla White XY 12 12 Extra black 0 Draw equiv 0.884977 Mode 1 BeganInEncorePhase 1 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxNONEsui1komi8.5
-Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.372543 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.372543 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreTERRITORYtaxNONEsui0komi20
-Start moves size 0 Start pla Black XY 12 12 Extra black 1 Draw equiv 0.819321 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 1 Draw equiv 0.819321 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreTERRITORYtaxNONEsui0komi17
-Start moves size 0 Start pla Black XY 11 11 Extra black 1 Draw equiv 0.290013 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 1 Draw equiv 0.290013 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreTERRITORYtaxALLsui1komi12
-Start moves size 0 Start pla Black XY 11 13 Extra black 0 Draw equiv 0.386024 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 13 Extra black 0 Draw equiv 0.386024 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreTERRITORYtaxNONEsui1komi7
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.362469 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.362469 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxSEKIsui1komi21
-Start moves size 0 Start pla Black XY 13 13 Extra black 1 Draw equiv 0.122711 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 13 13 Extra black 1 Draw equiv 0.122711 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxALLsui1komi74
-Start moves size 0 Start pla Black XY 11 12 Extra black 0 Draw equiv 0.0236741 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 12 Extra black 0 Draw equiv 0.0236741 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxNONEsui0komi5.5
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.382758 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.382758 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxALLsui1komi13.5
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.216395 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.216395 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxSEKIsui1komi25
-Start moves size 0 Start pla Black XY 12 12 Extra black 1 Draw equiv 0.618537 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 1 Draw equiv 0.618537 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreTERRITORYtaxALLsui1komi7.5
-Start moves size 0 Start pla Black XY 12 10 Extra black 0 Draw equiv 0.264118 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 10 Extra black 0 Draw equiv 0.264118 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxSEKIsui0komi19.5
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.932765 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.932765 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxNONEsui1button1komi6.5
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.201597 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.201597 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreTERRITORYtaxNONEsui1komi6
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.085133 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.085133 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxNONEsui1komi16.5
-Start moves size 0 Start pla Black XY 11 12 Extra black 1 Draw equiv 0.934786 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 12 Extra black 1 Draw equiv 0.934786 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreTERRITORYtaxNONEsui0komi16
-Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.181089 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.181089 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxNONEsui0komi5.5
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.717076 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.717076 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreAREAtaxNONEsui1komi8.5
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.586404 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.586404 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxNONEsui0komi21.5
-Start moves size 0 Start pla Black XY 12 13 Extra black 1 Draw equiv 0.769117 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 13 Extra black 1 Draw equiv 0.769117 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxALLsui1button1komi7
-Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.63026 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.63026 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxSEKIsui1komi5.5
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.550711 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.550711 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreAREAtaxNONEsui0button1komi21
-Start moves size 0 Start pla Black XY 12 11 Extra black 1 Draw equiv 0.1866 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 11 Extra black 1 Draw equiv 0.1866 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreTERRITORYtaxSEKIsui1komi5.5
-Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.730078 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.730078 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreTERRITORYtaxSEKIsui0komi8
-Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.697512 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.697512 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxSEKIsui0button1komi4
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.421876 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.421876 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreTERRITORYtaxNONEsui0komi3.5
-Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.453849 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.453849 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxSEKIsui1button1komi20.5
-Start moves size 0 Start pla Black XY 12 12 Extra black 1 Draw equiv 0.210322 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 1 Draw equiv 0.210322 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxALLsui1komi6.5
-Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.0708813 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.0708813 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreTERRITORYtaxALLsui0komi7
-Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.0874851 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.0874851 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxNONEsui0komi8.5
-Start moves size 0 Start pla Black XY 12 11 Extra black 0 Draw equiv 0.880076 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 11 Extra black 0 Draw equiv 0.880076 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxNONEsui1komi8
-Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.531593 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.531593 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreTERRITORYtaxSEKIsui0komi26.5
-Start moves size 0 Start pla Black XY 10 12 Extra black 1 Draw equiv 0.385223 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 10 12 Extra black 1 Draw equiv 0.385223 Mode 3 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxNONEsui1button1komi8
-Start moves size 0 Start pla Black XY 12 11 Extra black 0 Draw equiv 0.937294 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 11 Extra black 0 Draw equiv 0.937294 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxALLsui0komi8
-Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.356361 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 10 10 Extra black 0 Draw equiv 0.356361 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSITUATIONALscoreTERRITORYtaxSEKIsui0komi9.5
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.860151 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.860151 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxSEKIsui0komi10
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.582564 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.582564 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxNONEsui1komi4.5
-Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.391196 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 11 11 Extra black 0 Draw equiv 0.391196 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreTERRITORYtaxALLsui0komi8
-Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.627701 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 12 12 Extra black 0 Draw equiv 0.627701 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koSIMPLEscoreAREAtaxNONEsui0button1komi6.5
-Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.52197 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.52197 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0
 koPOSITIONALscoreAREAtaxSEKIsui1komi8.5
-Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.55851 Modes 0 0 0 Forkstuff 0 0
+Start moves size 0 Start pla Black XY 13 13 Extra black 0 Draw equiv 0.55851 Mode 0 BeganInEncorePhase 0 UsedInitialPosition 0 Forkstuff 0 0

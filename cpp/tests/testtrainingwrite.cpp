@@ -15,7 +15,6 @@ static NNEvaluator* startNNEval(
 ) {
   const string& modelName = modelFile;
   vector<int> gpuIdxByServerThread = {0};
-  vector<int> gpuIdxs = {0};
   int maxBatchSize = 16;
   int maxConcurrentEvals = 1024;
   int nnXLen = NNPos::MAX_BOARD_LEN;
@@ -24,13 +23,14 @@ static NNEvaluator* startNNEval(
   int nnCacheSizePowerOfTwo = 16;
   int nnMutexPoolSizePowerOfTwo = 12;
   bool debugSkipNeuralNet = modelFile == "/dev/null";
-  float nnPolicyTemperature = 1.0;
   const string openCLTunerFile = "";
   bool openCLReTunePerBoardSize = false;
+  int numNNServerThreadsPerModel = 1;
+  bool nnRandomize = false;
+
   NNEvaluator* nnEval = new NNEvaluator(
     modelName,
     modelFile,
-    gpuIdxs,
     &logger,
     maxBatchSize,
     maxConcurrentEvals,
@@ -41,24 +41,18 @@ static NNEvaluator* startNNEval(
     nnCacheSizePowerOfTwo,
     nnMutexPoolSizePowerOfTwo,
     debugSkipNeuralNet,
-    nnPolicyTemperature,
     openCLTunerFile,
     openCLReTunePerBoardSize,
     useFP16 ? enabled_t::True : enabled_t::False,
-    useNHWC ? enabled_t::True : enabled_t::False
-  );
-
-  int numNNServerThreadsPerModel = 1;
-  bool nnRandomize = false;
-
-  nnEval->spawnServerThreads(
+    useNHWC ? enabled_t::True : enabled_t::False,
     numNNServerThreadsPerModel,
-    nnRandomize,
+    gpuIdxByServerThread,
     seed,
-    defaultSymmetry,
-    logger,
-    gpuIdxByServerThread
+    nnRandomize,
+    defaultSymmetry
   );
+
+  nnEval->spawnServerThreads();
 
   //Sleep briefly so that any debug messages printed by nnEval threads are output first
   std::this_thread::sleep_for (std::chrono::duration<double>(0.03));
@@ -111,12 +105,10 @@ void Tests::runTrainingWriteTests() {
     bool clearBotAfterSearch = true;
     int maxMovesPerGame = cheapLongSgf ? 200 : 40;
     vector<std::atomic<bool>*> stopConditions;
-    FancyModes fancyModes;
-    fancyModes.initGamesWithPolicy = true;
-    fancyModes.forkSidePositionProb = 0.10;
-    fancyModes.forSelfPlay = true;
-    fancyModes.dataXLen = nnXLen;
-    fancyModes.dataYLen = nnYLen;
+    PlaySettings playSettings;
+    playSettings.initGamesWithPolicy = true;
+    playSettings.forkSidePositionProb = 0.10;
+    playSettings.forSelfPlay = true;
     Rand rand(seedBase+"play");
     OtherGameProperties otherGameProps;
     FinishedGameData* gameData = Play::runGame(
@@ -126,7 +118,7 @@ void Tests::runTrainingWriteTests() {
       doEndGameIfAllPassAlive, clearBotAfterSearch,
       logger, false, false,
       maxMovesPerGame, stopConditions,
-      fancyModes, otherGameProps,
+      playSettings, otherGameProps,
       rand,
       NULL
     );
@@ -138,7 +130,7 @@ void Tests::runTrainingWriteTests() {
     cout << "Num captured white stones " << gameData->endHist.getRecentBoard(0).numWhiteCaptures << endl;
 
     if(cheapLongSgf) {
-      WriteSgf::writeSgf(cout,"Black","White",gameData->endHist,gameData);
+      WriteSgf::writeSgf(cout,"Black","White",gameData->endHist,gameData,false);
     }
     else {
       dataWriter.writeGame(*gameData);
@@ -194,12 +186,11 @@ void Tests::runSelfplayInitTestsWithNN(const string& modelFile) {
   cout << "Running test for selfplay initialization with NN" << endl;
   NeuralNet::globalInitialize();
 
-  int nnXLen = 11;
-  int nnYLen = 11;
-
   Logger logger;
   logger.setLogToStdout(true);
   logger.setLogTime(false);
+
+  NNEvaluator* nnEval = startNNEval(modelFile,"nneval",logger,0,true,false,false);
 
   auto run = [&](
     const string& seedBase,
@@ -208,7 +199,8 @@ void Tests::runSelfplayInitTestsWithNN(const string& modelFile) {
     int numExtraBlack,
     bool makeGameFairForEmptyBoard
   ) {
-    NNEvaluator* nnEval = startNNEval(modelFile,seedBase+"nneval",logger,0,true,false,false);
+    nnEval->clearCache();
+    nnEval->clearStats();
 
     SearchParams params;
     params.maxVisits = 100;
@@ -236,20 +228,18 @@ void Tests::runSelfplayInitTestsWithNN(const string& modelFile) {
     bool clearBotAfterSearch = true;
     int maxMovesPerGame = 1;
     vector<std::atomic<bool>*> stopConditions;
-    FancyModes fancyModes;
-    fancyModes.initGamesWithPolicy = true;
-    fancyModes.forkSidePositionProb = 0.40;
-    fancyModes.cheapSearchProb = 0.5;
-    fancyModes.cheapSearchVisits = 20;
-    fancyModes.cheapSearchTargetWeight = 0.123f;
-    fancyModes.earlyForkGameProb = 0.5;
-    fancyModes.earlyForkGameExpectedMoveProp = 0.05;
-    fancyModes.forkGameMinChoices = 2;
-    fancyModes.earlyForkGameMaxChoices = 2;
-    fancyModes.compensateKomiVisits = 5;
-    fancyModes.forSelfPlay = true;
-    fancyModes.dataXLen = nnXLen;
-    fancyModes.dataYLen = nnYLen;
+    PlaySettings playSettings;
+    playSettings.initGamesWithPolicy = true;
+    playSettings.forkSidePositionProb = 0.40;
+    playSettings.cheapSearchProb = 0.5;
+    playSettings.cheapSearchVisits = 20;
+    playSettings.cheapSearchTargetWeight = 0.123f;
+    playSettings.earlyForkGameProb = 0.5;
+    playSettings.earlyForkGameExpectedMoveProp = 0.05;
+    playSettings.forkGameMinChoices = 2;
+    playSettings.earlyForkGameMaxChoices = 2;
+    playSettings.compensateKomiVisits = 5;
+    playSettings.forSelfPlay = true;
 
     string searchRandSeed = seedBase+"search";
     Search* bot = new Search(botSpec.baseParams, botSpec.nnEval, searchRandSeed);
@@ -263,13 +253,13 @@ void Tests::runSelfplayInitTestsWithNN(const string& modelFile) {
       doEndGameIfAllPassAlive, clearBotAfterSearch,
       logger, false, false,
       maxMovesPerGame, stopConditions,
-      fancyModes, otherGameProps,
+      playSettings, otherGameProps,
       rand,
       NULL
     );
 
     ForkData forkData;
-    Play::maybeForkGame(gameData,&forkData,fancyModes,rand,bot);
+    Play::maybeForkGame(gameData,&forkData,playSettings,rand,bot);
 
     cout << "====================================================================================================" << endl;
     cout << "====================================================================================================" << endl;
@@ -284,13 +274,13 @@ void Tests::runSelfplayInitTestsWithNN(const string& modelFile) {
       Player pla = forkData.forks[0]->pla;
       PlayUtils::adjustKomiToEven(
         bot, bot, board, hist, pla,
-        fancyModes.cheapSearchVisits, logger, OtherGameProperties(), rand
+        playSettings.cheapSearchVisits, logger, OtherGameProperties(), rand
       );
       BoardHistory hist2 = forkData.forks[0]->hist;
       float oldKomi = hist2.rules.komi;
       double lead = PlayUtils::computeLead(
         bot, bot, board, hist2, pla,
-        fancyModes.cheapSearchVisits, logger, OtherGameProperties()
+        playSettings.cheapSearchVisits, logger, OtherGameProperties()
       );
       cout << "Lead: " << lead << endl;
       hist.printDebugInfo(cout,board);
@@ -298,7 +288,6 @@ void Tests::runSelfplayInitTestsWithNN(const string& modelFile) {
     }
     delete gameData;
     delete bot;
-    delete nnEval;
     cout << endl;
   };
 
@@ -349,7 +338,7 @@ void Tests::runSelfplayInitTestsWithNN(const string& modelFile) {
   run("testselfplayinith2-0button",r,0.5,2,false);
   run("testselfplayinith2-1button",r,0.5,2,false);
 
-
+  delete nnEval;
   NeuralNet::globalCleanup();
 }
 
@@ -357,21 +346,22 @@ void Tests::runMoreSelfplayTestsWithNN(const string& modelFile) {
   cout << "Running more tests for selfplay" << endl;
   NeuralNet::globalInitialize();
 
-  int nnXLen = 11;
-  int nnYLen = 11;
-
   Logger logger;
   logger.setLogToStdout(true);
   logger.setLogTime(false);
+
+  NNEvaluator* nnEval = startNNEval(modelFile,"nneval",logger,0,true,false,false);
 
   auto run = [&](
     const string& seedBase,
     const Rules& rules,
     bool testAsym,
     bool testLead,
-    bool testSurpriseWeight
+    bool testPolicySurpriseWeight,
+    bool testValueSurpriseWeight
   ) {
-    NNEvaluator* nnEval = startNNEval(modelFile,seedBase+"nneval",logger,0,true,false,false);
+    nnEval->clearCache();
+    nnEval->clearStats();
 
     SearchParams params;
     params.maxVisits = 100;
@@ -401,24 +391,26 @@ void Tests::runMoreSelfplayTestsWithNN(const string& modelFile) {
 
     bool doEndGameIfAllPassAlive = true;
     bool clearBotAfterSearch = true;
-    int maxMovesPerGame = (testLead || testSurpriseWeight) ? 30 : 15;
+    int maxMovesPerGame = (testLead || testPolicySurpriseWeight || testValueSurpriseWeight) ? 30 : 15;
     vector<std::atomic<bool>*> stopConditions;
-    FancyModes fancyModes;
-    fancyModes.initGamesWithPolicy = true;
-    fancyModes.forkSidePositionProb = 0.0;
-    fancyModes.cheapSearchProb = 0.5;
-    fancyModes.cheapSearchVisits = 50;
-    fancyModes.cheapSearchTargetWeight = 0.456f;
-    fancyModes.compensateKomiVisits = 10;
-    fancyModes.minAsymmetricCompensateKomiProb = 0.5;
+    PlaySettings playSettings;
+    playSettings.initGamesWithPolicy = true;
+    playSettings.forkSidePositionProb = 0.0;
+    playSettings.cheapSearchProb = 0.5;
+    playSettings.cheapSearchVisits = 50;
+    playSettings.cheapSearchTargetWeight = 0.456f;
+    playSettings.compensateKomiVisits = 10;
+    playSettings.minAsymmetricCompensateKomiProb = 0.5;
     if(testLead)
-      fancyModes.estimateLeadProb = 0.7;
-    if(testSurpriseWeight)
-      fancyModes.policySurpriseDataWeight = 0.8;
+      playSettings.estimateLeadProb = 0.7;
+    if(testPolicySurpriseWeight)
+      playSettings.policySurpriseDataWeight = 0.8;
+    if(testValueSurpriseWeight) {
+      playSettings.valueSurpriseDataWeight = 0.15;
+      playSettings.noResolveTargetWeights = true;
+    }
 
-    fancyModes.forSelfPlay = true;
-    fancyModes.dataXLen = nnXLen;
-    fancyModes.dataYLen = nnYLen;
+    playSettings.forSelfPlay = true;
 
     string searchRandSeed = seedBase+"search";
     Search* bot = new Search(botSpec.baseParams, botSpec.nnEval, searchRandSeed);
@@ -434,7 +426,7 @@ void Tests::runMoreSelfplayTestsWithNN(const string& modelFile) {
       otherGameProps.playoutDoublingAdvantage = log(3.0) / log(2.0);
       otherGameProps.playoutDoublingAdvantagePla = P_WHITE;
     }
-    bool logSearchInfo = testSurpriseWeight;
+    bool logSearchInfo = testPolicySurpriseWeight;
     FinishedGameData* gameData = Play::runGame(
       initialBoard,initialPla,initialHist,extraBlackAndKomi,
       botSpec,botSpec,
@@ -442,7 +434,7 @@ void Tests::runMoreSelfplayTestsWithNN(const string& modelFile) {
       doEndGameIfAllPassAlive, clearBotAfterSearch,
       logger, logSearchInfo, false,
       maxMovesPerGame, stopConditions,
-      fancyModes, otherGameProps,
+      playSettings, otherGameProps,
       rand,
       NULL
     );
@@ -450,17 +442,17 @@ void Tests::runMoreSelfplayTestsWithNN(const string& modelFile) {
     gameData->printDebug(cout);
     delete gameData;
     delete bot;
-    delete nnEval;
     cout << endl;
   };
 
 
-  run("testasym!",Rules::getTrompTaylorish(),true,false,false);
-  run("test lead!",Rules::getTrompTaylorish(),false,true,false);
+  run("testasym!",Rules::getTrompTaylorish(),true,false,false,false);
+  run("test lead!",Rules::getTrompTaylorish(),false,true,false,false);
   Rules r = Rules::getTrompTaylorish();
   r.hasButton = true;
-  run("test lead int button!",r,false,true,false);
-  run("test surprise!",Rules::getTrompTaylorish(),false,false,true);
+  run("test lead int button!",r,false,true,false,false);
+  run("test surprise!",Rules::getTrompTaylorish(),false,false,true,false);
+  run("test value surprise!",Rules::getTrompTaylorish(),false,false,false,true);
 
 
   //Test lead specifically on a final position
@@ -470,7 +462,9 @@ void Tests::runMoreSelfplayTestsWithNN(const string& modelFile) {
     Rules rules,
     float komi
   ) {
-    NNEvaluator* nnEval = startNNEval(modelFile,seedBase+"nneval",logger,0,true,false,false);
+    nnEval->clearCache();
+    nnEval->clearStats();
+
     SearchParams params;
     string searchRandSeed = seedBase+"search";
     Search* bot = new Search(params, nnEval, searchRandSeed);
@@ -485,7 +479,6 @@ void Tests::runMoreSelfplayTestsWithNN(const string& modelFile) {
     cout << board << endl;
     cout << "LEAD: " << lead << endl;
     delete bot;
-    delete nnEval;
   };
 
   Rules rules = Rules::getTrompTaylorish();
@@ -705,21 +698,20 @@ xxxxxxxx.
   }
 
   {
-    //Big giant test of certain fancyModes parts and game initialization
-    FancyModes fancyModes;
+    //Big giant test of certain playSettings parts and game initialization
+    PlaySettings playSettings;
     //Not testing these - covered by other tests
-    fancyModes.initGamesWithPolicy = false;
-    fancyModes.forkSidePositionProb = false;
+    playSettings.initGamesWithPolicy = false;
+    playSettings.forkSidePositionProb = false;
 
-    fancyModes.compensateKomiVisits = 20;
-    fancyModes.fancyKomiVarying = true;
+    playSettings.compensateKomiVisits = 20;
+    playSettings.fancyKomiVarying = true;
 
-    fancyModes.sekiForkHack = true;
-    fancyModes.forSelfPlay = true;
-    fancyModes.dataXLen = 13;
-    fancyModes.dataYLen = 13;
+    playSettings.sekiForkHack = true;
+    playSettings.forSelfPlay = true;
 
-    NNEvaluator* nnEval = startNNEval(modelFile,"game init test nneval",logger,0,true,false,false);
+    nnEval->clearCache();
+    nnEval->clearStats();
 
     std::map<string,string> cfgParams({
         std::make_pair("maxMovesPerGame","5"),
@@ -754,26 +746,29 @@ xxxxxxxx.
     botSpec.baseParams.maxVisits = 10;
     ForkData* forkData = new ForkData();
 
-    GameRunner* gameRunner = new GameRunner(cfg, "game init test search seed", "game init test game seed", fancyModes, logger);
+    GameRunner* gameRunner = new GameRunner(cfg, "game init test game seed", playSettings, logger);
     std::vector<std::atomic<bool>*> stopConditions;
     for(int i = 0; i<100; i++) {
-      FinishedGameData* data = gameRunner->runGame(i, botSpec, botSpec, forkData, logger, stopConditions, NULL);
+      string seed = "game init test search seed:" + Global::int64ToString(i);
+      FinishedGameData* data = gameRunner->runGame(seed, botSpec, botSpec, forkData, logger, stopConditions, NULL);
       cout << data->startHist.rules << endl;
       cout << "Start moves size " << data->startHist.moveHistory.size()
            << " Start pla " << PlayerIO::playerToString(data->startPla)
            << " XY " << data->startBoard.x_size << " " << data->startBoard.y_size
            << " Extra black " << data->numExtraBlack
            << " Draw equiv " << data->drawEquivalentWinsForWhite
-           << " Modes " << data->mode << " " << data->modeMeta1 << " " << data->modeMeta2
+           << " Mode " << data->mode
+           << " BeganInEncorePhase " << data->beganInEncorePhase
+           << " UsedInitialPosition " << data->usedInitialPosition
            << " Forkstuff " << forkData->forks.size() << " " << forkData->sekiForks.size()
            << endl;
       delete data;
     }
     delete gameRunner;
     delete forkData;
-    delete nnEval;
   }
 
+  delete nnEval;
   NeuralNet::globalCleanup();
 }
 
@@ -789,6 +784,8 @@ void Tests::runSekiTrainWriteTests(const string& modelFile) {
   logger.setLogToStdout(true);
   logger.setLogTime(false);
 
+  NNEvaluator* nnEval = startNNEval(modelFile,"nneval",logger,0,true,false,false);
+
   auto run = [&](const string& sgfStr, const string& seedBase, const Rules& rules) {
     int inputsVersion = 6;
     int maxRows = 256;
@@ -796,7 +793,8 @@ void Tests::runSekiTrainWriteTests(const string& modelFile) {
     int debugOnlyWriteEvery = 1000;
     TrainingDataWriter dataWriter(&cout,inputsVersion, maxRows, firstFileMinRandProp, nnXLen, nnYLen, debugOnlyWriteEvery, seedBase+"dwriter");
 
-    NNEvaluator* nnEval = startNNEval(modelFile,seedBase+"nneval",logger,0,true,false,false);
+    nnEval->clearCache();
+    nnEval->clearStats();
 
     SearchParams params;
     params.maxVisits = 30;
@@ -824,20 +822,18 @@ void Tests::runSekiTrainWriteTests(const string& modelFile) {
     bool clearBotAfterSearch = true;
     int maxMovesPerGame = 1;
     vector<std::atomic<bool>*> stopConditions;
-    FancyModes fancyModes;
-    fancyModes.initGamesWithPolicy = false;
-    fancyModes.forkSidePositionProb = 0;
-    fancyModes.cheapSearchProb = 0;
-    fancyModes.cheapSearchVisits = 0;
-    fancyModes.cheapSearchTargetWeight = 0;
-    fancyModes.earlyForkGameProb = 0;
-    fancyModes.earlyForkGameExpectedMoveProp = 0;
-    fancyModes.forkGameMinChoices = 2;
-    fancyModes.earlyForkGameMaxChoices = 2;
-    fancyModes.compensateKomiVisits = 5;
-    fancyModes.forSelfPlay = true;
-    fancyModes.dataXLen = nnXLen;
-    fancyModes.dataYLen = nnYLen;
+    PlaySettings playSettings;
+    playSettings.initGamesWithPolicy = false;
+    playSettings.forkSidePositionProb = 0;
+    playSettings.cheapSearchProb = 0;
+    playSettings.cheapSearchVisits = 0;
+    playSettings.cheapSearchTargetWeight = 0;
+    playSettings.earlyForkGameProb = 0;
+    playSettings.earlyForkGameExpectedMoveProp = 0;
+    playSettings.forkGameMinChoices = 2;
+    playSettings.earlyForkGameMaxChoices = 2;
+    playSettings.compensateKomiVisits = 5;
+    playSettings.forSelfPlay = true;
 
     string searchRandSeed = seedBase+"search";
     Search* bot = new Search(botSpec.baseParams, botSpec.nnEval, searchRandSeed);
@@ -851,7 +847,7 @@ void Tests::runSekiTrainWriteTests(const string& modelFile) {
       doEndGameIfAllPassAlive, clearBotAfterSearch,
       logger, false, false,
       maxMovesPerGame, stopConditions,
-      fancyModes, otherGameProps,
+      playSettings, otherGameProps,
       rand,
       NULL
     );
@@ -862,7 +858,6 @@ void Tests::runSekiTrainWriteTests(const string& modelFile) {
     dataWriter.flushIfNonempty();
     delete gameData;
     delete bot;
-    delete nnEval;
     delete sgf;
     cout << endl;
   };
@@ -891,7 +886,6 @@ void Tests::runSekiTrainWriteTests(const string& modelFile) {
   {
     cout << "==============================================================" << endl;
     cout << "Also testing status logic inference!" << endl;
-    NNEvaluator* nnEval = startNNEval(modelFile,"status nneval",logger,0,true,false,false);
     SearchParams params;
     string searchRandSeed = "test statuses";
     Search* bot = new Search(params, nnEval, searchRandSeed);
@@ -972,10 +966,9 @@ xo.ox.xoo
     }
 
     delete bot;
-    delete nnEval;
-
     cout << "==============================================================" << endl;
   }
 
+  delete nnEval;
   NeuralNet::globalCleanup();
 }

@@ -15,7 +15,7 @@ logToStderr = false
 
 # Configure the maximum length of analysis printed out by lz-analyze and other places.
 # Controls the number of moves after the first move in a variation.
-# analysisPVLen = 9
+# analysisPVLen = 13
 
 # Report winrates for chat and analysis as (BLACK|WHITE|SIDETOMOVE).
 # Default is SIDETOMOVE, which is what tools that use LZ probably also expect
@@ -45,8 +45,10 @@ $$WHITE_HANDICAP_BONUS
 # Resignation occurs if for at least resignConsecTurns in a row,
 # the winLossUtility (which is on a [-1,1] scale) is below resignThreshold.
 allowResignation = true
-resignThreshold = -0.98
+resignThreshold = -0.90
 resignConsecTurns = 3
+# Uncomment to make katago not resign close games, behind by fewer than this many points
+# resignMinScoreDifference = 10
 
 # Handicap -------------
 
@@ -58,12 +60,30 @@ resignConsecTurns = 3
 # Defaults to true! Uncomment and set to false to disable this behavior.
 # assumeMultipleStartingBlackMovesAreHandicap = true
 
-# Makes katago dynamically adjust to play more aggressively in handicap games based on the handicap and the current state of the game.
-# Comment to disable this and make KataGo play the same always.
-dynamicPlayoutDoublingAdvantageCapPerOppLead = 0.04
+# Makes katago dynamically adjust in handicap or altered-komi games to assume it is stronger or weaker than the opponent
+# based on those game settings making sense, greatly improving handicap strength but biasing winrates and scores.
+# Does NOT affect analysis (lz-analyze, kata-analyze, used by programs like Lizzie) so analysis remains unbiased.
+# Uncomment and set this to 0 to disable this and make KataGo play the same always.
+# dynamicPlayoutDoublingAdvantageCapPerOppLead = 0.045
 
-# Controls which side dynamicPlayoutDoublingAdvantageCapPerOppLead or playoutDoublingAdvantage applies to.
-playoutDoublingAdvantagePla = WHITE
+# Instead of a dynamic level, you can uncomment this and set this to a value from -3.0 to 3.0 to set KataGo's aggression to a FIXED level.
+# DOES affect analysis (lz-analyze, kata-analyze, used by programs like Lizzie).
+# Negative makes KataGo behave as if it is much weaker than the opponent, preferring to play defensively.
+# Positive makes KataGo behave as if it is much stronger than the opponent, prefering to play aggressively or even overplay slightly.
+# If this and "dynamicPlayoutDoublingAdvantageCapPerOppLead" are BOTH set then dynamic will be used for all games and this fixed
+# value will be used for analysis tools.
+# playoutDoublingAdvantage = 0.0
+
+# Uncommenting one of these will enforce that the FIXED playoutDoublingAdvantage will only apply when KataGo plays the specified color
+# and will be negated when playing the opposite color.
+# playoutDoublingAdvantagePla = BLACK
+# playoutDoublingAdvantagePla = WHITE
+
+# Misc Behavior --------------------
+
+# Uncomment and set to true to make KataGo avoid a particular joseki that some KataGo nets misevaluate,
+# and also to improve opening diversity versus some particular other bots that like to play it all the time.
+# avoidMYTDaggerHack = false
 
 # Search limits-----------------------------------------------------------------------------------
 

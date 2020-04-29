@@ -273,43 +273,73 @@ void Search::getSelfUtilityLCBAndRadius(const SearchNode& parent, const SearchNo
   radiusBuf = radius;
 }
 
-double Search::getRootUtility() const {
-  assert(rootNode != NULL);
-  const SearchNode& node = *rootNode;
-
-  while(node.statsLock.test_and_set(std::memory_order_acquire));
-  double utilitySum = node.stats.utilitySum;
-  double weightSum = node.stats.weightSum;
-  node.statsLock.clear(std::memory_order_release);
-
-  assert(weightSum > 0.0);
-  return utilitySum / weightSum;
-}
-
-int64_t Search::getRootVisits() const {
-  assert(rootNode != NULL);
-  const SearchNode& node = *rootNode;
-
-  while(node.statsLock.test_and_set(std::memory_order_acquire));
-  int64_t numVisits = node.stats.visits;
-  node.statsLock.clear(std::memory_order_release);
-
-  return numVisits;
-}
-
 bool Search::getRootValues(ReportedSearchValues& values) const {
-  assert(rootNode != NULL);
+  if(rootNode == NULL)
+    return false;
   return getNodeValues(*rootNode,values);
 }
 
-ReportedSearchValues Search::getRootValuesAssertSuccess() const {
+ReportedSearchValues Search::getRootValuesRequireSuccess() const {
   ReportedSearchValues values;
-  assert(rootNode != NULL);
+  if(rootNode == NULL)
+    throw StringError("Bug? Bot search root was null");
   bool success = getNodeValues(*rootNode,values);
   if(!success)
     throw StringError("Bug? Bot search returned no root values");
   return values;
 }
+
+bool Search::getRootRawNNValues(ReportedSearchValues& values) const {
+  if(rootNode == NULL)
+    return false;
+  return getNodeRawNNValues(*rootNode,values);
+}
+
+ReportedSearchValues Search::getRootRawNNValuesRequireSuccess() const {
+  ReportedSearchValues values;
+  if(rootNode == NULL)
+    throw StringError("Bug? Bot search root was null");
+  bool success = getNodeRawNNValues(*rootNode,values);
+  if(!success)
+    throw StringError("Bug? Bot search returned no root values");
+  return values;
+}
+
+bool Search::getNodeRawNNValues(const SearchNode& node, ReportedSearchValues& values) const {
+  std::mutex& mutex = mutexPool->getMutex(node.lockIdx);
+  unique_lock<std::mutex> lock(mutex);
+  shared_ptr<NNOutput> nnOutput = node.nnOutput;
+  lock.unlock();
+  if(nnOutput == nullptr)
+    return false;
+
+  values.winValue = nnOutput->whiteWinProb;
+  values.lossValue = nnOutput->whiteLossProb;
+  values.noResultValue = nnOutput->whiteNoResultProb;
+
+  double scoreMean = nnOutput->whiteScoreMean;
+  double scoreMeanSq = nnOutput->whiteScoreMeanSq;
+  double scoreStdev = getScoreStdev(scoreMean,scoreMeanSq);
+  values.staticScoreValue = ScoreValue::expectedWhiteScoreValue(scoreMean,scoreStdev,0.0,2.0,rootBoard);
+  values.dynamicScoreValue = ScoreValue::expectedWhiteScoreValue(scoreMean,scoreStdev,recentScoreCenter,searchParams.dynamicScoreCenterScale,rootBoard);
+  values.expectedScore = scoreMean;
+  values.expectedScoreStdev = scoreStdev;
+  values.lead = nnOutput->whiteLead;
+
+  //Sanity check
+  assert(values.winValue >= 0.0);
+  assert(values.lossValue >= 0.0);
+  assert(values.noResultValue >= 0.0);
+  assert(values.winValue + values.lossValue + values.noResultValue < 1.001);
+
+  double winLossValue = values.winValue - values.lossValue;
+  if(winLossValue > 1.0) winLossValue = 1.0;
+  if(winLossValue < -1.0) winLossValue = -1.0;
+  values.winLossValue = winLossValue;
+
+  return true;
+}
+
 
 bool Search::getNodeValues(const SearchNode& node, ReportedSearchValues& values) const {
   std::mutex& mutex = mutexPool->getMutex(node.lockIdx);
@@ -326,6 +356,8 @@ bool Search::getNodeValues(const SearchNode& node, ReportedSearchValues& values)
   double scoreMeanSqSum = node.stats.scoreMeanSqSum;
   double leadSum = node.stats.leadSum;
   double weightSum = node.stats.weightSum;
+  double utilitySum = node.stats.utilitySum;
+
   node.statsLock.clear(std::memory_order_release);
 
   assert(weightSum > 0.0);
@@ -341,6 +373,7 @@ bool Search::getNodeValues(const SearchNode& node, ReportedSearchValues& values)
   values.expectedScore = scoreMean;
   values.expectedScoreStdev = scoreStdev;
   values.lead = leadSum / weightSum;
+  values.utility = utilitySum / weightSum;
 
   //Perform a little normalization - due to tiny floating point errors, winValue and lossValue could be outside [0,1].
   //(particularly lossValue, as it was produced by subtractions from weightSum that could have lost precision).
@@ -517,7 +550,7 @@ double Search::getPolicySurprise() const {
   double surprise = 0.0;
   for(int i = 0; i<playSelectionValues.size(); i++) {
     int pos = getPos(locs[i]);
-    double policy = policyProbsFromNN[pos];
+    double policy = std::max((double)policyProbsFromNN[pos],1e-100);
     double target = playSelectionValues[i] / sumPlaySelectionValues;
     if(target > 1e-100)
       surprise += target * (log(target)-log(policy));

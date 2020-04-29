@@ -63,12 +63,10 @@ FinishedGameData::FinishedGameData()
 
    numExtraBlack(0),
    mode(0),
-   modeMeta1(0),
-   modeMeta2(0),
+   beganInEncorePhase(0),
+   usedInitialPosition(0),
 
    hasFullData(false),
-   dataXLen(-1),
-   dataYLen(-1),
    targetWeightByTurn(),
    policyTargetsByTurn(),
    whiteValueTargetsByTurn(),
@@ -116,11 +114,9 @@ void FinishedGameData::printDebug(ostream& out) const {
   out << "hitTurnLimit " << hitTurnLimit << endl;
   out << "numExtraBlack " << numExtraBlack << endl;
   out << "mode " << mode << endl;
-  out << "modeMeta1 " << modeMeta1 << endl;
-  out << "modeMeta2 " << modeMeta2 << endl;
+  out << "beganInEncorePhase " << beganInEncorePhase << endl;
+  out << "usedInitialPosition " << usedInitialPosition << endl;
   out << "hasFullData " << hasFullData << endl;
-  out << "dataXLen " << dataXLen << endl;
-  out << "dataYLen " << dataYLen << endl;
   for(int i = 0; i<targetWeightByTurn.size(); i++)
     out << "targetWeightByTurn " << i << " " << targetWeightByTurn[i] << endl;
   for(int i = 0; i<policyTargetsByTurn.size(); i++) {
@@ -166,8 +162,8 @@ void FinishedGameData::printDebug(ostream& out) const {
   }
   for(int y = 0; y<startBoard.y_size; y++) {
     for(int x = 0; x<startBoard.x_size; x++) {
-      int pos = NNPos::xyToPos(x,y,dataXLen);
-      out << Global::strprintf(" %.3f",finalWhiteScoring[pos]);
+      Loc loc = Location::getLoc(x,y,startBoard.x_size);
+      out << Global::strprintf(" %.3f",finalWhiteScoring[loc]);
     }
     out << endl;
   }
@@ -339,8 +335,6 @@ void TrainingWriteBuffers::addRow(
     throw StringError("Training write buffers: Does not support input version: " + Global::intToString(inputsVersion));
 
   int posArea = dataXLen*dataYLen;
-  assert(data.dataXLen == dataXLen);
-  assert(data.dataYLen == dataYLen);
   assert(data.hasFullData);
   assert(curRows < maxRows);
 
@@ -500,8 +494,8 @@ void TrainingWriteBuffers::addRow(
 
   //Metadata about how the game was initialized
   rowGlobal[55] = data.mode;
-  rowGlobal[56] = data.modeMeta1;
-  rowGlobal[57] = data.modeMeta2;
+  rowGlobal[56] = data.beganInEncorePhase;
+  rowGlobal[57] = data.usedInitialPosition;
   rowGlobal[58] = isSidePosition ? 1.0f : 0.0f;
 
   //Unused
@@ -635,10 +629,19 @@ void TrainingWriteBuffers::addRow(
   }
   else {
     rowGlobal[34] = 1.0f;
+    //Fill with zeros in case the buffers differ in size
     for(int i = 0; i<posArea; i++) {
-      float scoring = (nextPlayer == P_WHITE ? finalWhiteScoring[i] : -finalWhiteScoring[i]);
-      assert(scoring <= 1.0f && scoring >= -1.0f);
-      rowOwnership[i+posArea*4] = convertRadiusOneToRadius120(scoring,rand);
+      rowOwnership[i+posArea*4] = 0;
+    }
+
+    for(int y = 0; y<board.y_size; y++) {
+      for(int x = 0; x<board.x_size; x++) {
+        int pos = NNPos::xyToPos(x,y,dataXLen);
+        Loc loc = Location::getLoc(x,y,board.x_size);
+        float scoring = (nextPlayer == P_WHITE ? finalWhiteScoring[loc] : -finalWhiteScoring[loc]);
+        assert(scoring <= 1.0f && scoring >= -1.0f);
+        rowOwnership[pos+posArea*4] = convertRadiusOneToRadius120(scoring,rand);
+      }
     }
   }
 
@@ -811,22 +814,32 @@ void TrainingDataWriter::writeAndClearIfFull() {
   }
 }
 
-void TrainingDataWriter::flushIfNonempty() {
-  if(writeBuffers->curRows > 0) {
-    isFirstFile = false;
 
-    if(debugOut != NULL) {
-      writeBuffers->writeToTextOstream(*debugOut);
-      writeBuffers->clear();
-    }
-    else {
-      string filename = outputDir + "/" + Global::uint64ToHexString(rand.nextUInt64()) + ".npz";
-      string tmpFilename = filename + ".tmp";
-      writeBuffers->writeToZipFile(tmpFilename);
-      writeBuffers->clear();
-      std::rename(tmpFilename.c_str(),filename.c_str());
-    }
+
+void TrainingDataWriter::flushIfNonempty() {
+  string resultingFilename;
+  flushIfNonempty(resultingFilename);
+}
+
+bool TrainingDataWriter::flushIfNonempty(string& resultingFilename) {
+  if(writeBuffers->curRows <= 0)
+    return false;
+
+  isFirstFile = false;
+
+  if(debugOut != NULL) {
+    writeBuffers->writeToTextOstream(*debugOut);
+    writeBuffers->clear();
+    resultingFilename = "";
   }
+  else {
+    resultingFilename = outputDir + "/" + Global::uint64ToHexString(rand.nextUInt64()) + ".npz";
+    string tmpFilename = resultingFilename + ".tmp";
+    writeBuffers->writeToZipFile(tmpFilename);
+    writeBuffers->clear();
+    std::rename(tmpFilename.c_str(),resultingFilename.c_str());
+  }
+  return true;
 }
 
 void TrainingDataWriter::writeGame(const FinishedGameData& data) {
