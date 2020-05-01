@@ -1148,11 +1148,13 @@ static bool nearWeakStones(const Board& board, Loc loc, Player pla) {
   Player opp = getOpp(pla);
   for(int i = 0; i < 4; i++) {
     Loc adj = loc + board.adj_offsets[i];
+    if(board.colors[adj] == C_WALL) adj = loc + board.adj_offsets[i + 4];
     if(board.colors[adj] == opp && board.getNumLiberties(adj) <= 4)
       return true;
     else if(board.colors[adj] == C_EMPTY) {
       for(int j = 0; j < 4; j++) {
         Loc adjadj = adj + board.adj_offsets[j];
+        if(board.colors[adjadj] == C_WALL) adjadj = adj + board.adj_offsets[i + 4];
         if(board.colors[adjadj] == opp) {
           if(board.getNumLiberties(adjadj) <= 3)
             return true;
