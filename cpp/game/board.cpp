@@ -1318,9 +1318,9 @@ int Location::distance(Loc loc0, Loc loc1, int x_size) {
   int dx = getX(loc1,x_size) - getX(loc0,x_size);
   int dy = (loc1-loc0+dx) / (x_size+1);
   // return (dx >= 0 ? dx : -dx) + (dy >= 0 ? dy : -dy);
-  dx = abs(dx);
+  if(dx < 0) dx = -dx;
   if(dx > x_size-dx) dx = x_size-dx;
-  dy = abs(dy);
+  if(dy < 0) dy = -dy;
   if(dy > x_size-dy) dy = x_size-dy;
   return dx + dy;
 }
@@ -1328,9 +1328,9 @@ int Location::distance(Loc loc0, Loc loc1, int x_size) {
 int Location::euclideanDistanceSquared(Loc loc0, Loc loc1, int x_size) {
   int dx = getX(loc1,x_size) - getX(loc0,x_size);
   int dy = (loc1-loc0+dx) / (x_size+1);
-  dx = abs(dx);
+  if(dx < 0) dx = -dx;
   if(dx > x_size-dx) dx = x_size-dx;
-  dy = abs(dy);
+  if(dy < 0) dy = -dy;
   if(dy > x_size-dy) dy = x_size-dy;
   return dx*dx + dy*dy;
 }
