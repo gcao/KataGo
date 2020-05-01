@@ -469,9 +469,10 @@ bool Board::isSimpleEye(Loc loc, Player pla) const
   //Check that opponent does not own too many diagonal points
   Player opp = getOpp(pla);
   int num_opp_corners = 0;
-  for(int i = 0; i < 8; i++)
+  for(int i = 0; i < 4; i++)
   {
     Loc corner = loc + diag_offsets[i];
+    if(colors[corner] == C_WALL) corner = loc + diag_offsets[i + 4];
     if(colors[corner] == opp)
       num_opp_corners++;
   }
