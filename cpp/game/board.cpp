@@ -969,13 +969,13 @@ int Board::getNumImmediateLiberties(Loc loc) const
 {
   int num_libs = 0;
   if(colors[loc + ADJ0] == C_EMPTY) num_libs++;
-  else if(colors[loc + ADJ0] == C_WALL && colors[loc + ADJ0B] == C_WALL) num_libs++;
+  else if(colors[loc + ADJ0] == C_WALL && colors[loc + ADJ0B] == C_EMPTY) num_libs++;
   if(colors[loc + ADJ1] == C_EMPTY) num_libs++;
-  else if(colors[loc + ADJ1] == C_WALL && colors[loc + ADJ1B] == C_WALL) num_libs++;
+  else if(colors[loc + ADJ1] == C_WALL && colors[loc + ADJ1B] == C_EMPTY) num_libs++;
   if(colors[loc + ADJ2] == C_EMPTY) num_libs++;
-  else if(colors[loc + ADJ2] == C_WALL && colors[loc + ADJ2B] == C_WALL) num_libs++;
+  else if(colors[loc + ADJ2] == C_WALL && colors[loc + ADJ2B] == C_EMPTY) num_libs++;
   if(colors[loc + ADJ3] == C_EMPTY) num_libs++;
-  else if(colors[loc + ADJ3] == C_WALL && colors[loc + ADJ3B] == C_WALL) num_libs++;
+  else if(colors[loc + ADJ3] == C_WALL && colors[loc + ADJ3B] == C_EMPTY) num_libs++;
 
   return num_libs;
 }
