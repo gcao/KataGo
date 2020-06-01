@@ -87,7 +87,7 @@ __kernel void conv2dNCHW(
           // For Daoqi
           if(iy < 0) {
             iy += ySize;
-          } else if (y >= ySize) {
+          } else if (iy >= ySize) {
             iy -= ySize;
           }
           for(int itx = lx; itx<inputTileXSize; itx += lxSize) {
@@ -101,7 +101,7 @@ __kernel void conv2dNCHW(
             // For Daoqi
             if (ix < 0) {
               ix += xSize;
-            } else if (x >= xSize) {
+            } else if (ix >= xSize) {
               ix -= xSize;
             }
             inputValue = INPUT(n,icBase+dic,iy,ix);
