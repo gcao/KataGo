@@ -84,12 +84,27 @@ __kernel void conv2dNCHW(
       for(int dic = 0; dic<TILE_CHANNELS && icBase+dic < icSize; dic += 1) {
         for(int ity = ly; ity<inputTileYSize; ity += lySize) {
           int iy = ity+yBase-filterYRadius;
+          // For Daoqi
+          if(iy < 0) {
+            iy += ySize;
+          } else if (y >= ySize) {
+            iy -= ySize;
+          }
           for(int itx = lx; itx<inputTileXSize; itx += lxSize) {
             int ix = itx+xBase-filterXRadius;
             float inputValue = 0.0f;
-            if(iy >= 0 && iy < ySize && ix >= 0 && ix < xSize) {
-              inputValue = INPUT(n,icBase+dic,iy,ix);
+            // For Weiqi/Go
+            // if(iy >= 0 && iy < ySize && ix >= 0 && ix < xSize) {
+            //   inputValue = INPUT(n,icBase+dic,iy,ix);
+            // }
+
+            // For Daoqi
+            if (ix < 0) {
+              ix += xSize;
+            } else if (x >= xSize) {
+              ix -= xSize;
             }
+            inputValue = INPUT(n,icBase+dic,iy,ix);
             INPUTTILE(dic,ity,itx) = inputValue;
           }
         }
@@ -189,10 +204,28 @@ __kernel void transform(
   //Copy input into private tile
   for(int subY = 0; subY < INTILE_YSIZE; subY++) {
     int y = tileY * OUTTILE_YSIZE + subY + INTILE_YOFFSET;
+    // For Daoqi
+    if(y < 0) {
+      y += ySize;
+    } else if (y >= ySize) {
+      y -= ySize;
+    }
     for(int subX = 0; subX < INTILE_XSIZE; subX++) {
       int x = tileX * OUTTILE_XSIZE + subX + INTILE_XOFFSET;
       float value = 0.0f;
-      if(y >= 0 && y < ySize && x >= 0 && x < xSize && n < nSize && ic < icSize) {
+      // For Weiqi/Go
+      // if(y >= 0 && y < ySize && x >= 0 && x < xSize && n < nSize && ic < icSize) {
+      //   int xy = y * xSize + x;
+      //   value = INPUT(nic,xy);
+      // }
+
+      // For Daoqi
+      if(n < nSize && ic < icSize) {
+        if (x < 0) {
+          x += xSize;
+        } else if (x >= xSize) {
+          x -= xSize;
+        }
         int xy = y * xSize + x;
         value = INPUT(nic,xy);
       }
@@ -351,10 +384,28 @@ __kernel void bnReluTransform(
   //Copy input into private tile
   for(int subY = 0; subY < INTILE_YSIZE; subY++) {
     int y = tileY * OUTTILE_YSIZE + subY + INTILE_YOFFSET;
+    // For Daoqi
+    if(y < 0) {
+      y += ySize;
+    } else if (y >= ySize) {
+      y -= ySize;
+    }
     for(int subX = 0; subX < INTILE_XSIZE; subX++) {
       int x = tileX * OUTTILE_XSIZE + subX + INTILE_XOFFSET;
       float value = 0.0f;
-      if(y >= 0 && y < ySize && x >= 0 && x < xSize && n < nSize && ic < icSize) {
+      // For Weiqi/Go
+      // if(y >= 0 && y < ySize && x >= 0 && x < xSize && n < nSize && ic < icSize) {
+      //   int xy = y * xSize + x;
+      //   value = fmax(INPUT(nic,xy) * scale[ic] + bias[ic], 0.0f) * mask[n * xySize + xy];
+      // }
+
+      // For Daoqi
+      if(n < nSize && ic < icSize) {
+        if (x < 0) {
+          x += xSize;
+        } else if (x >= xSize) {
+          x -= xSize;
+        }
         int xy = y * xSize + x;
         value = fmax(INPUT(nic,xy) * scale[ic] + bias[ic], 0.0f) * mask[n * xySize + xy];
       }
@@ -600,9 +651,26 @@ __kernel void untransform(
   //Copy into output
   for(int subY = 0; subY < OUTTILE_YSIZE; subY++) {
     int y = tileY * OUTTILE_YSIZE + subY;
+    // For Daoqi
+    if(y < 0) {
+      y += ySize;
+    } else if (y >= ySize) {
+      y -= ySize;
+    }
     for(int subX = 0; subX < OUTTILE_XSIZE; subX++) {
       int x = tileX * OUTTILE_XSIZE + subX;
-      if(y >= 0 && y < ySize && x >= 0 && x < xSize && tileX < numTilesX && tileY < numTilesY && n < nSize) {
+      // For Weiqi/Go
+      // if(y >= 0 && y < ySize && x >= 0 && x < xSize && tileX < numTilesX && tileY < numTilesY && n < nSize) {
+      //   OUTPUT(noc,y,x) = WTILE(subY,subX);
+      // }
+
+      // For Daoqi
+      if(tileX < numTilesX && tileY < numTilesY && n < nSize) {
+        if (x < 0) {
+          x += xSize;
+        } else if (x >= xSize) {
+          x -= xSize;
+        }
         OUTPUT(noc,y,x) = WTILE(subY,subX);
       }
     }
