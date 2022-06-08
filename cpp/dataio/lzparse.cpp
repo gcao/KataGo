@@ -90,6 +90,7 @@ static Move inferMove(Color* board, Color* prev, Player whoMoved, Color stones[8
         for(int i = 0; i < 4; i++)
         {
           Loc adj = loc + adj_offsets[i];
+          if(prev[adj] == C_WALL) adj = loc + adj_offsets[i + 4];
           if(prev[adj] == C_EMPTY)
             return Move(adj,whoMoved);
         }

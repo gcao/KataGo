@@ -264,6 +264,7 @@ void NNInputs::fillScoring(
             //Push adjacent locations on to queue
             for(int i = 0; i<4; i++) {
               Loc adj = next + board.adj_offsets[i];
+              if(area[adj] == C_WALL) adj = next + board.adj_offsets[i + 4];
               if(area[adj] == areaColor && !visited[adj]) {
                 queue[queueTail] = adj;
                 queueTail++;
