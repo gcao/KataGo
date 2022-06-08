@@ -61,8 +61,16 @@ cp "$GITROOTDIR"/python/*.py "$GITROOTDIR"/python/selfplay/*.sh "$DATED_ARCHIVE"
 set -x
 while true
 do
+    echo ---- ---- ---- ---- ----
+    echo "Starting at" $(date "+%Y%m%d-%H%M%S")
+    echo ---- ---- ---- ---- ----
+    echo
+
     echo "Selfplay"
     time "$GITROOTDIR"/cpp/katago selfplay -max-games-total "$NUM_GAMES_PER_CYCLE" -output-dir "$BASEDIR"/selfplay -models-dir "$BASEDIR"/models -config "$GITROOTDIR"/cpp/configs/selfplay1.cfg | tee -a "$BASEDIR"/selfplay/stdout.txt
+
+    echo "Sleep 10 minutes to cool down CPU & GPU etc"
+    sleep 600
 
     echo "Shuffle"
     (
@@ -81,6 +89,10 @@ do
 
     echo "Gatekeeper"
     time "$GITROOTDIR"/cpp/katago gatekeeper -rejected-models-dir "$BASEDIR"/rejectedmodels -accepted-models-dir "$BASEDIR"/models/ -sgf-output-dir "$BASEDIR"/gatekeepersgf/ -test-models-dir "$BASEDIR"/modelstobetested/ -config "$GITROOTDIR"/cpp/configs/gatekeeper1.cfg -quit-if-no-nets-to-test | tee -a "$BASEDIR"/gatekeepersgf/stdout.txt
+
+    echo "Sleep 5 minutes to cool down CPU & GPU etc"
+    sleep 300
+
 done
 
 exit 0
