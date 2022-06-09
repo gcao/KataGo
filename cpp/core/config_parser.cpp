@@ -1,29 +1,38 @@
 #include "../core/config_parser.h"
 
+#include "../core/fileutils.h"
+
 #include <cmath>
 #include <fstream>
 #include <sstream>
 
 using namespace std;
 
-ConfigParser::ConfigParser()
-  :initialized(false),fileName(),contents(),keyValues(),usedKeysMutex(),usedKeys()
+ConfigParser::ConfigParser(bool keysOverride, bool keysOverrideFromIncludes_)
+  :initialized(false),fileName(),contents(),keyValues(),
+   keysOverrideEnabled(keysOverride),keysOverrideFromIncludes(keysOverrideFromIncludes_),
+   curLineNum(0),curFilename(),includedFiles(),baseDirs(),logMessages(),
+   usedKeysMutex(),usedKeys()
 {}
 
-ConfigParser::ConfigParser(const string& fname)
-  :initialized(false),fileName(),contents(),keyValues(),usedKeysMutex(),usedKeys()
+ConfigParser::ConfigParser(const string& fname, bool keysOverride, bool keysOverrideFromIncludes_)
+  :ConfigParser(keysOverride, keysOverrideFromIncludes_)
 {
   initialize(fname);
 }
 
-ConfigParser::ConfigParser(istream& in)
-  :initialized(false),fileName(),contents(),keyValues(),usedKeysMutex(),usedKeys()
+ConfigParser::ConfigParser(const char* fname, bool keysOverride, bool keysOverrideFromIncludes_)
+  :ConfigParser(std::string(fname), keysOverride, keysOverrideFromIncludes_)
+{}
+
+ConfigParser::ConfigParser(istream& in, bool keysOverride, bool keysOverrideFromIncludes_)
+  :ConfigParser(keysOverride, keysOverrideFromIncludes_)
 {
   initialize(in);
 }
 
 ConfigParser::ConfigParser(const map<string, string>& kvs)
-  :initialized(false),fileName(),contents(),keyValues(),usedKeysMutex(),usedKeys()
+  :ConfigParser(false, true)
 {
   initialize(kvs);
 }
@@ -34,18 +43,23 @@ ConfigParser::ConfigParser(const ConfigParser& source) {
   std::lock_guard<std::mutex> lock(source.usedKeysMutex);
   initialized = source.initialized;
   fileName = source.fileName;
+  baseDirs = source.baseDirs;
   contents = source.contents;
   keyValues = source.keyValues;
+  keysOverrideEnabled = source.keysOverrideEnabled;
+  keysOverrideFromIncludes = source.keysOverrideFromIncludes;
   usedKeys = source.usedKeys;
 }
 
 void ConfigParser::initialize(const string& fname) {
   if(initialized)
     throw StringError("ConfigParser already initialized, cannot initialize again");
-  ifstream in(fname);
-  if(!in.is_open())
-    throw IOError("Could not open config file: " + fname);
+  ifstream in;
+  FileUtils::open(in,fname);
   fileName = fname;
+  string baseDir = extractBaseDir(fname);
+  if(!baseDir.empty())
+    baseDirs.push_back(baseDir);
   initializeInternal(in);
   initialized = true;
 }
@@ -64,16 +78,49 @@ void ConfigParser::initialize(const map<string, string>& kvs) {
   initialized = true;
 }
 
-
-
 void ConfigParser::initializeInternal(istream& in) {
-  int lineNum = 0;
+  keyValues.clear();
+  contents.clear();
+  curFilename = fileName;
+  readStreamContent(in);
+}
+
+void ConfigParser::processIncludedFile(const std::string &fname) {
+  if(fname == fileName || find(includedFiles.begin(), includedFiles.end(), fname) != includedFiles.end()) {
+    throw ConfigParsingError("Circular or multiple inclusion of the same file: '" + fname + "'" + lineAndFileInfo());
+  }
+  includedFiles.push_back(fname);
+  curFilename = fname;
+
+  string fpath;
+  for(const std::string& p: baseDirs) {
+    fpath += p;
+  }
+  fpath += fname;
+
+  string baseDir = extractBaseDir(fname);
+  if(!baseDir.empty()) {
+    if(baseDir[0] == '\\' || baseDir[0] == '/')
+      throw ConfigParsingError("Absolute paths in the included files are not supported yet");
+    baseDirs.push_back(baseDir);
+  }
+
+  ifstream in;
+  FileUtils::open(in,fpath);
+  readStreamContent(in);
+
+  if(!baseDir.empty())
+    baseDirs.pop_back();
+}
+
+void ConfigParser::readStreamContent(istream& in) {
+  curLineNum = 0;
   string line;
   ostringstream contentStream;
-  keyValues.clear();
+  set<string> curFileKeys;
   while(getline(in,line)) {
     contentStream << line << "\n";
-    lineNum += 1;
+    curLineNum += 1;
     line = Global::trim(line);
     if(line.length() <= 0 || line[0] == '#')
       continue;
@@ -82,17 +129,69 @@ void ConfigParser::initializeInternal(istream& in) {
     if(commentPos != string::npos)
       line = line.substr(0, commentPos);
 
+    if(line[0] == '@') {
+      if(line.size() < 9) {
+        throw ConfigParsingError("Unsupported @ directive" + lineAndFileInfo());
+      }
+      size_t pos0 = line.find_first_of(" \t\v\f=");
+      if(pos0 == string::npos)
+        throw ConfigParsingError("@ directive without value (key-val separator is not found)" + lineAndFileInfo());
+
+      string key = Global::trim(line.substr(0,pos0));
+      if(key != "@include")
+        throw ConfigParsingError("Unsupported @ directive '" + key + "'" + lineAndFileInfo());
+
+      string value = line.substr(pos0+1);
+      size_t pos1 = value.find_first_not_of(" \t\v\f=");
+      if(pos1 == string::npos)
+        throw ConfigParsingError("@ directive without value (value after key-val separator is not found)" + lineAndFileInfo());
+
+      value = Global::trim(value.substr(pos1));
+      value = Global::trim(value, "'");  // remove single quotes for filename
+      value = Global::trim(value, "\"");  // remove double quotes for filename
+
+      int lineNum = curLineNum;
+      processIncludedFile(value);
+      curLineNum = lineNum;
+      continue;
+    }
+
     size_t pos = line.find("=");
     if(pos == string::npos)
-      throw IOError("Could not parse kv pair, line " + Global::intToString(lineNum) + " does not have a non-commented '=' in " + fileName);
+      throw ConfigParsingError("Could not parse kv pair, line does not have a non-commented '='" + lineAndFileInfo());
 
     string key = Global::trim(line.substr(0,pos));
     string value = Global::trim(line.substr(pos+1));
-    if(keyValues.find(key) != keyValues.end())
-      throw IOError("Key '" + key + "' + was specified multiple times in " + fileName + ", you probably didn't mean to do this, please delete one of them");
+    if(curFileKeys.find(key) != curFileKeys.end()) {
+      if(!keysOverrideEnabled)
+        throw ConfigParsingError("Key '" + key + "' + was specified multiple times in " +
+                      curFilename + ", you probably didn't mean to do this, please delete one of them");
+      else
+        logMessages.push_back("Key '" + key + "' + was overriden by new value '" + value + "'" + lineAndFileInfo());
+    }
+    if(keyValues.find(key) != keyValues.end()) {
+      if(!keysOverrideFromIncludes)
+        throw ConfigParsingError("Key '" + key + "' + was specified multiple times in " +
+                      curFilename + " or its included files, and key overriding is disabled");
+      else
+        logMessages.push_back("Key '" + key + "' + was overriden by new value '" + value + "'" + lineAndFileInfo());
+    }
     keyValues[key] = value;
+    curFileKeys.insert(key);
   }
-  contents = contentStream.str();
+  contents += contentStream.str();
+}
+
+string ConfigParser::lineAndFileInfo() const {
+  return ", line " + Global::intToString(curLineNum) + " in '" + curFilename + "'";
+}
+
+string ConfigParser::extractBaseDir(const std::string &fname) {
+  size_t slash = fname.find_last_of("/\\");
+  if(slash != string::npos)
+    return fname.substr(0, slash + 1);
+  else
+    return std::string();
 }
 
 ConfigParser::~ConfigParser()
@@ -104,6 +203,14 @@ string ConfigParser::getFileName() const {
 
 string ConfigParser::getContents() const {
   return contents;
+}
+
+string ConfigParser::getAllKeyVals() const {
+  ostringstream ost;
+  for(auto it = keyValues.begin(); it != keyValues.end(); ++it) {
+    ost << it->first + " = " + it->second << endl;
+  }
+  return ost.str();
 }
 
 void ConfigParser::unsetUsedKey(const string& key) {
@@ -126,7 +233,7 @@ void ConfigParser::applyAlias(const string& mapThisKey, const string& toThisKey)
 }
 
 void ConfigParser::overrideKey(const std::string& key, const std::string& value) {
-  //Assume zero-length values mean to delete a key
+  // Assume zero-length values mean to delete a key
   if(value.length() <= 0) {
     if(keyValues.find(key) != keyValues.end())
       keyValues.erase(key);
@@ -135,9 +242,15 @@ void ConfigParser::overrideKey(const std::string& key, const std::string& value)
     keyValues[key] = value;
 }
 
+void ConfigParser::overrideKeys(const std::string& fname) {
+  // It's a new config file, so baseDir is not relevant anymore
+  baseDirs.clear();
+  processIncludedFile(fname);
+}
+
 void ConfigParser::overrideKeys(const map<string, string>& newkvs) {
   for(auto iter = newkvs.begin(); iter != newkvs.end(); ++iter) {
-    //Assume zero-length values mean to delete a key
+    // Assume zero-length values mean to delete a key
     if(iter->second.length() <= 0) {
       if(keyValues.find(iter->first) != keyValues.end())
         keyValues.erase(iter->first);
@@ -189,7 +302,7 @@ map<string,string> ConfigParser::parseCommaSeparated(const string& commaSeparate
       continue;
     size_t pos = s.find("=");
     if(pos == string::npos)
-      throw IOError("Could not parse kv pair, could not find '=' in:" + s);
+      throw ConfigParsingError("Could not parse kv pair, could not find '=' in:" + s);
 
     string key = Global::trim(s.substr(0,pos));
     string value = Global::trim(s.substr(pos+1));
@@ -221,7 +334,7 @@ void ConfigParser::warnUnusedKeys(ostream& out, Logger* logger) const {
     messages.push_back("--------------");
   }
 
-  if(logger != NULL) {
+  if(logger) {
     for(size_t i = 0; i<messages.size(); i++)
       logger->write(messages[i]);
   }
@@ -243,6 +356,35 @@ vector<string> ConfigParser::unusedKeys() const {
 bool ConfigParser::contains(const string& key) const {
   return keyValues.find(key) != keyValues.end();
 }
+
+bool ConfigParser::containsAny(const std::vector<std::string>& possibleKeys) const {
+  for(const string& key : possibleKeys) {
+    if(contains(key))
+      return true;
+  }
+  return false;
+}
+
+std::string ConfigParser::firstFoundOrFail(const std::vector<std::string>& possibleKeys) const {
+  for(const string& key : possibleKeys) {
+    if(contains(key))
+      return key;
+  }
+  string message = "Could not find key";
+  for(const string& key : possibleKeys) {
+    message += " '" + key + "'";
+  }
+  throw IOError(message + " in config file " + fileName);
+}
+
+std::string ConfigParser::firstFoundOrEmpty(const std::vector<std::string>& possibleKeys) const {
+  for(const string& key : possibleKeys) {
+    if(contains(key))
+      return key;
+  }
+  return string();
+}
+
 
 string ConfigParser::getString(const string& key) {
   auto iter = keyValues.find(key);
@@ -266,6 +408,18 @@ string ConfigParser::getString(const string& key, const set<string>& possibles) 
 
 vector<string> ConfigParser::getStrings(const string& key) {
   return Global::split(getString(key),',');
+}
+
+vector<string> ConfigParser::getStringsNonEmptyTrim(const string& key) {
+  vector<string> raw = Global::split(getString(key),',');
+  vector<string> trimmed;
+  for(size_t i = 0; i<raw.size(); i++) {
+    string s = Global::trim(raw[i]);
+    if(s.length() <= 0)
+      continue;
+    trimmed.push_back(s);
+  }
+  return trimmed;
 }
 
 vector<string> ConfigParser::getStrings(const string& key, const set<string>& possibles) {

@@ -1,9 +1,11 @@
 #include "../core/global.h"
+#include "../core/fileutils.h"
 #include "../core/makedir.h"
 #include "../core/config_parser.h"
 #include "../core/timer.h"
 #include "../core/test.h"
 #include "../dataio/sgf.h"
+#include "../dataio/files.h"
 #include "../search/asyncbot.h"
 #include "../program/setup.h"
 #include "../program/playutils.h"
@@ -76,7 +78,8 @@ static void writeLine(
   vector<AnalysisData> buf;
   if(!baseHist.isGameFinished) {
     int minMovesToTryToGet = 0; //just get the default number
-    search->getAnalysisData(buf,minMovesToTryToGet,false,9);
+    bool duplicateForSymmetries = true;
+    search->getAnalysisData(buf,minMovesToTryToGet,false,9,duplicateForSymmetries);
   }
   cout << buf.size() << " ";
   for(int i = 0; i<buf.size(); i++) {
@@ -89,8 +92,7 @@ static void writeLine(
     cout << data.policyPrior << " ";
   }
 
-  int minVisits = 3;
-  vector<double> ownership = search->getAverageTreeOwnership(minVisits);
+  vector<double> ownership = search->getAverageTreeOwnership();
   for(int y = 0; y<board.y_size; y++) {
     for(int x = 0; x<board.x_size; x++) {
       int pos = NNPos::xyToPos(x,y,nnXLen);
@@ -109,7 +111,7 @@ static void writeLine(
   cout << endl;
 }
 
-static void initializeDemoGame(Board& board, BoardHistory& hist, Player& pla, Rand& rand, AsyncBot* bot, Logger& logger) {
+static void initializeDemoGame(Board& board, BoardHistory& hist, Player& pla, Rand& rand, AsyncBot* bot) {
   static const int numSizes = 9;
   int sizes[numSizes] = {19,13,9,15,11,10,12,14,16};
   int sizeFreqs[numSizes] = {240,18,12,6,2,1,1,1,1};
@@ -345,7 +347,7 @@ static void initializeDemoGame(Board& board, BoardHistory& hist, Player& pla, Ra
       } //Close while(true)
 
       int numVisits = 20;
-      PlayUtils::adjustKomiToEven(bot->getSearchStopAndWait(),NULL,board,hist,pla,numVisits,logger,OtherGameProperties(),rand);
+      PlayUtils::adjustKomiToEven(bot->getSearchStopAndWait(),NULL,board,hist,pla,numVisits,OtherGameProperties(),rand);
       double komi = hist.rules.komi + 0.3 * rand.nextGaussian();
       komi = 0.5 * round(2.0 * komi);
       hist.setKomi((float)komi);
@@ -360,7 +362,7 @@ static void initializeDemoGame(Board& board, BoardHistory& hist, Player& pla, Ra
 }
 
 
-int MainCmds::demoplay(int argc, const char* const* argv) {
+int MainCmds::demoplay(const vector<string>& args) {
   Board::initHash();
   ScoreValue::initTables();
   Rand seedRand;
@@ -376,7 +378,7 @@ int MainCmds::demoplay(int argc, const char* const* argv) {
 
     TCLAP::ValueArg<string> logFileArg("","log-file","Log file to output to",false,string(),"FILE");
     cmd.add(logFileArg);
-    cmd.parse(argc,argv);
+    cmd.parseArgs(args);
 
     modelFile = cmd.getModelFile();
     logFile = logFileArg.getValue();
@@ -388,7 +390,7 @@ int MainCmds::demoplay(int argc, const char* const* argv) {
     return 1;
   }
 
-  Logger logger;
+  Logger logger(&cfg);
   logger.addFile(logFile);
 
   logger.write("Engine starting...");
@@ -400,13 +402,14 @@ int MainCmds::demoplay(int argc, const char* const* argv) {
   NNEvaluator* nnEval;
   {
     Setup::initializeSession(cfg);
-    int maxConcurrentEvals = params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
-    int expectedConcurrentEvals = params.numThreads;
-    int defaultMaxBatchSize = -1;
-    string expectedSha256 = "";
+    const int maxConcurrentEvals = params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
+    const int expectedConcurrentEvals = params.numThreads;
+    const int defaultMaxBatchSize = -1;
+    const bool defaultRequireExactNNLen = false;
+    const string expectedSha256 = "";
     nnEval = Setup::initializeNNEvaluator(
       modelFile,modelFile,expectedSha256,cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,
-      NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,
+      NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,defaultRequireExactNNLen,
       Setup::SETUP_FOR_OTHER
     );
   }
@@ -438,7 +441,7 @@ int MainCmds::demoplay(int argc, const char* const* argv) {
     BoardHistory baseHist(baseBoard,pla,Rules::getTrompTaylorish(),0);
     TimeControls tc;
 
-    initializeDemoGame(baseBoard, baseHist, pla, gameRand, bot, logger);
+    initializeDemoGame(baseBoard, baseHist, pla, gameRand, bot);
 
     bot->setPosition(pla,baseBoard,baseHist);
 
@@ -556,9 +559,8 @@ int MainCmds::demoplay(int argc, const char* const* argv) {
 
 }
 
-int MainCmds::printclockinfo(int argc, const char* const* argv) {
-  (void)argc;
-  (void)argv;
+int MainCmds::printclockinfo(const vector<string>& args) {
+  (void)args;
 #ifdef OS_IS_WINDOWS
   cout << "Does nothing on windows, disabled" << endl;
 #endif
@@ -570,7 +572,7 @@ int MainCmds::printclockinfo(int argc, const char* const* argv) {
 }
 
 
-int MainCmds::samplesgfs(int argc, const char* const* argv) {
+int MainCmds::samplesgfs(const vector<string>& args) {
   Board::initHash();
   ScoreValue::initTables();
   Rand seedRand;
@@ -605,7 +607,7 @@ int MainCmds::samplesgfs(int argc, const char* const* argv) {
     TCLAP::ValueArg<int> minMinRankArg("","min-min-rank","Require both players in a game to have rank at least this",false,Sgf::RANK_UNKNOWN,"INT");
     TCLAP::ValueArg<string> requiredPlayerNameArg("","required-player-name","Require player making the move to have this name",false,string(),"NAME");
     TCLAP::ValueArg<int> maxHandicapArg("","max-handicap","Require no more than this big handicap in stones",false,100,"INT");
-    TCLAP::ValueArg<double> maxKomiArg("","max-komi","Require abs(game komi) to be at most this",false,1000,"KOMI");
+    TCLAP::ValueArg<double> maxKomiArg("","max-komi","Require absolute value of game komi to be at most this",false,1000,"KOMI");
     cmd.add(sgfDirArg);
     cmd.add(outDirArg);
     cmd.add(excludeHashesArg);
@@ -619,7 +621,7 @@ int MainCmds::samplesgfs(int argc, const char* const* argv) {
     cmd.add(requiredPlayerNameArg);
     cmd.add(maxHandicapArg);
     cmd.add(maxKomiArg);
-    cmd.parse(argc,argv);
+    cmd.parseArgs(args);
     sgfDirs = sgfDirArg.getValue();
     outDir = outDirArg.getValue();
     excludeHashesFiles = excludeHashesArg.getValue();
@@ -641,20 +643,14 @@ int MainCmds::samplesgfs(int argc, const char* const* argv) {
 
   MakeDir::make(outDir);
 
-  Logger logger;
-  logger.setLogToStdout(true);
+  const bool logToStdout = true;
+  Logger logger(nullptr, logToStdout);
   logger.addFile(outDir + "/" + "log.log");
-  for(int i = 0; i < argc; i++)
-    logger.write(string("Command: ") + argv[i]);
+  for(const string& arg: args)
+    logger.write(string("Command: ") + arg);
 
-  const string sgfSuffix = ".sgf";
-  const string sgfSuffix2 = ".SGF";
-  auto sgfFilter = [&sgfSuffix,&sgfSuffix2](const string& name) {
-    return Global::isSuffix(name,sgfSuffix) || Global::isSuffix(name,sgfSuffix2);
-  };
   vector<string> sgfFiles;
-  for(int i = 0; i<sgfDirs.size(); i++)
-    Global::collectFiles(sgfDirs[i], sgfFilter, sgfFiles);
+  FileHelpers::collectSgfsFromDirsOrFiles(sgfDirs,sgfFiles);
   logger.write("Found " + Global::int64ToString((int64_t)sgfFiles.size()) + " sgf files!");
 
   set<Hash128> excludeHashes = Sgf::readExcludes(excludeHashesFiles);
@@ -675,7 +671,7 @@ int MainCmds::samplesgfs(int argc, const char* const* argv) {
       return false;
     if(sgf->depth() > maxDepth)
       return false;
-    if(abs(sgf->getKomi()) > maxKomi)
+    if(std::fabs(sgf->getKomi()) > maxKomi)
       return false;
     if(minMinRank != Sgf::RANK_UNKNOWN) {
       if(sgf->getRank(P_BLACK) < minMinRank && sgf->getRank(P_WHITE) < minMinRank)
@@ -703,7 +699,8 @@ int MainCmds::samplesgfs(int argc, const char* const* argv) {
           out->close();
           delete out;
         }
-        out = new ofstream(outDir + "/" + Global::intToString(fileCounter) + ".startposes.txt");
+        out = new ofstream();
+        FileUtils::open(*out, outDir + "/" + Global::intToString(fileCounter) + ".startposes.txt");
         fileCounter += 1;
         numWrittenThisFile = 0;
       }
@@ -810,7 +807,7 @@ int MainCmds::samplesgfs(int argc, const char* const* argv) {
 }
 
 static bool maybeGetValuesAfterMove(
-  Search* search, Logger& logger, Loc moveLoc,
+  Search* search, Loc moveLoc,
   Player nextPla, const Board& board, const BoardHistory& hist,
   double quickSearchFactor,
   ReportedSearchValues& values
@@ -834,11 +831,11 @@ static bool maybeGetValuesAfterMove(
     newSearchParams.maxVisits = 1 + (int64_t)(oldSearchParams.maxVisits * quickSearchFactor);
     newSearchParams.maxPlayouts = 1 + (int64_t)(oldSearchParams.maxPlayouts * quickSearchFactor);
     search->setParamsNoClearing(newSearchParams);
-    search->runWholeSearch(newNextPla,logger,shouldStop);
+    search->runWholeSearch(newNextPla,shouldStop);
     search->setParamsNoClearing(oldSearchParams);
   }
   else {
-    search->runWholeSearch(newNextPla,logger,shouldStop);
+    search->runWholeSearch(newNextPla,shouldStop);
   }
 
   if(shouldStop.load(std::memory_order_acquire))
@@ -874,7 +871,7 @@ struct PosQueueEntry {
   bool markedAsHintPos;
 };
 
-int MainCmds::dataminesgfs(int argc, const char* const* argv) {
+int MainCmds::dataminesgfs(const vector<string>& args) {
   Board::initHash();
   ScoreValue::initTables();
   Rand seedRand;
@@ -930,8 +927,8 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
     TCLAP::ValueArg<int> minMinRankArg("","min-min-rank","Require both players in a game to have rank at least this",false,Sgf::RANK_UNKNOWN,"INT");
     TCLAP::ValueArg<string> requiredPlayerNameArg("","required-player-name","Require player making the move to have this name",false,string(),"NAME");
     TCLAP::ValueArg<int> maxHandicapArg("","max-handicap","Require no more than this big handicap in stones",false,100,"INT");
-    TCLAP::ValueArg<double> maxKomiArg("","max-komi","Require abs(game komi) to be at most this",false,1000,"KOMI");
-    TCLAP::ValueArg<double> maxAutoKomiArg("","max-auto-komi","If abs(auto komi) would exceed this, skip position",false,1000,"KOMI");
+    TCLAP::ValueArg<double> maxKomiArg("","max-komi","Require absolute value of game komi to be at most this",false,1000,"KOMI");
+    TCLAP::ValueArg<double> maxAutoKomiArg("","max-auto-komi","If absolute value of auto komi would exceed this, skip position",false,1000,"KOMI");
     TCLAP::ValueArg<double> maxPolicyArg("","max-policy","Chop off moves with raw policy more than this",false,1,"POLICY");
     cmd.add(sgfDirArg);
     cmd.add(outDirArg);
@@ -955,7 +952,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
     cmd.add(maxKomiArg);
     cmd.add(maxAutoKomiArg);
     cmd.add(maxPolicyArg);
-    cmd.parse(argc,argv);
+    cmd.parseArgs(args);
 
     nnModelFile = cmd.getModelFile();
     sgfDirs = sgfDirArg.getValue();
@@ -993,11 +990,11 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
 
   MakeDir::make(outDir);
 
-  Logger logger;
-  logger.setLogToStdout(true);
+  const bool logToStdoutDefault = true;
+  Logger logger(&cfg, logToStdoutDefault);
   logger.addFile(outDir + "/" + "log.log");
-  for(int i = 0; i < argc; i++)
-    logger.write(string("Command: ") + argv[i]);
+  for(const string& arg: args)
+    logger.write(string("Command: ") + arg);
   logger.write("Git revision " + Version::getGitRevision());
 
   SearchParams params = Setup::loadSingleParams(cfg,Setup::SETUP_FOR_ANALYSIS);
@@ -1017,13 +1014,14 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
   NNEvaluator* nnEval;
   {
     Setup::initializeSession(cfg);
-    int maxConcurrentEvals = params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
-    int expectedConcurrentEvals = params.numThreads;
-    int defaultMaxBatchSize = std::max(8,((params.numThreads+3)/4)*4);
-    string expectedSha256 = "";
+    const int maxConcurrentEvals = params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
+    const int expectedConcurrentEvals = params.numThreads;
+    const int defaultMaxBatchSize = std::max(8,((params.numThreads+3)/4)*4);
+    const bool defaultRequireExactNNLen = false;
+    const string expectedSha256 = "";
     nnEval = Setup::initializeNNEvaluator(
       nnModelFile,nnModelFile,expectedSha256,cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,
-      NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,
+      NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,defaultRequireExactNNLen,
       Setup::SETUP_FOR_ANALYSIS
     );
   }
@@ -1032,14 +1030,8 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
   GameInitializer* gameInit = new GameInitializer(cfg,logger);
   cfg.warnUnusedKeys(cerr,&logger);
 
-  const string sgfSuffix = ".sgf";
-  const string sgfSuffix2 = ".SGF";
-  auto sgfFilter = [&sgfSuffix,&sgfSuffix2](const string& name) {
-    return Global::isSuffix(name,sgfSuffix) || Global::isSuffix(name,sgfSuffix2);
-  };
   vector<string> sgfFiles;
-  for(int i = 0; i<sgfDirs.size(); i++)
-    Global::collectFiles(sgfDirs[i], sgfFilter, sgfFiles);
+  FileHelpers::collectSgfsFromDirsOrFiles(sgfDirs,sgfFiles);
   logger.write("Found " + Global::int64ToString((int64_t)sgfFiles.size()) + " sgf files!");
 
   vector<size_t> permutation(sgfFiles.size());
@@ -1076,10 +1068,13 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
           out->close();
           delete out;
         }
+        string fileNameToWrite;
         if(sgfSplitCount > 1)
-          out = new ofstream(outDir + "/" + Global::intToString(fileCounter) + "." + Global::intToString(sgfSplitIdx) + ".hintposes.txt");
+          fileNameToWrite = outDir + "/" + Global::intToString(fileCounter) + "." + Global::intToString(sgfSplitIdx) + ".hintposes.txt";
         else
-          out = new ofstream(outDir + "/" + Global::intToString(fileCounter) + ".hintposes.txt");
+          fileNameToWrite = outDir + "/" + Global::intToString(fileCounter) + ".hintposes.txt";
+        out = new ofstream();
+        FileUtils::open(*out,fileNameToWrite);
         fileCounter += 1;
         numWrittenThisFile = 0;
       }
@@ -1116,7 +1111,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
       return false;
     if(sgf->depth() > maxDepth)
       return false;
-    if(abs(sgf->getKomi()) > maxKomi)
+    if(std::fabs(sgf->getKomi()) > maxKomi)
       return false;
     if(minMinRank != Sgf::RANK_UNKNOWN) {
       if(sgf->getRank(P_BLACK) < minMinRank && sgf->getRank(P_WHITE) < minMinRank)
@@ -1127,7 +1122,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
     return true;
   };
 
-  auto expensiveEvaluateMove = [&toWriteQueue,&logger,&turnWeightLambda,&maxAutoKomi,&maxHandicap,&numFilteredIndivdualPoses](
+  auto expensiveEvaluateMove = [&toWriteQueue,&turnWeightLambda,&maxAutoKomi,&maxHandicap,&numFilteredIndivdualPoses](
     Search* search, Loc missedLoc,
     Player nextPla, const Board& board, const BoardHistory& hist,
     const Sgf::PositionSample& sample, bool markedAsHintPos
@@ -1135,7 +1130,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
     if(shouldStop.load(std::memory_order_acquire))
       return;
 
-    if(abs(hist.rules.komi) > maxAutoKomi) {
+    if(std::fabs(hist.rules.komi) > maxAutoKomi) {
       numFilteredIndivdualPoses.fetch_add(1);
       return;
     }
@@ -1159,7 +1154,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
 
     ReportedSearchValues veryQuickValues;
     {
-      bool suc = maybeGetValuesAfterMove(search,logger,Board::NULL_LOC,nextPla,board,hist,1.0/25.0,veryQuickValues);
+      bool suc = maybeGetValuesAfterMove(search,Board::NULL_LOC,nextPla,board,hist,1.0/25.0,veryQuickValues);
       if(!suc)
         return;
     }
@@ -1167,7 +1162,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
 
     ReportedSearchValues quickValues;
     {
-      bool suc = maybeGetValuesAfterMove(search,logger,Board::NULL_LOC,nextPla,board,hist,1.0/5.0,quickValues);
+      bool suc = maybeGetValuesAfterMove(search,Board::NULL_LOC,nextPla,board,hist,1.0/5.0,quickValues);
       if(!suc)
         return;
     }
@@ -1175,7 +1170,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
 
     ReportedSearchValues baseValues;
     {
-      bool suc = maybeGetValuesAfterMove(search,logger,Board::NULL_LOC,nextPla,board,hist,1.0,baseValues);
+      bool suc = maybeGetValuesAfterMove(search,Board::NULL_LOC,nextPla,board,hist,1.0,baseValues);
       if(!suc)
         return;
     }
@@ -1191,8 +1186,8 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
     // }
 
     Sgf::PositionSample sampleToWrite = sample;
-    sampleToWrite.weight += abs(baseValues.utility - quickValues.utility);
-    sampleToWrite.weight += abs(baseValues.utility - veryQuickValues.utility);
+    sampleToWrite.weight += std::fabs(baseValues.utility - quickValues.utility);
+    sampleToWrite.weight += std::fabs(baseValues.utility - veryQuickValues.utility);
 
     //Bot DOES see the move?
     if(moveLoc == missedLoc) {
@@ -1216,7 +1211,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
 
       if(!shouldWriteMove) {
         ReportedSearchValues moveValues;
-        if(!maybeGetValuesAfterMove(search,logger,moveLoc,nextPla,board,hist,1.0,moveValues))
+        if(!maybeGetValuesAfterMove(search,moveLoc,nextPla,board,hist,1.0,moveValues))
           return;
         // ostringstream out0;
         // out0 << "BOT MOVE " << Location::toString(moveLoc,board) << endl;
@@ -1224,7 +1219,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
         // cout << out0.str() << endl;
 
         ReportedSearchValues missedValues;
-        if(!maybeGetValuesAfterMove(search,logger,missedLoc,nextPla,board,hist,1.0,missedValues))
+        if(!maybeGetValuesAfterMove(search,missedLoc,nextPla,board,hist,1.0,missedValues))
           return;
         // ostringstream out0;
         // out0 << "SGF MOVE " << Location::toString(missedLoc,board) << endl;
@@ -1255,7 +1250,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
   // ---------------------------------------------------------------------------------------------------
   //SGF MODE
 
-  auto processSgfGame = [&logger,&excludeHashes,&gameInit,&nnEval,&expensiveEvaluateMove,autoKomi,&gameModeFastThreshold,&maxDepth,&numFilteredSgfs,&maxHandicap,&maxPolicy](
+  auto processSgfGame = [&logger,&gameInit,&nnEval,&expensiveEvaluateMove,autoKomi,&gameModeFastThreshold,&maxDepth,&numFilteredSgfs,&maxHandicap,&maxPolicy](
     Search* search, Rand& rand, const string& fileName, CompactSgf* sgf, bool blackOkay, bool whiteOkay
   ) {
     //Don't use the SGF rules - randomize them for a bit more entropy
@@ -1277,7 +1272,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
     const bool preventEncore = true;
     const vector<Move>& sgfMoves = sgf->moves;
 
-    if(sgfMoves.size() > maxDepth) {
+    if((int64_t)sgfMoves.size() > maxDepth) {
       numFilteredSgfs.fetch_add(1);
       return;
     }
@@ -1305,7 +1300,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
 
       ReportedSearchValues superQuickValues;
       {
-        bool suc = maybeGetValuesAfterMove(search,logger,Board::NULL_LOC,nextPla,board,hist,1.0/80.0,superQuickValues);
+        bool suc = maybeGetValuesAfterMove(search,Board::NULL_LOC,nextPla,board,hist,1.0/80.0,superQuickValues);
         if(!suc)
           break;
       }
@@ -1420,7 +1415,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
       if(autoKomi) {
         const int64_t numVisits = 10;
         OtherGameProperties props;
-        PlayUtils::adjustKomiToEven(search,NULL,boards[m],hists[m],nextPlas[m],numVisits,logger,props,rand);
+        PlayUtils::adjustKomiToEven(search,NULL,boards[m],hists[m],nextPlas[m],numVisits,props,rand);
       }
 
       expensiveEvaluateMove(
@@ -1435,7 +1430,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
   auto processSgfLoop = [&logger,&processSgfGame,&sgfQueue,&params,&nnEval,&numSgfsDone,&isPlayerOkay,&tolerateIllegalMoves]() {
     Rand rand;
     string searchRandSeed = Global::uint64ToString(rand.nextUInt64());
-    Search* search = new Search(params,nnEval,searchRandSeed);
+    Search* search = new Search(params,nnEval,&logger,searchRandSeed);
 
     while(true) {
       if(shouldStop.load(std::memory_order_acquire))
@@ -1475,7 +1470,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
   // ---------------------------------------------------------------------------------------------------
   //TREE MODE
 
-  auto treePosHandler = [&logger,&gameInit,&nnEval,&expensiveEvaluateMove,&autoKomi,&maxPolicy,&flipIfPassOrWFirst](
+  auto treePosHandler = [&gameInit,&nnEval,&expensiveEvaluateMove,&autoKomi,&maxPolicy,&flipIfPassOrWFirst](
     Search* search, Rand& rand, const BoardHistory& treeHist, int initialTurnNumber, bool markedAsHintPos
   ) {
     if(shouldStop.load(std::memory_order_acquire))
@@ -1545,22 +1540,39 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
     assert(treeHist.moveHistory[hintIdx].pla == pla);
     assert(treeHist.moveHistory[hintIdx].loc == sample.hintLoc);
 
+    //And make sure it's legal under our randomized rules.
+    if(!hist.isLegal(board,sample.hintLoc,pla))
+      return;
+
     if(autoKomi) {
       const int64_t numVisits = 10;
       OtherGameProperties props;
-      PlayUtils::adjustKomiToEven(search,NULL,board,hist,pla,numVisits,logger,props,rand);
+      PlayUtils::adjustKomiToEven(search,NULL,board,hist,pla,numVisits,props,rand);
     }
 
     MiscNNInputParams nnInputParams;
-    NNResultBuf buf;
     bool skipCache = true; //Always ignore cache so that we get more entropy on repeated board positions due to symmetries
     bool includeOwnerMap = false;
-    nnEval->evaluate(board,hist,pla,nnInputParams,buf,skipCache,includeOwnerMap);
 
-    shared_ptr<NNOutput>& nnOutput = buf.result;
+    double policyProb = 0.0;
+    {
+      // Take 1.1 * the geometric mean of a few samples, so as to greatly upweight the importance of anomalous low values.
+      double acc = 0.0;
+      int count = 0;
+      for(int samples = 0; samples < 4; samples++) {
+        NNResultBuf buf;
+        nnEval->evaluate(board,hist,pla,nnInputParams,buf,skipCache,includeOwnerMap);
+        shared_ptr<NNOutput>& nnOutput = buf.result;
+        int pos = NNPos::locToPos(sample.hintLoc,board.x_size,nnOutput->nnXLen,nnOutput->nnYLen);
+        double prob = nnOutput->policyProbs[pos];
+        assert(prob >= 0.0);
+        acc += log(prob + 1e-30);
+        count += 1;
+      }
+      assert(count > 0);
+      policyProb = 1.1 * exp(acc / count);
+    }
 
-    int pos = NNPos::locToPos(sample.hintLoc,board.x_size,nnOutput->nnXLen,nnOutput->nnYLen);
-    double policyProb = nnOutput->policyProbs[pos];
     if(policyProb > maxPolicy)
       return;
     double weight = surpriseWeight(policyProb,rand,markedAsHintPos);
@@ -1589,7 +1601,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
   auto processPosLoop = [&logger,&posQueue,&params,&numPosesBegun,&numPosesDone,&numPosesEnqueued,&nnEval,&treePosHandler]() {
     Rand rand;
     string searchRandSeed = Global::uint64ToString(rand.nextUInt64());
-    Search* search = new Search(params,nnEval,searchRandSeed);
+    Search* search = new Search(params,nnEval,&logger,searchRandSeed);
 
     while(true) {
       if(shouldStop.load(std::memory_order_acquire))
@@ -1769,7 +1781,7 @@ int MainCmds::dataminesgfs(int argc, const char* const* argv) {
 
 
 
-int MainCmds::trystartposes(int argc, const char* const* argv) {
+int MainCmds::trystartposes(const vector<string>& args) {
   Board::initHash();
   ScoreValue::initTables();
   Rand seedRand;
@@ -1788,7 +1800,7 @@ int MainCmds::trystartposes(int argc, const char* const* argv) {
     TCLAP::ValueArg<double> minWeightArg("","min-weight","Minimum weight of startpos to try",false,0.0,"WEIGHT");
     cmd.add(startPosesFileArg);
     cmd.add(minWeightArg);
-    cmd.parse(argc,argv);
+    cmd.parseArgs(args);
     nnModelFile = cmd.getModelFile();
     startPosesFiles = startPosesFileArg.getValue();
     minWeight = minWeightArg.getValue();
@@ -1799,8 +1811,8 @@ int MainCmds::trystartposes(int argc, const char* const* argv) {
     return 1;
   }
 
-  Logger logger;
-  logger.setLogToStdout(true);
+  const bool logToStdoutDefault = true;
+  Logger logger(&cfg, logToStdoutDefault);
 
   SearchParams params = Setup::loadSingleParams(cfg,Setup::SETUP_FOR_ANALYSIS);
   //Ignore temperature, noise
@@ -1819,13 +1831,14 @@ int MainCmds::trystartposes(int argc, const char* const* argv) {
   NNEvaluator* nnEval;
   {
     Setup::initializeSession(cfg);
-    int maxConcurrentEvals = params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
-    int expectedConcurrentEvals = params.numThreads;
-    int defaultMaxBatchSize = std::max(8,((params.numThreads+3)/4)*4);
-    string expectedSha256 = "";
+    const int maxConcurrentEvals = params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
+    const int expectedConcurrentEvals = params.numThreads;
+    const int defaultMaxBatchSize = std::max(8,((params.numThreads+3)/4)*4);
+    const bool defaultRequireExactNNLen = false;
+    const string expectedSha256 = "";
     nnEval = Setup::initializeNNEvaluator(
       nnModelFile,nnModelFile,expectedSha256,cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,
-      NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,
+      NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,defaultRequireExactNNLen,
       Setup::SETUP_FOR_ANALYSIS
     );
   }
@@ -1834,7 +1847,7 @@ int MainCmds::trystartposes(int argc, const char* const* argv) {
   vector<Sgf::PositionSample> startPoses;
   for(size_t i = 0; i<startPosesFiles.size(); i++) {
     const string& startPosesFile = startPosesFiles[i];
-    vector<string> lines = Global::readFileLines(startPosesFile,'\n');
+    vector<string> lines = FileUtils::readFileLines(startPosesFile,'\n');
     for(size_t j = 0; j<lines.size(); j++) {
       string line = Global::trim(lines[j]);
       if(line.size() > 0) {
@@ -1849,7 +1862,7 @@ int MainCmds::trystartposes(int argc, const char* const* argv) {
     }
   }
   string searchRandSeed = Global::uint64ToString(seedRand.nextUInt64());
-  Search* search = new Search(params,nnEval,searchRandSeed);
+  Search* search = new Search(params,nnEval,&logger,searchRandSeed);
 
   // ---------------------------------------------------------------------------------------------------
 
@@ -1880,14 +1893,14 @@ int MainCmds::trystartposes(int argc, const char* const* argv) {
     {
       const int64_t numVisits = 10;
       OtherGameProperties props;
-      PlayUtils::adjustKomiToEven(search,NULL,board,hist,pla,numVisits,logger,props,seedRand);
+      PlayUtils::adjustKomiToEven(search,NULL,board,hist,pla,numVisits,props,seedRand);
     }
 
     Loc hintLoc = startPos.hintLoc;
 
     {
       ReportedSearchValues values;
-      bool suc = maybeGetValuesAfterMove(search,logger,Board::NULL_LOC,pla,board,hist,1.0,values);
+      bool suc = maybeGetValuesAfterMove(search,Board::NULL_LOC,pla,board,hist,1.0,values);
       (void)suc;
       assert(suc);
       cout << "Searching startpos: " << "\n";
@@ -1906,7 +1919,7 @@ int MainCmds::trystartposes(int argc, const char* const* argv) {
       else {
         ReportedSearchValues values;
         cout << "There was a hintpos " << Location::toString(hintLoc,board) << ", re-searching after playing it: " << "\n";
-        bool suc = maybeGetValuesAfterMove(search,logger,hintLoc,pla,board,hist,1.0,values);
+        bool suc = maybeGetValuesAfterMove(search,hintLoc,pla,board,hist,1.0,values);
         (void)suc;
         assert(suc);
         Board::printBoard(cout, search->getRootBoard(), search->getChosenMoveLoc(), &(search->getRootHist().moveHistory));
@@ -1924,7 +1937,7 @@ int MainCmds::trystartposes(int argc, const char* const* argv) {
 }
 
 
-int MainCmds::viewstartposes(int argc, const char* const* argv) {
+int MainCmds::viewstartposes(const vector<string>& args) {
   Board::initHash();
   ScoreValue::initTables();
 
@@ -1942,7 +1955,7 @@ int MainCmds::viewstartposes(int argc, const char* const* argv) {
     TCLAP::ValueArg<double> minWeightArg("","min-weight","Min weight of startpos to view",false,0.0,"WEIGHT");
     cmd.add(startPosesFileArg);
     cmd.add(minWeightArg);
-    cmd.parse(argc,argv);
+    cmd.parseArgs(args);
     startPosesFiles = startPosesFileArg.getValue();
     minWeight = minWeightArg.getValue();
 
@@ -1956,24 +1969,27 @@ int MainCmds::viewstartposes(int argc, const char* const* argv) {
   }
 
   Rand rand;
-  Logger logger;
-  logger.setLogToStdout(true);
+
+  const bool logToStdoutDefault = true;
+  Logger logger(&cfg, logToStdoutDefault);
 
   Rules rules;
   AsyncBot* bot = NULL;
   NNEvaluator* nnEval = NULL;
   if(cfg.getFileName() != "") {
-    rules = Setup::loadSingleRulesExceptForKomi(cfg);
+    const bool loadKomiFromCfg = false;
+    rules = Setup::loadSingleRules(cfg,loadKomiFromCfg);
     SearchParams params = Setup::loadSingleParams(cfg,Setup::SETUP_FOR_GTP);
     {
       Setup::initializeSession(cfg);
-      int maxConcurrentEvals = params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
-      int expectedConcurrentEvals = params.numThreads;
-      int defaultMaxBatchSize = std::max(8,((params.numThreads+3)/4)*4);
-      string expectedSha256 = "";
+      const int maxConcurrentEvals = params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
+      const int expectedConcurrentEvals = params.numThreads;
+      const int defaultMaxBatchSize = std::max(8,((params.numThreads+3)/4)*4);
+      const bool defaultRequireExactNNLen = false;
+      const string expectedSha256 = "";
       nnEval = Setup::initializeNNEvaluator(
         modelFile,modelFile,expectedSha256,cfg,logger,rand,maxConcurrentEvals,expectedConcurrentEvals,
-        Board::MAX_LEN,Board::MAX_LEN,defaultMaxBatchSize,
+        Board::MAX_LEN,Board::MAX_LEN,defaultMaxBatchSize,defaultRequireExactNNLen,
         Setup::SETUP_FOR_GTP
       );
     }
@@ -1991,7 +2007,7 @@ int MainCmds::viewstartposes(int argc, const char* const* argv) {
   vector<Sgf::PositionSample> startPoses;
   for(size_t i = 0; i<startPosesFiles.size(); i++) {
     const string& startPosesFile = startPosesFiles[i];
-    vector<string> lines = Global::readFileLines(startPosesFile,'\n');
+    vector<string> lines = FileUtils::readFileLines(startPosesFile,'\n');
     for(size_t j = 0; j<lines.size(); j++) {
       string line = Global::trim(lines[j]);
       if(line.size() > 0) {
@@ -2042,7 +2058,7 @@ int MainCmds::viewstartposes(int argc, const char* const* argv) {
     if(autoKomi && bot != NULL) {
       const int64_t numVisits = 10;
       OtherGameProperties props;
-      PlayUtils::adjustKomiToEven(bot->getSearchStopAndWait(),NULL,board,hist,pla,numVisits,logger,props,rand);
+      PlayUtils::adjustKomiToEven(bot->getSearchStopAndWait(),NULL,board,hist,pla,numVisits,props,rand);
     }
 
     if(bot != NULL) {
@@ -2069,7 +2085,7 @@ int MainCmds::viewstartposes(int argc, const char* const* argv) {
 }
 
 
-int MainCmds::sampleinitializations(int argc, const char* const* argv) {
+int MainCmds::sampleinitializations(const vector<string>& args) {
   Board::initHash();
   ScoreValue::initTables();
 
@@ -2087,7 +2103,7 @@ int MainCmds::sampleinitializations(int argc, const char* const* argv) {
     TCLAP::SwitchArg evaluateArg("","evaluate","Print out values and scores on the inited poses");
     cmd.add(numToGenArg);
     cmd.add(evaluateArg);
-    cmd.parse(argc,argv);
+    cmd.parseArgs(args);
     numToGen = numToGenArg.getValue();
     evaluate = evaluateArg.getValue();
 
@@ -2101,21 +2117,23 @@ int MainCmds::sampleinitializations(int argc, const char* const* argv) {
   }
 
   Rand rand;
-  Logger logger;
-  logger.setLogToStdout(true);
+
+  const bool logToStdoutDefault = true;
+  Logger logger(&cfg, logToStdoutDefault);
 
   NNEvaluator* nnEval = NULL;
   if(cfg.getFileName() != "") {
     SearchParams params = Setup::loadSingleParams(cfg,Setup::SETUP_FOR_GTP);
     {
       Setup::initializeSession(cfg);
-      int maxConcurrentEvals = params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
-      int expectedConcurrentEvals = params.numThreads;
-      int defaultMaxBatchSize = std::max(8,((params.numThreads+3)/4)*4);
-      string expectedSha256 = "";
+      const int maxConcurrentEvals = params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
+      const int expectedConcurrentEvals = params.numThreads;
+      const int defaultMaxBatchSize = std::max(8,((params.numThreads+3)/4)*4);
+      const bool defaultRequireExactNNLen = false;
+      const string expectedSha256 = "";
       nnEval = Setup::initializeNNEvaluator(
         modelFile,modelFile,expectedSha256,cfg,logger,rand,maxConcurrentEvals,expectedConcurrentEvals,
-        Board::MAX_LEN,Board::MAX_LEN,defaultMaxBatchSize,
+        Board::MAX_LEN,Board::MAX_LEN,defaultMaxBatchSize,defaultRequireExactNNLen,
         Setup::SETUP_FOR_GTP
       );
     }
@@ -2155,7 +2173,8 @@ int MainCmds::sampleinitializations(int argc, const char* const* argv) {
       nullptr,
       nullptr,
       nullptr,
-      false
+      nullptr,
+      nullptr
     );
 
     cout << data->startHist.rules.toString() << endl;

@@ -1,4 +1,5 @@
 #!/bin/bash -eux
+set -o pipefail
 {
 ./katago runsearchtests tests/models/g103-b6c96-s103408384-d26419149.txt.gz false false 0 false | tee tests/results/runSearchTests-iNCHW-cNCHW.txt
 ./katago runsearchtests tests/models/g103-b6c96-s103408384-d26419149.txt.gz true false 0 false | tee tests/results/runSearchTests-iNHWC-cNCHW.txt
@@ -24,10 +25,15 @@
 
 ./katago runsearchtestsv8 tests/models/g170-b6c96-s175395328-d26788732.txt.gz false false false | tee tests/results/runSearchTestsV8.txt
 ./katago runsearchtestsv8 tests/models/g170-b6c96-s175395328-d26788732.bin.gz false false false | tee tests/results/runSearchTestsV8Bin.txt
+./katago runsearchtestsv9 tests/models/g170-b6c96-s175395328-d26788732.txt.gz false false false | tee tests/results/runSearchTestsV9.txt
 
 ./katago runnnbatchingtest tests/models/g170-b6c96-s175395328-d26788732.bin.gz false false false | tee tests/results/runNNBatchingTest.txt
 ./katago runnnbatchingtest tests/models/g170-b6c96-s175395328-d26788732.bin.gz true false false | tee tests/results/runNNBatchingTestiNHWC.txt
 ./katago runnnbatchingtest tests/models/g170-b6c96-s175395328-d26788732.bin.gz true true false | tee tests/results/runNNBatchingTestNHWC.txt
+
+./katago runnnevalcanarytests configs/gtp_example.cfg tests/models/g170e-b10c128-s1141046784-d204142634.bin.gz 0 | grep -v ': nnRandSeed0 = ' | tee tests/results/runNNCanaryTests.txt
+./katago runnnevalcanarytests configs/gtp_example.cfg tests/models/g170e-b10c128-s1141046784-d204142634.bin.gz 3 | grep -v ': nnRandSeed0 = ' | tee -a tests/results/runNNCanaryTests.txt
+./katago runnnevalcanarytests configs/gtp_example.cfg tests/models/g170e-b10c128-s1141046784-d204142634.bin.gz 6 | grep -v ': nnRandSeed0 = ' | tee -a tests/results/runNNCanaryTests.txt
 
 mkdir -p tests/scratch
 ./katago runtinynntests tests/scratch | grep -v ': nnRandSeed0 = ' | tee tests/results/runTinyNNTests.txt

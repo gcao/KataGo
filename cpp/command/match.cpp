@@ -1,9 +1,11 @@
 #include "../core/global.h"
+#include "../core/fileutils.h"
 #include "../core/makedir.h"
 #include "../core/config_parser.h"
 #include "../core/timer.h"
 #include "../dataio/sgf.h"
 #include "../search/asyncbot.h"
+#include "../search/patternbonustable.h"
 #include "../program/setup.h"
 #include "../program/play.h"
 #include "../command/commandline.h"
@@ -24,7 +26,7 @@ static void signalHandler(int signal)
   }
 }
 
-int MainCmds::match(int argc, const char* const* argv) {
+int MainCmds::match(const vector<string>& args) {
   Board::initHash();
   ScoreValue::initTables();
   Rand seedRand;
@@ -45,7 +47,7 @@ int MainCmds::match(int argc, const char* const* argv) {
     cmd.setShortUsageArgLimit();
     cmd.addOverrideConfigArg();
 
-    cmd.parse(argc,argv);
+    cmd.parseArgs(args);
 
     logFile = logFileArg.getValue();
     sgfOutputDir = sgfOutputDirArg.getValue();
@@ -57,10 +59,8 @@ int MainCmds::match(int argc, const char* const* argv) {
     return 1;
   }
 
-  Logger logger;
+  Logger logger(&cfg);
   logger.addFile(logFile);
-  bool logToStdout = cfg.getBool("logToStdout");
-  logger.setLogToStdout(logToStdout);
 
   logger.write("Match Engine starting...");
   logger.write(string("Git revision: ") + Version::getGitRevision());
@@ -144,31 +144,20 @@ int MainCmds::match(int argc, const char* const* argv) {
   //Initialize object for randomizing game settings and running games
   PlaySettings playSettings = PlaySettings::loadForMatch(cfg);
   GameRunner* gameRunner = new GameRunner(cfg, playSettings, logger);
-  int maxBoardSizeUsed = 0;
-  {
-    vector<int> allowedBSizes = gameRunner->getGameInitializer()->getAllowedBSizes();
-    for(size_t i = 0; i<allowedBSizes.size(); i++) {
-      if(maxBoardSizeUsed < allowedBSizes[i])
-        maxBoardSizeUsed = allowedBSizes[i];
-    }
-    if(maxBoardSizeUsed <= 0)
-      maxBoardSizeUsed = NNPos::MAX_BOARD_LEN;
-    if(maxBoardSizeUsed > NNPos::MAX_BOARD_LEN)
-      throw StringError(
-        "Max board size used is greater than the largest size supported by the neural net: "
-        + Global::intToString(maxBoardSizeUsed) + " > " + Global::intToString(NNPos::MAX_BOARD_LEN)
-      );
-    logger.write("Initializing neural net buffer to be size " + Global::intToString(maxBoardSizeUsed) + " since that's the largest board size tested");
-  }
+  const int minBoardXSizeUsed = gameRunner->getGameInitializer()->getMinBoardXSize();
+  const int minBoardYSizeUsed = gameRunner->getGameInitializer()->getMinBoardYSize();
+  const int maxBoardXSizeUsed = gameRunner->getGameInitializer()->getMaxBoardXSize();
+  const int maxBoardYSizeUsed = gameRunner->getGameInitializer()->getMaxBoardYSize();
 
   //Initialize neural net inference engine globals, and load models
   Setup::initializeSession(cfg);
   const vector<string>& nnModelNames = nnModelFiles;
-  int defaultMaxBatchSize = -1;
+  const int defaultMaxBatchSize = -1;
+  const bool defaultRequireExactNNLen = minBoardXSizeUsed == maxBoardXSizeUsed && minBoardYSizeUsed == maxBoardYSizeUsed;
   const vector<string> expectedSha256s;
   vector<NNEvaluator*> nnEvals = Setup::initializeNNEvaluators(
     nnModelNames,nnModelFiles,expectedSha256s,cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,
-    maxBoardSizeUsed,maxBoardSizeUsed,defaultMaxBatchSize,
+    maxBoardXSizeUsed,maxBoardYSizeUsed,defaultMaxBatchSize,defaultRequireExactNNLen,
     Setup::SETUP_FOR_MATCH
   );
   logger.write("Loaded neural net");
@@ -179,6 +168,9 @@ int MainCmds::match(int argc, const char* const* argv) {
       continue;
     nnEvalsByBot[i] = nnEvals[whichNNModel[i]];
   }
+
+  std::vector<std::unique_ptr<PatternBonusTable>> patternBonusTables = Setup::loadAvoidSgfPatternBonusTables(cfg,logger);
+  assert(patternBonusTables.size() == numBots);
 
   //Initialize object for randomly pairing bots
   bool forSelfPlay = false;
@@ -191,7 +183,7 @@ int MainCmds::match(int argc, const char* const* argv) {
   //Done loading!
   //------------------------------------------------------------------------------------
   logger.write("Loaded all config stuff, starting matches");
-  if(!logToStdout)
+  if(!logger.isLoggingToStdout())
     cout << "Loaded all config stuff, starting matches" << endl;
 
   if(sgfOutputDir != string())
@@ -202,15 +194,27 @@ int MainCmds::match(int argc, const char* const* argv) {
   std::signal(SIGINT, signalHandler);
   std::signal(SIGTERM, signalHandler);
 
+
+  std::mutex statsMutex;
+  int64_t gameCount = 0;
+  std::map<string,double> timeUsedByBotMap;
+  std::map<string,double> movesByBotMap;
+
   auto runMatchLoop = [
-    &gameRunner,&matchPairer,&sgfOutputDir,&logger,&gameSeedBase
+    &gameRunner,&matchPairer,&sgfOutputDir,&logger,&gameSeedBase,&patternBonusTables,
+    &statsMutex, &gameCount, &timeUsedByBotMap, &movesByBotMap
   ](
     uint64_t threadHash
   ) {
-    ofstream* sgfOut = sgfOutputDir.length() > 0 ? (new ofstream(sgfOutputDir + "/" + Global::uint64ToHexString(threadHash) + ".sgfs")) : NULL;
+    ofstream* sgfOut = NULL;
+    if(sgfOutputDir.length() > 0) {
+      sgfOut = new ofstream();
+      FileUtils::open(*sgfOut, sgfOutputDir + "/" + Global::uint64ToHexString(threadHash) + ".sgfs");
+    }
     auto shouldStopFunc = []() {
       return shouldStop.load();
     };
+    WaitableFlag* shouldPause = nullptr;
 
     Rand thisLoopSeedRand;
     while(true) {
@@ -223,9 +227,13 @@ int MainCmds::match(int argc, const char* const* argv) {
       MatchPairer::BotSpec botSpecW;
       if(matchPairer->getMatchup(botSpecB, botSpecW, logger)) {
         string seed = gameSeedBase + ":" + Global::uint64ToHexString(thisLoopSeedRand.nextUInt64());
+        std::function<void(const MatchPairer::BotSpec&, Search*)> afterInitialization = [&patternBonusTables](const MatchPairer::BotSpec& spec, Search* search) {
+          assert(spec.botIdx < patternBonusTables.size());
+          search->setCopyOfExternalPatternBonusTable(patternBonusTables[spec.botIdx]);
+        };
         gameData = gameRunner->runGame(
           seed, botSpecB, botSpecW, NULL, NULL, logger,
-          shouldStopFunc, nullptr, nullptr, false
+          shouldStopFunc, shouldPause, nullptr, afterInitialization, nullptr
         );
       }
 
@@ -235,6 +243,28 @@ int MainCmds::match(int argc, const char* const* argv) {
           WriteSgf::writeSgf(*sgfOut,gameData->bName,gameData->wName,gameData->endHist,gameData,false,true);
           (*sgfOut) << endl;
         }
+
+        {
+          std::lock_guard<std::mutex> lock(statsMutex);
+          gameCount += 1;
+          timeUsedByBotMap[gameData->bName] += gameData->bTimeUsed;
+          timeUsedByBotMap[gameData->wName] += gameData->wTimeUsed;
+          movesByBotMap[gameData->bName] += (double)gameData->bMoveCount;
+          movesByBotMap[gameData->wName] += (double)gameData->wMoveCount;
+
+          int64_t x = gameCount;
+          while(x % 2 == 0 && x > 1) x /= 2;
+          if(x == 1 || x == 3 || x == 5) {
+            for(auto& pair : timeUsedByBotMap) {
+              logger.write(
+                "Avg move time used by " + pair.first + " " +
+                Global::doubleToString(pair.second / movesByBotMap[pair.first]) + " " +
+                Global::doubleToString(movesByBotMap[pair.first]) + " moves"
+              );
+            }
+          }
+        }
+
         delete gameData;
       }
 

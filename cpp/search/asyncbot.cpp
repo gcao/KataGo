@@ -20,13 +20,13 @@ static void searchThreadLoop(AsyncBot* asyncBot, Logger* logger) {
 }
 
 AsyncBot::AsyncBot(SearchParams params, NNEvaluator* nnEval, Logger* l, const string& randSeed)
-  :search(NULL),logger(l),
+  :search(NULL),
    controlMutex(),threadWaitingToSearch(),userWaitingForStop(),searchThread(),
    isRunning(false),isPondering(false),isKilled(false),shouldStopNow(false),
    queuedSearchId(0),queuedOnMove(),timeControls(),searchFactor(1.0),
    analyzeCallbackPeriod(-1),analyzeCallback(),searchBegunCallback()
 {
-  search = new Search(params,nnEval,randSeed);
+  search = new Search(params,nnEval,l,randSeed);
   searchThread = std::thread(searchThreadLoop,this,l);
 }
 
@@ -71,6 +71,14 @@ void AsyncBot::setPosition(Player pla, const Board& board, const BoardHistory& h
   stopAndWait();
   search->setPosition(pla,board,history);
 }
+void AsyncBot::setPlayerAndClearHistory(Player pla) {
+  stopAndWait();
+  search->setPlayerAndClearHistory(pla);
+}
+void AsyncBot::setPlayerIfNew(Player pla) {
+  stopAndWait();
+  search->setPlayerIfNew(pla);
+}
 void AsyncBot::setKomiIfNew(float newKomi) {
   stopAndWait();
   search->setKomiIfNew(newKomi);
@@ -95,10 +103,13 @@ void AsyncBot::setParamsNoClearing(SearchParams params) {
   stopAndWait();
   search->setParamsNoClearing(params);
 }
-void AsyncBot::setPlayerIfNew(Player movePla) {
+void AsyncBot::setExternalPatternBonusTable(std::unique_ptr<PatternBonusTable>&& table) {
   stopAndWait();
-  if(movePla != search->rootPla)
-    search->setPlayerAndClearHistory(movePla);
+  search->setExternalPatternBonusTable(std::move(table));
+}
+void AsyncBot::setCopyOfExternalPatternBonusTable(const std::unique_ptr<PatternBonusTable>& table) {
+  stopAndWait();
+  search->setCopyOfExternalPatternBonusTable(table);
 }
 void AsyncBot::clearSearch() {
   stopAndWait();
@@ -369,7 +380,7 @@ void AsyncBot::internalSearchThreadLoop() {
       callbackLoopThread = std::thread(callbackLoop);
     }
 
-    search->runWholeSearch(*logger,shouldStopNow,&searchBegun,pondering,tc,searchFactor);
+    search->runWholeSearch(shouldStopNow,&searchBegun,pondering,tc,searchFactor);
     Loc moveLoc = search->getChosenMoveLoc();
 
     if(callbackPeriod >= 0) {

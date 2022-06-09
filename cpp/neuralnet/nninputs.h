@@ -28,9 +28,6 @@ namespace NNPos {
 namespace NNInputs {
   constexpr int SYMMETRY_NOTSPECIFIED = -1;
   constexpr int SYMMETRY_ALL = -2;
-
-  constexpr int NUM_SYMMETRY_BOOLS = 3;
-  constexpr int NUM_SYMMETRY_COMBINATIONS = 8;
 }
 
 struct MiscNNInputParams {
@@ -145,15 +142,55 @@ struct NNOutput {
   NNOutput& operator=(const NNOutput&);
 
   inline float* getPolicyProbsMaybeNoised() { return noisedPolicyProbs != NULL ? noisedPolicyProbs : policyProbs; }
+  inline const float* getPolicyProbsMaybeNoised() const { return noisedPolicyProbs != NULL ? noisedPolicyProbs : policyProbs; }
   void debugPrint(std::ostream& out, const Board& board);
+  inline int getPos(Loc loc, const Board& board) const { return NNPos::locToPos(loc, board.x_size, nnXLen, nnYLen ); }
 };
 
 namespace SymmetryHelpers {
+  //A symmetry is 3 bits flipY(bit 0), flipX(bit 1), transpose(bit 2). They are applied in that order.
+  //The first four symmetries only reflect, and do not transpose X and Y.
+  constexpr int NUM_SYMMETRIES = 8;
+  constexpr int NUM_SYMMETRIES_WITHOUT_TRANSPOSE = 4;
+
+  //These two IGNORE transpose if hSize and wSize do not match. So non-square transposes are disallowed.
+  //copyOutputsWithSymmetry performs the inverse of symmetry.
   void copyInputsWithSymmetry(const float* src, float* dst, int nSize, int hSize, int wSize, int cSize, bool useNHWC, int symmetry);
   void copyOutputsWithSymmetry(const float* src, float* dst, int nSize, int hSize, int wSize, int symmetry);
 
+  //Applies a symmetry to a location
   Loc getSymLoc(int x, int y, const Board& board, int symmetry);
+  Loc getSymLoc(Loc loc, const Board& board, int symmetry);
+  Loc getSymLoc(int x, int y, int xSize, int ySize, int symmetry);
+  Loc getSymLoc(Loc loc, int xSize, int ySize, int symmetry);
+
+  //Applies a symmetry to a board
   Board getSymBoard(const Board& board, int symmetry);
+
+  //Get the inverse of the specified symmetry
+  int invert(int symmetry);
+  //Get the symmetry equivalent to first applying firstSymmetry and then applying nextSymmetry.
+  int compose(int firstSymmetry, int nextSymmetry);
+  int compose(int firstSymmetry, int nextSymmetry, int nextNextSymmetry);
+
+  inline bool isTranspose(int symmetry) { return (symmetry & 0x4) != 0; }
+  inline bool isFlipX(int symmetry) { return (symmetry & 0x2) != 0; }
+  inline bool isFlipY(int symmetry) { return (symmetry & 0x1) != 0; }
+
+  //Fill isSymDupLoc with true on all but one copy of each symmetrically equivalent move, and false everywhere else.
+  //isSymDupLocs should be an array of size Board::MAX_ARR_SIZE
+  //If onlySymmetries is not NULL, will only consider the symmetries specified there.
+  //validSymmetries will be filled with all symmetries of the current board, including using history for checking ko/superko and some encore-related state.
+  //This implementation is dependent on specific order of the symmetries (i.e. transpose is coded as 0x4)
+  //Will pretend moves that have a nonzero value in avoidMoves do not exist.
+  void markDuplicateMoveLocs(
+    const Board& board,
+    const BoardHistory& hist,
+    const std::vector<int>* onlySymmetries,
+    const std::vector<int>& avoidMoves,
+    bool* isSymDupLoc,
+    std::vector<int>& validSymmetries
+  );
 }
 
 //Utility functions for computing the "scoreValue", the unscaled utility of various numbers of points, prior to multiplication by
@@ -173,6 +210,8 @@ namespace ScoreValue {
   double whiteScoreValueOfScoreSmoothNoDrawAdjust(double finalWhiteMinusBlackScore, double center, double scale, const Board& b);
   //Approximately invert whiteScoreValueOfScoreSmooth
   double approxWhiteScoreOfScoreValueSmooth(double scoreValue, double center, double scale, const Board& b);
+  //The derviative of whiteScoreValueOfScoreSmoothNoDrawAdjust with respect to finalWhiteMinusBlackScore.
+  double whiteDScoreValueDScoreSmoothNoDrawAdjust(double finalWhiteMinusBlackScore, double center, double scale, const Board& b);
 
   //Compute what the scoreMeanSq should be for a final game result
   //It is NOT simply the same as finalWhiteMinusBlackScore^2 because for integer komi we model it as a distribution where with the appropriate probability
@@ -182,6 +221,9 @@ namespace ScoreValue {
   //The expected unscaled utility of the final score difference, given the mean and stdev of the distribution of that difference,
   //assuming roughly a normal distribution.
   double expectedWhiteScoreValue(double whiteScoreMean, double whiteScoreStdev, double center, double scale, const Board& b);
+
+  //Get the standard deviation of score given the E(score) and E(score^2)
+  double getScoreStdev(double scoreMeanAvg, double scoreMeanSqAvg);
 }
 
 #endif  // NEURALNET_NNINPUTS_H_

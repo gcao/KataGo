@@ -1,6 +1,8 @@
 #include "../core/global.h"
+#include "../core/commandloop.h"
 #include "../core/config_parser.h"
 #include "../core/datetime.h"
+#include "../core/fileutils.h"
 #include "../core/timer.h"
 #include "../core/makedir.h"
 #include "../core/os.h"
@@ -14,14 +16,14 @@
 #include "../program/setup.h"
 #include "../program/selfplaymanager.h"
 #include "../tests/tinymodel.h"
+#include "../tests/tests.h"
 #include "../command/commandline.h"
 #include "../main.h"
 
 #ifndef BUILD_DISTRIBUTED
 
-int MainCmds::contribute(int argc, const char* const* argv) {
-  (void)argc;
-  (void)argv;
+int MainCmds::contribute(const std::vector<std::string>& args) {
+  (void)args;
   std::cout << "This version of KataGo was NOT compiled with support for distributed training." << std::endl;
   std::cout << "Compile with -DBUILD_DISTRIBUTED=1 in CMake, and/or see notes at https://github.com/lightvector/KataGo#compiling-katago" << std::endl;
   return 0;
@@ -65,6 +67,8 @@ static void signalHandler(int signal)
 static std::atomic<bool> shouldStopGracefullyPrinted(false);
 static std::atomic<bool> shouldStopPrinted(false);
 
+static std::mutex controlMutex;
+
 
 // Some OSes, like windows, don't have SIGPIPE
 #ifdef SIGPIPE
@@ -104,6 +108,7 @@ static void runAndUploadSingleGame(
   std::atomic<int64_t>& numMovesPlayed,
   std::unique_ptr<ostream>& outputEachMove, std::function<void()> flushOutputEachMove,
   const std::function<bool()>& shouldStopFunc,
+  const WaitableFlag* shouldPause,
   bool logGamesAsJson, bool alwaysIncludeOwnership
 ) {
   if(gameTask.task.isRatingGame) {
@@ -143,6 +148,8 @@ static void runAndUploadSingleGame(
     cerr << e.what() << endl;
     throw;
   }
+
+  ClockTimer timer;
 
   MatchPairer::BotSpec botSpecB;
   MatchPairer::BotSpec botSpecW;
@@ -204,7 +211,6 @@ static void runAndUploadSingleGame(
       int analysisPVLen = 15;
       const Player perspective = P_BLACK;
       bool preventEncore = true;
-      static constexpr int ownershipMinVisits = 3;
 
       // output format is a mix between an analysis query and response
       json ret;
@@ -241,19 +247,24 @@ static void runAndUploadSingleGame(
 
       // Usual analysis response fields
       ret["turnNumber"] = hist.moveHistory.size();
-      search->getAnalysisJson(perspective,board,hist,analysisPVLen,ownershipMinVisits,preventEncore,true,alwaysIncludeOwnership,false,false,ret);
+      search->getAnalysisJson(perspective,analysisPVLen,preventEncore,true,alwaysIncludeOwnership,false,false,false,false,ret);
       std::cout << ret.dump() + "\n" << std::flush; // no endl due to race conditions
     }
 
   };
 
   const Sgf::PositionSample* posSample = gameTask.repIdx < gameTask.task.startPoses.size() ? &(gameTask.task.startPoses[gameTask.repIdx]) : NULL;
+  std::function<void(const MatchPairer::BotSpec&, Search*)> afterInitialization = [alwaysIncludeOwnership](const MatchPairer::BotSpec& spec, Search* search) {
+    (void)spec;
+    if(alwaysIncludeOwnership)
+      search->setAlwaysIncludeOwnerMap(true);
+  };
   FinishedGameData* gameData = gameRunner->runGame(
     seed, botSpecB, botSpecW, forkData, posSample,
-    logger, shouldStopFunc, nullptr, onEachMove, alwaysIncludeOwnership
+    logger, shouldStopFunc, shouldPause, nullptr, afterInitialization, onEachMove
   );
 
-  if(gameData != NULL) {
+  if(gameData != NULL && !shouldStopFunc()) {
     string sgfOutputDir;
     if(gameTask.task.isRatingGame)
       sgfOutputDir = sgfsDir + "/" + gameTask.task.taskGroup;
@@ -261,7 +272,18 @@ static void runAndUploadSingleGame(
       sgfOutputDir = sgfsDir + "/" + nnEvalBlack->getModelName();
     string sgfFile = sgfOutputDir + "/" + gameIdString + ".sgf";
 
-    ofstream out(sgfFile);
+    ofstream out;
+    try {
+      FileUtils::open(out,sgfFile);
+    }
+    catch(const StringError& e) {
+      logger.write("WARNING: Terminating game " + Global::int64ToString(gameIdx) + ", error writing SGF file, skipping and not uploading this game, " + e.what());
+      out.close();
+      delete gameData;
+      delete gameRunner;
+      return;
+    }
+
     WriteSgf::writeSgf(out,gameData->bName,gameData->wName,gameData->endHist,gameData,false,true);
     out.close();
     if(outputEachMove != nullptr) {
@@ -270,51 +292,60 @@ static void runAndUploadSingleGame(
         flushOutputEachMove();
     }
 
-    static constexpr bool retryOnFailure = true;
-    if(gameTask.task.doWriteTrainingData) {
-      gameTask.blackManager->withDataWriters(
-        nnEvalBlack,
-        [gameData,&gameTask,gameIdx,&sgfFile,&connection,&logger,&shouldStopFunc](TrainingDataWriter* tdataWriter, TrainingDataWriter* vdataWriter, std::ofstream* sgfOut) {
-          (void)vdataWriter;
-          (void)sgfOut;
-          assert(tdataWriter->isEmpty());
-          tdataWriter->writeGame(*gameData);
-          string resultingFilename;
-          int64_t numDataRows = tdataWriter->numRowsInBuffer();
-          bool producedFile = tdataWriter->flushIfNonempty(resultingFilename);
-          //It's possible we'll have zero data if the game started in a nearly finished position and cheap search never
-          //gave us a real turn of search, in which case just ignore that game.
-          if(producedFile) {
-            bool suc = false;
-            try {
-              suc = connection->uploadTrainingGameAndData(gameTask.task,gameData,sgfFile,resultingFilename,numDataRows,retryOnFailure,shouldStopFunc);
-            }
-            catch(StringError& e) {
-              logger.write(string("Giving up uploading training game and data due to error:\n") + e.what());
-              suc = false;
-            }
-            if(suc)
-              logger.write(
-                "Finished game " + Global::int64ToString(gameIdx)  + " (training), uploaded sgf " + sgfFile + " and training data " + resultingFilename
-                + " (" + Global::int64ToString(numDataRows) + " rows)"
-              );
-          }
-          else {
-            logger.write("Finished game " + Global::int64ToString(gameIdx) + " (training), skipping uploading sgf " + sgfFile + " since it's an empty game");
-          }
-        });
+    //If game is somehow extremely old due to a long pause, discard it
+    double gameTimeTaken = timer.getSeconds();
+    if(gameTimeTaken > 86400 * 4) {
+      logger.write("Skipping uploading stale game");
     }
     else {
-      bool suc = false;
-      try {
-        suc = connection->uploadRatingGame(gameTask.task,gameData,sgfFile,retryOnFailure,shouldStopFunc);
+      static constexpr bool retryOnFailure = true;
+      if(gameTask.task.doWriteTrainingData) {
+        //Pre-upload, verify that the GPU is okay.
+        Tests::runCanaryTests(nnEvalBlack, NNInputs::SYMMETRY_NOTSPECIFIED, false);
+        gameTask.blackManager->withDataWriters(
+          nnEvalBlack,
+          [gameData,&gameTask,gameIdx,&sgfFile,&connection,&logger,&shouldStopFunc](TrainingDataWriter* tdataWriter, TrainingDataWriter* vdataWriter, std::ofstream* sgfOut) {
+            (void)vdataWriter;
+            (void)sgfOut;
+            assert(tdataWriter->isEmpty());
+            tdataWriter->writeGame(*gameData);
+            string resultingFilename;
+            int64_t numDataRows = tdataWriter->numRowsInBuffer();
+            bool producedFile = tdataWriter->flushIfNonempty(resultingFilename);
+            //It's possible we'll have zero data if the game started in a nearly finished position and cheap search never
+            //gave us a real turn of search, in which case just ignore that game.
+            if(producedFile) {
+              bool suc = false;
+              try {
+                suc = connection->uploadTrainingGameAndData(gameTask.task,gameData,sgfFile,resultingFilename,numDataRows,retryOnFailure,shouldStopFunc);
+              }
+              catch(StringError& e) {
+                logger.write(string("Giving up uploading training game and data due to error:\n") + e.what());
+                suc = false;
+              }
+              if(suc)
+                logger.write(
+                  "Finished game " + Global::int64ToString(gameIdx)  + " (training), uploaded sgf " + sgfFile + " and training data " + resultingFilename
+                  + " (" + Global::int64ToString(numDataRows) + " rows)"
+                );
+            }
+            else {
+              logger.write("Finished game " + Global::int64ToString(gameIdx) + " (training), skipping uploading sgf " + sgfFile + " since it's an empty game");
+            }
+          });
       }
-      catch(StringError& e) {
-        logger.write(string("Giving up uploading rating game due to error:\n") + e.what());
-        suc = false;
+      else {
+        bool suc = false;
+        try {
+          suc = connection->uploadRatingGame(gameTask.task,gameData,sgfFile,retryOnFailure,shouldStopFunc);
+        }
+        catch(StringError& e) {
+          logger.write(string("Giving up uploading rating game due to error:\n") + e.what());
+          suc = false;
+        }
+        if(suc)
+          logger.write("Finished game " + Global::int64ToString(gameIdx) + " (rating), uploaded sgf " + sgfFile);
       }
-      if(suc)
-        logger.write("Finished game " + Global::int64ToString(gameIdx) + " (rating), uploaded sgf " + sgfFile);
     }
   }
   else {
@@ -326,7 +357,7 @@ static void runAndUploadSingleGame(
 }
 
 
-int MainCmds::contribute(int argc, const char* const* argv) {
+int MainCmds::contribute(const vector<string>& args) {
   Board::initHash();
   ScoreValue::initTables();
   Rand seedRand;
@@ -354,7 +385,7 @@ int MainCmds::contribute(int argc, const char* const* argv) {
     cmd.add(userConfigFileArg);
     cmd.add(overrideUserConfigArg);
     cmd.add(caCertsFileArg);
-    cmd.parse(argc,argv);
+    cmd.parseArgs(args);
     baseDir = baseDirArg.getValue();
     deleteUnusedModelsAfterDays = deleteUnusedModelsAfterDaysArg.getValue();
     userConfigFile = userConfigFileArg.getValue();
@@ -415,9 +446,9 @@ int MainCmds::contribute(int argc, const char* const* argv) {
 
     bool foundCaCerts = false;
     for(const string& path: possiblePaths) {
-      std::ifstream infile(path);
-      bool pathExists = infile.good();
-      if(pathExists) {
+      std::ifstream infile;
+      bool couldOpen = FileUtils::tryOpen(infile,path);
+      if(couldOpen) {
         foundCaCerts = true;
         caCertsFile = path;
         break;
@@ -434,16 +465,20 @@ int MainCmds::contribute(int argc, const char* const* argv) {
   }
   else {
     if(caCertsFile != "/dev/null") {
-      std::ifstream infile(caCertsFile);
-      bool pathExists = infile.good();
-      if(!pathExists) {
+      std::ifstream infile;
+      bool couldOpen = FileUtils::tryOpen(infile,caCertsFile);
+      if(!couldOpen) {
         throw StringError("cacerts file was not found or could not be opened: " + caCertsFile);
       }
     }
   }
 
-  Logger logger;
-  logger.setLogToStdout(true);
+  const bool logToStdoutDefault = true;
+  const bool logToStderrDefault = false;
+  const bool logTime = true;
+  // Explicitly avoid logging config contents, this contains the user's password.
+  const bool logConfigContents = false;
+  Logger logger(userCfg, logToStdoutDefault, logToStderrDefault, logTime, logConfigContents);
 
   logger.write("Distributed Self Play Engine starting...");
 
@@ -571,7 +606,8 @@ int MainCmds::contribute(int argc, const char* const* argv) {
   logger.write(string("Git revision: ") + Version::getGitRevision());
 
   {
-    NNEvaluator* tinyNNEval = TinyModelTest::runTinyModelTest(baseDir, logger, *userCfg);
+    const bool randFileName = true;
+    NNEvaluator* tinyNNEval = TinyModelTest::runTinyModelTest(baseDir, logger, *userCfg, randFileName);
     //Before we delete the tinyNNEval, it conveniently has all the info about what gpuidxs the user wants from the config, so
     //use it to tune everything.
 #ifdef USE_OPENCL_BACKEND
@@ -594,26 +630,34 @@ int MainCmds::contribute(int argc, const char* const* argv) {
 #endif
   }
 
+  WaitableFlag* shouldPause = new WaitableFlag();
+
   //Set up signal handlers
   if(!std::atomic_is_lock_free(&shouldStop))
     throw StringError("shouldStop is not lock free, signal-quitting mechanism for terminating matches will NOT work!");
   std::signal(SIGINT, signalHandler);
   std::signal(SIGTERM, signalHandler);
 
-  auto shouldStopFunc = [&logger]() {
+  auto shouldStopFunc = [&logger,&shouldPause]() {
     if(shouldStop.load()) {
-      if(!shouldStopPrinted.exchange(true))
-        logger.write("Signal to stop (e.g. ctrl-c) detected, interrupting current games.");
+      if(!shouldStopPrinted.exchange(true)) {
+        //At the point where we just want to stop ASAP, we never want to pause again.
+        shouldPause->setPermanently(false);
+        logger.write("Signal to stop (e.g. forcequit or ctrl-c) detected, interrupting current games.");
+      }
       return true;
     }
     return false;
   };
-  auto shouldStopGracefullyFunc = [&logger,&shouldStopFunc]() {
+  auto shouldStopGracefullyFunc = [&logger,&shouldStopFunc,&shouldPause]() {
     if(shouldStopFunc())
       return true;
     if(shouldStopGracefully.load()) {
-      if(!shouldStopGracefullyPrinted.exchange(true))
-        logger.write("Signal to stop (e.g. ctrl-c) detected, KataGo will shut down once all current games are finished. This may take quite a long time. Repeat a second time to stop without finishing current games.");
+      if(!shouldStopGracefullyPrinted.exchange(true)) {
+        logger.write("Signal to stop (e.g. quit or ctrl-c) detected, KataGo will shut down once all current games are finished. This may take quite a long time. Use forcequit or repeat ctrl-c again to stop without finishing current games.");
+        if(shouldPause->get())
+          logger.write("Also, KataGo is currently paused. In order to finish current games to shutdown, please resume.");
+      }
       return true;
     }
     return false;
@@ -653,17 +697,69 @@ int MainCmds::contribute(int argc, const char* const* argv) {
   std::atomic<int64_t> numRatingGamesActive(0);
   std::atomic<int64_t> numMovesPlayed(0);
 
+  auto allocateGameTask = [&numRatingGamesActive](
+    const Client::Task& task,
+    SelfplayManager* blackManager,
+    SelfplayManager* whiteManager,
+    int repIdx,
+    Rand& taskRand
+  ) {
+    NNEvaluator* nnEvalBlack = blackManager->acquireModel(task.modelBlack.name);
+    NNEvaluator* nnEvalWhite = whiteManager->acquireModel(task.modelWhite.name);
+
+    //Randomly swap black and white per each game in the rep
+    GameTask gameTask;
+    gameTask.task = task;
+    gameTask.repIdx = repIdx;
+
+    if(taskRand.nextBool(0.5)) {
+      gameTask.blackManager = blackManager;
+      gameTask.whiteManager = whiteManager;
+      gameTask.nnEvalBlack = nnEvalBlack;
+      gameTask.nnEvalWhite = nnEvalWhite;
+    }
+    else {
+      //Swap everything
+      gameTask.blackManager = whiteManager;
+      gameTask.whiteManager = blackManager;
+      gameTask.nnEvalBlack = nnEvalWhite;
+      gameTask.nnEvalWhite = nnEvalBlack;
+      //Also swap the model within the task, which is used for data writing
+      gameTask.task.modelBlack = task.modelWhite;
+      gameTask.task.modelWhite = task.modelBlack;
+    }
+
+    if(task.isRatingGame)
+      numRatingGamesActive.fetch_add(1,std::memory_order_acq_rel);
+    return gameTask;
+  };
+
+  //Should be called any time we finish with game task (i.e. we're done with the game task)
+  auto freeGameTask = [&numRatingGamesActive](GameTask& gameTask) {
+    gameTask.blackManager->release(gameTask.nnEvalBlack);
+    gameTask.whiteManager->release(gameTask.nnEvalWhite);
+    gameTask.blackManager->clearUnusedModelCaches();
+    if(gameTask.whiteManager != gameTask.blackManager)
+      gameTask.whiteManager->clearUnusedModelCaches();
+
+    if(gameTask.task.isRatingGame)
+      numRatingGamesActive.fetch_add(-1,std::memory_order_acq_rel);
+  };
+
   auto runGameLoop = [
     &logger,forkData,&gameSeedBase,&gameTaskQueue,&numGamesStarted,&sgfsDir,&connection,
     &numRatingGamesActive,&numMovesPlayed,&watchOngoingGameInFile,&watchOngoingGameInFileName,
     &shouldStopFunc,&shouldStopGracefullyFunc,
-    &logGamesAsJson, &alwaysIncludeOwnership
+    &shouldPause,
+    &logGamesAsJson, &alwaysIncludeOwnership,
+    &freeGameTask
   ] (
     int gameLoopThreadIdx
   ) {
     std::unique_ptr<std::ostream> outputEachMove = nullptr;
     std::function<void()> flushOutputEachMove = nullptr;
     if(gameLoopThreadIdx == 0 && watchOngoingGameInFile) {
+      // TODO someday - doesn't handle non-ascii paths.
 #ifdef OS_IS_WINDOWS
       FILE* file = NULL;
       fopen_s(&file, watchOngoingGameInFileName.c_str(), "a");
@@ -684,22 +780,16 @@ int MainCmds::contribute(int argc, const char* const* argv) {
       bool success = gameTaskQueue.waitPop(gameTask);
       if(!success)
         break;
+      shouldPause->waitUntilFalse();
       if(!shouldStopGracefullyFunc()) {
         string seed = gameSeedBase + ":" + Global::uint64ToHexString(thisLoopSeedRand.nextUInt64());
         int64_t gameIdx = numGamesStarted.fetch_add(1,std::memory_order_acq_rel);
         runAndUploadSingleGame(
           connection,gameTask,gameIdx,logger,seed,forkData,sgfsDir,thisLoopSeedRand,numMovesPlayed,outputEachMove,flushOutputEachMove,
-          shouldStopFunc,logGamesAsJson,alwaysIncludeOwnership
+          shouldStopFunc,shouldPause,logGamesAsJson,alwaysIncludeOwnership
         );
       }
-      gameTask.blackManager->release(gameTask.nnEvalBlack);
-      gameTask.whiteManager->release(gameTask.nnEvalWhite);
-      gameTask.blackManager->clearUnusedModelCaches();
-      if(gameTask.whiteManager != gameTask.blackManager)
-        gameTask.whiteManager->clearUnusedModelCaches();
-
-      if(gameTask.task.isRatingGame)
-        numRatingGamesActive.fetch_add(-1,std::memory_order_acq_rel);
+      freeGameTask(gameTask);
     }
   };
   auto runGameLoopProtected = [&logger,&runGameLoop](int gameLoopThreadIdx) {
@@ -710,13 +800,19 @@ int MainCmds::contribute(int argc, const char* const* argv) {
 
   bool userCfgWarnedYet = false;
 
+  ClockTimer invalidModelErrorTimer;
+  double invalidModelErrorEwms = 0.0;
+  double lastInvalidModelErrorTime = invalidModelErrorTimer.getSeconds();
+  std::mutex invalidModelErrorMutex;
+
   auto loadNeuralNetIntoManager =
-    [&runParams,&tdataDir,&sgfsDir,&logger,&userCfg,maxSimultaneousGames,maxSimultaneousRatingGamesPossible,&userCfgWarnedYet](
+    [&runParams,&tdataDir,&sgfsDir,&logger,&userCfg,maxSimultaneousGames,maxSimultaneousRatingGamesPossible,&userCfgWarnedYet,
+     &invalidModelErrorTimer,&invalidModelErrorEwms,&lastInvalidModelErrorTime,&invalidModelErrorMutex](
       SelfplayManager* manager, const Client::ModelInfo modelInfo, const string& modelFile, bool isRatingManager
     ) {
     const string& modelName = modelInfo.name;
     if(manager->hasModel(modelName))
-      return;
+      return true;
 
     logger.write("Found new neural net " + modelName);
 
@@ -730,15 +826,36 @@ int MainCmds::contribute(int argc, const char* const* argv) {
       //must have been valid at download time), but also rename the file out of the way so that if we restart the program, the next try
       //will do a fresh download.
       string newName = modelFile + ".invalid";
-      logger.write("Model file modified or corrupted on disk, sha256 no longer matches? Moving it to " + newName + " and failing.");
-      std::rename(modelFile.c_str(),newName.c_str());
-      throw;
+      logger.write("Model file modified or corrupted on disk, sha256 no longer matches? Moving it to " + newName + " and trying again later.");
+      FileUtils::rename(modelFile,newName);
+
+      {
+        std::lock_guard<std::mutex> lock(invalidModelErrorMutex);
+        double now = invalidModelErrorTimer.getSeconds();
+        double elapsed = std::max(0.0, now - lastInvalidModelErrorTime);
+        // Ignore errors happening consecutively in a short time due to one corruption
+        if(elapsed > 10.0) {
+          //Tolerate a mis-download rate of 5 over about 24 hours. Tolerance here ensures we don't hammer the server with repeated downloads
+          //if there is a true mismatch between hash and file, or some other issue that reliably corrupts the file on disk.
+          invalidModelErrorEwms *= exp(-elapsed / (60 * 60 * 24));
+          invalidModelErrorEwms += 1.0;
+          lastInvalidModelErrorTime = now;
+
+          if(invalidModelErrorEwms > 5.0) {
+            throw;
+          }
+        }
+      }
+      // Wait a little and try again.
+      std::this_thread::sleep_for(std::chrono::duration<double>(10));
+      return false;
     }
 
-    int maxSimultaneousGamesThisNet = isRatingManager ? maxSimultaneousRatingGamesPossible : maxSimultaneousGames;
-    int maxConcurrentEvals = runParams.maxSearchThreadsAllowed * maxSimultaneousGamesThisNet * 2 + 16;
-    int expectedConcurrentEvals = runParams.maxSearchThreadsAllowed * maxSimultaneousGamesThisNet;
-    int defaultMaxBatchSize = maxSimultaneousGamesThisNet;
+    const int maxSimultaneousGamesThisNet = isRatingManager ? maxSimultaneousRatingGamesPossible : maxSimultaneousGames;
+    const int maxConcurrentEvals = runParams.maxSearchThreadsAllowed * maxSimultaneousGamesThisNet * 2 + 16;
+    const int expectedConcurrentEvals = runParams.maxSearchThreadsAllowed * maxSimultaneousGamesThisNet;
+    const bool defaultRequireExactNNLen = false;
+    const int defaultMaxBatchSize = maxSimultaneousGamesThisNet;
 
     //Unlike local self-play, which waits to accumulate a fixed number of rows before writing, distributed selfplay writes
     //training data game by game. So we set a buffer size here large enough to always hold all the rows of a game.
@@ -749,7 +866,7 @@ int MainCmds::contribute(int argc, const char* const* argv) {
     Rand rand;
     NNEvaluator* nnEval = Setup::initializeNNEvaluator(
       modelName,modelFile,modelInfo.sha256,*userCfg,logger,rand,maxConcurrentEvals,expectedConcurrentEvals,
-      NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,
+      NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,defaultRequireExactNNLen,
       Setup::SETUP_FOR_DISTRIBUTED
     );
     assert(!nnEval->isNeuralNetLess() || modelFile == "/dev/null");
@@ -776,6 +893,7 @@ int MainCmds::contribute(int argc, const char* const* argv) {
 
     logger.write("Loaded new neural net " + nnEval->getModelName());
     manager->loadModelNoDataWritingLoop(nnEval, tdataWriter, vdataWriter, sgfOut);
+    return true;
   };
 
   //-----------------------------------------------------------------------------------------------------------------
@@ -830,10 +948,15 @@ int MainCmds::contribute(int argc, const char* const* argv) {
   auto preDownloadLoop = [&]() {
     if(disablePredownloadLoop)
       return;
+    //Wait a while before starting the download loop, so that it doesn't get confusing with other attempts to
+    //form the initial connection.
+    std::this_thread::sleep_for(std::chrono::duration<double>(30));
     Rand preDownloadLoopRand;
     while(true) {
+      shouldPause->waitUntilFalse();
       if(shouldStopGracefullyFunc())
         return;
+
       logger.write("Maybe predownloading model...");
       connection->maybeDownloadNewestModel(modelsDir,shouldStopGracefullyFunc);
       //20 to 25 minutes
@@ -841,6 +964,7 @@ int MainCmds::contribute(int argc, const char* const* argv) {
       constexpr double stopPollFrequency = 5.0;
       while(sleepTimeTotal > 0.0) {
         double sleepTime = std::min(sleepTimeTotal, stopPollFrequency);
+        shouldPause->waitUntilFalse();
         if(shouldStopGracefullyFunc())
           return;
         std::this_thread::sleep_for(std::chrono::duration<double>(sleepTime));
@@ -868,6 +992,8 @@ int MainCmds::contribute(int argc, const char* const* argv) {
       if(shouldStopGracefullyFunc())
         break;
       std::this_thread::sleep_for(std::chrono::duration<double>(taskRand.nextDouble(taskLoopSleepTime,taskLoopSleepTime*2)));
+      shouldPause->waitUntilFalse();
+
       PriorityLock taskLock(taskLoopMutex);
       taskLock.lockLowPriority();
 
@@ -936,6 +1062,7 @@ int MainCmds::contribute(int argc, const char* const* argv) {
         ) {
           //Drop the lock while we download, so that other task loops can proceed
           taskLock.unlock();
+
           bool suc1;
           bool suc2;
           try {
@@ -1002,8 +1129,12 @@ int MainCmds::contribute(int argc, const char* const* argv) {
         whiteManager = selfplayManager;
       }
 
-      loadNeuralNetIntoManager(blackManager,task.modelBlack,modelFileBlack,task.isRatingGame);
-      loadNeuralNetIntoManager(whiteManager,task.modelWhite,modelFileWhite,task.isRatingGame);
+      suc = loadNeuralNetIntoManager(blackManager,task.modelBlack,modelFileBlack,task.isRatingGame);
+      if(!suc)
+        continue;
+      suc = loadNeuralNetIntoManager(whiteManager,task.modelWhite,modelFileWhite,task.isRatingGame);
+      if(!suc)
+        continue;
       if(shouldStopGracefullyFunc())
         break;
 
@@ -1012,37 +1143,15 @@ int MainCmds::contribute(int argc, const char* const* argv) {
       LoadModel::deleteModelsOlderThan(modelsDir,logger,modelFileAgeLimit);
 
       for(int rep = 0; rep < taskRepFactor; rep++) {
-        //Game loop threads are responsible for releasing when done.
-        NNEvaluator* nnEvalBlack = blackManager->acquireModel(task.modelBlack.name);
-        NNEvaluator* nnEvalWhite = whiteManager->acquireModel(task.modelWhite.name);
-
-        //Randomly swap black and white per each game in the rep
-        GameTask gameTask;
-        gameTask.task = task;
-        gameTask.repIdx = rep;
-
-        if(taskRand.nextBool(0.5)) {
-          gameTask.blackManager = blackManager;
-          gameTask.whiteManager = whiteManager;
-          gameTask.nnEvalBlack = nnEvalBlack;
-          gameTask.nnEvalWhite = nnEvalWhite;
-        }
-        else {
-          //Swap everything
-          gameTask.blackManager = whiteManager;
-          gameTask.whiteManager = blackManager;
-          gameTask.nnEvalBlack = nnEvalWhite;
-          gameTask.nnEvalWhite = nnEvalBlack;
-          //Also swap the model within the task, which is used for data writing
-          gameTask.task.modelBlack = task.modelWhite;
-          gameTask.task.modelWhite = task.modelBlack;
-        }
-
-        if(task.isRatingGame)
-          numRatingGamesActive.fetch_add(1,std::memory_order_acq_rel);
+        //Game loop threads are responsible for releasing when done, unless
+        //we fail to push it into the queue.
+        GameTask gameTask = allocateGameTask(task,blackManager,whiteManager,rep,taskRand);
         suc = gameTaskQueue.waitPush(gameTask);
-        (void)suc;
-        assert(suc);
+        //Stop loop exited and we closed the queue in prep for a shutdown.
+        if(!suc) {
+          freeGameTask(gameTask);
+          break;
+        }
         maybePrintPerformanceUnsynchronized();
       }
 
@@ -1053,23 +1162,156 @@ int MainCmds::contribute(int argc, const char* const* argv) {
     Logger::logThreadUncaught("task loop", &logger, taskLoop);
   };
 
+  //Loop whose purpose is to query shouldStopGracefullyFunc() so that
+  //the user more readily gets a log message when ctrl-c is received, and to quit as soon as
+  //a stop is detected trigger everything else to quit.
+  auto stopGracefullyLoop = [&]() {
+    while(true) {
+      if(shouldStopGracefullyFunc())
+        break;
+      std::this_thread::sleep_for(std::chrono::duration<double>(2.0));
+    }
+  };
+  //This one likewise watches the stricter shouldStop after we should stop gracefully.
+  auto stopLoop = [&]() {
+    while(true) {
+      if(shouldStopFunc())
+        break;
+      std::this_thread::sleep_for(std::chrono::duration<double>(2.0));
+    }
+  };
+
+  auto controlLoop = [&]() {
+    string line;
+    // When we interact with logger or other resources, we check under controlMutex whether we should stop.
+    // This mutex ensures that we can't race with someone trying to ensure that we're stopped
+    // and freeing resources like shouldPause or logger.
+
+    while(true) {
+      {
+        std::lock_guard<std::mutex> lock(controlMutex);
+        if(shouldStop.load())
+          break;
+        if(shouldStopGracefully.load()) {
+          if(shouldPause->get()) {
+            logger.write("--------");
+            logger.write("Currently in the process of quitting after current games are done, but paused.");
+            logger.write("Type 'resume' and hit enter to resume contribute and CPU and GPU usage.");
+            logger.write("Type 'forcequit' and hit enter to begin shutdown and quit more quickly, but lose all unfinished game data.");
+            logger.write("--------");
+          }
+          else {
+            logger.write("--------");
+            logger.write("Currently in the process of quitting after current games are done.");
+            logger.write("Type 'pause' and hit enter to pause contribute and CPU and GPU usage.");
+            logger.write("Type 'forcequit' and hit enter to begin shutdown and quit more quickly, but lose all unfinished game data.");
+            logger.write("--------");
+          }
+        }
+        else {
+          if(shouldPause->get()) {
+            logger.write("--------");
+            logger.write("Currently pausing or paused.");
+            logger.write("Type 'resume' and hit enter to resume contribute and CPU and GPU usage.");
+            logger.write("Type 'quit' and hit enter to begin shutdown, quitting after all current games are done (may take a long while, also need to resume first).");
+            logger.write("Type 'forcequit' and hit enter to shutdown and quit more quickly, but lose all unfinished game data.");
+            logger.write("--------");
+          }
+          else {
+            logger.write("--------");
+            logger.write("Type 'pause' and hit enter to pause contribute and CPU and GPU usage.");
+            logger.write("Type 'quit' and hit enter to begin shutdown, quitting after all current games are done (may take a long while).");
+            logger.write("Type 'forcequit' and hit enter to shutdown and quit more quickly, but lose all unfinished game data.");
+            logger.write("--------");
+          }
+        }
+      }
+
+      getline(cin,line);
+      if(!cin) {
+        std::lock_guard<std::mutex> lock(controlMutex);
+        if(shouldStop.load())
+          break;
+        logger.write("Stdin closed, no longer listening for commands...");
+        break;
+      }
+
+      if(shouldStop.load())
+        break;
+      line = CommandLoop::processSingleCommandLine(line);
+      string lowerline = Global::toLower(line);
+
+      std::lock_guard<std::mutex> lock(controlMutex);
+      if(shouldStop.load())
+        break;
+
+      if(lowerline == "pause") {
+        shouldPause->set(true);
+        if(shouldStopGracefully.load()) {
+          logger.write("Pausing contribute. (Note: this may take a minute)");
+          logger.write("(Note: KataGo is currently set to stop after current games, but this cannot happen without resuming)");
+        }
+        else
+          logger.write("Pausing contribute (note: this may take a minute).");
+      }
+      else if(lowerline == "resume") {
+        shouldPause->set(false);
+        if(shouldStopGracefully.load())
+          logger.write("Resuming contribute (stopping after current games)...");
+        else
+          logger.write("Resuming contribute...");
+      }
+      else if(lowerline == "quit") {
+        shouldStopGracefully.store(true);
+      }
+      else if(lowerline == "forcequit" || lowerline == "force_quit") {
+        shouldStop.store(true);
+        shouldStopGracefully.store(true);
+        shouldPause->setPermanently(false);
+      }
+      else {
+        logger.write("Warning: unknown command: " + string(line));
+      }
+    }
+  };
+
+  auto controlLoopProtected = [&logger, &controlLoop]() {
+    Logger::logThreadUncaught("control loop", &logger, controlLoop);
+  };
+
   int numTaskLoopThreads = 4;
   vector<std::thread> taskLoopThreads;
   for(int i = 0; i<numTaskLoopThreads; i++) {
     taskLoopThreads.push_back(std::thread(taskLoopProtected));
   }
-  //Wait for all task loop threads to stop
-  for(int i = 0; i<taskLoopThreads.size(); i++)
-    taskLoopThreads[i].join();
-  maybePrintPerformanceUnsynchronized();
 
-  logger.write("Beginning shutdown");
+  //Allocate thread using new to make sure its memory lasts beyond main(), and just let it leak as we exit.
+  new std::thread(controlLoopProtected);
+
+  //Start loop and wait for it to quit. When it quits, we know we need to stop everything else,
+  //possibly gracefully, possibly immediately.
+  std::thread stopGracefullyThread(stopGracefullyLoop);
+  stopGracefullyThread.join();
+
+  //Start second loop to be responsive to stop immediately indications, while we have stuff exit
+  std::thread stopThread(stopLoop);
+
+  maybePrintPerformanceUnsynchronized();
+  if(shouldPause->get())
+    logger.write("Beginning shutdown (paused)");
+  else
+    logger.write("Beginning shutdown");
 
   //This should trigger game threads to quit
   gameTaskQueue.setReadOnly();
 
-  //Make sure we have a true in here
+  //Make sure we have a true in here just in case
   shouldStopGracefully.store(true);
+
+  //Wait for all task loop threads to stop
+  //Don't join the control loop, that one will potentially just keep waiting for stdin as we exit out.
+  for(int i = 0; i<taskLoopThreads.size(); i++)
+    taskLoopThreads[i].join();
 
   //Wait for download thread to stop
   preDownloadThread.join();
@@ -1078,8 +1320,16 @@ int MainCmds::contribute(int argc, const char* const* argv) {
   for(int i = 0; i<gameThreads.size(); i++)
     gameThreads[i].join();
 
-  //Make sure we have a true in here
-  shouldStop.store(true);
+  //Make sure we have a true in here. Set it under the control mutex. This guarantees that we can't race with the control loop.
+  //By the time we exit the block, the control loop will no longer be touching any resources, and can only wait on cin or exit.
+  {
+    std::lock_guard<std::mutex> lock(controlMutex);
+    shouldStop.store(true);
+  }
+  //This should make sure stuff stops pausing
+  shouldPause->setPermanently(false);
+
+  stopThread.join();
 
   //At this point, nothing else except possibly data write loops are running, within the selfplay manager.
   delete selfplayManager;
@@ -1093,6 +1343,8 @@ int MainCmds::contribute(int argc, const char* const* argv) {
   delete forkData;
   ScoreValue::freeTables();
   delete userCfg;
+
+  delete shouldPause;
 
   if(sigReceived.load())
     logger.write("Exited cleanly after signal");

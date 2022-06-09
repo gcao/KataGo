@@ -28,6 +28,7 @@ parser.add_argument('-trainhistory-file', help='trainhistory.json file for recor
 parser.add_argument('-parents-dir', help='dir with uploaded models dirs for finding parent', required=False)
 parser.add_argument('-connection-config', help='config with serverUrl and username and password', required=True)
 parser.add_argument('-not-enabled', help='upload model where it is not enabled for train/rating to begin with', required=False, action='store_true')
+parser.add_argument('-rating-only', help='upload for rating only or not', type=int, default=0, required=False)
 parser.add_argument('-notes', help='extra notes to record for model', required=False)
 args = vars(parser.parse_args())
 
@@ -40,6 +41,7 @@ trainhistory_file = args["trainhistory_file"]
 parents_dir = args["parents_dir"]
 connection_config_file = args["connection_config"]
 not_enabled = args["not_enabled"]
+rating_only = args["rating_only"]
 notes = args["notes"]
 
 loglines = []
@@ -66,6 +68,9 @@ password = config_parser["DEFAULT"]["password"]
 sslVerificationHost = None
 if "sslVerificationHost" in config_parser["DEFAULT"]:
   sslVerificationHost = config_parser["DEFAULT"]["sslVerificationHost"]
+sslVerifyPemPath = None
+if "sslVerifyPemPath" in config_parser["DEFAULT"]:
+  sslVerifyPemPath = config_parser["DEFAULT"]["sslVerifyPemPath"]
 
 log("now" + ": " + str(datetime.datetime.now()))
 log("run_name" + ": " + run_name)
@@ -73,7 +78,7 @@ log("model_name" + ": " + model_name)
 log("model_file" + ": " + model_file)
 log("model_zip" + ": " + model_zip)
 log("parents_dir" + ": " + str(parents_dir))
-log("trainhistory_file" + ": " + trainhistory_file)
+log("trainhistory_file" + ": " + str(trainhistory_file))
 log("username" + ": " + username)
 log("base_server_url" + ": " + base_server_url)
 
@@ -115,6 +120,7 @@ url = base_server_url + "api/networks/"
 
 with open(model_file,"rb") as model_file_handle:
   with open(model_zip,"rb") as model_zip_handle:
+    log_gamma_offset = -1.0 if network_size == "b60c320" else 0.0
     data = {
       "run": (None, base_server_url + "api/runs/" + run_name + "/"),
       "name": (None, model_name),
@@ -123,8 +129,9 @@ with open(model_file,"rb") as model_file_handle:
       "model_file": (model_name + model_file_extension, model_file_handle, "application/octet-stream"),
       "model_file_bytes": (None, model_file_bytes),
       "model_file_sha256": (None, model_file_sha256),
-      "training_games_enabled": (None, ("false" if not_enabled else "true")),
+      "training_games_enabled": (None, ("false" if (not_enabled or rating_only != 0) else "true")),
       "rating_games_enabled": (None, ("false" if not_enabled else "true")),
+      "log_gamma_offset": (None, str(log_gamma_offset)),
       "model_zip_file": (model_name + ".zip", model_zip_handle, "application/octet-stream"),
     }
 
@@ -147,9 +154,15 @@ with open(model_file,"rb") as model_file_handle:
     if sslVerificationHost is not None:
       sess = requests.Session()
       sess.mount('https://', host_header_ssl.HostHeaderSSLAdapter())
-      result = sess.post(url, files=data, auth=HTTPBasicAuth(username,password), headers={"Host": sslVerificationHost})
+      if sslVerifyPemPath is not None:
+        result = sess.post(url, files=data, auth=HTTPBasicAuth(username,password), headers={"Host": sslVerificationHost}, verify=sslVerifyPemPath)
+      else:
+        result = sess.post(url, files=data, auth=HTTPBasicAuth(username,password), headers={"Host": sslVerificationHost})
     else:
-      result = requests.post(url,files=data,auth=HTTPBasicAuth(username,password))
+      if sslVerifyPemPath is not None:
+        result = requests.post(url, files=data, auth=HTTPBasicAuth(username,password), verify=sslVerifyPemPath)
+      else:
+        result = requests.post(url,files=data,auth=HTTPBasicAuth(username,password))
 
 log("Post status code: " + str(result.status_code))
 log("Post result: " + str(result.text))

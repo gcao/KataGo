@@ -1,7 +1,9 @@
 #include "../program/playutils.h"
-#include "../core/timer.h"
 
 #include <sstream>
+
+#include "../core/timer.h"
+#include "../core/test.h"
 
 using namespace std;
 
@@ -177,10 +179,10 @@ Loc PlayUtils::getGameInitializationMove(
   vector<double> playSelectionValues;
   int nnXLen = nnOutput->nnXLen;
   int nnYLen = nnOutput->nnYLen;
-  assert(nnXLen >= board.x_size);
-  assert(nnYLen >= board.y_size);
-  assert(nnXLen > 0 && nnXLen < 100); //Just a sanity check to make sure no other crazy values have snuck in
-  assert(nnYLen > 0 && nnYLen < 100); //Just a sanity check to make sure no other crazy values have snuck in
+  testAssert(nnXLen >= board.x_size);
+  testAssert(nnYLen >= board.y_size);
+  testAssert(nnXLen > 0 && nnXLen < 100); //Just a sanity check to make sure no other crazy values have snuck in
+  testAssert(nnYLen > 0 && nnYLen < 100); //Just a sanity check to make sure no other crazy values have snuck in
   int policySize = NNPos::getPolicySize(nnXLen,nnYLen);
   for(int movePos = 0; movePos<policySize; movePos++) {
     Loc moveLoc = NNPos::posToLoc(movePos,board.x_size,board.y_size,nnXLen,nnYLen);
@@ -200,7 +202,7 @@ Loc PlayUtils::getGameInitializationMove(
   //add a bit more outlierish variety
   uint32_t idxChosen;
   if(gameRand.nextBool(0.0002))
-    idxChosen = gameRand.nextUInt(playSelectionValues.size());
+    idxChosen = gameRand.nextUInt((uint32_t)playSelectionValues.size());
   else
     idxChosen = gameRand.nextUInt(playSelectionValues.data(),playSelectionValues.size());
   Loc loc = locs[idxChosen];
@@ -359,7 +361,6 @@ ReportedSearchValues PlayUtils::getWhiteScoreValues(
   const BoardHistory& hist,
   Player pla,
   int64_t numVisits,
-  Logger& logger,
   const OtherGameProperties& otherGameProps
 ) {
   assert(numVisits > 0);
@@ -375,7 +376,7 @@ ReportedSearchValues PlayUtils::getWhiteScoreValues(
 
   bot->setParams(newParams);
   bot->setPosition(pla,board,hist);
-  bot->runWholeSearch(pla,logger);
+  bot->runWholeSearch(pla);
 
   ReportedSearchValues values = bot->getRootValuesRequireSuccess();
   bot->setParams(oldParams);
@@ -390,7 +391,6 @@ static std::pair<double,double> evalKomi(
   BoardHistory& hist,
   Player pla,
   int64_t numVisits,
-  Logger& logger,
   const OtherGameProperties& otherGameProps,
   float roundedClippedKomi
 ) {
@@ -401,13 +401,13 @@ static std::pair<double,double> evalKomi(
   float oldKomi = hist.rules.komi;
   hist.setKomi(roundedClippedKomi);
 
-  ReportedSearchValues values0 = PlayUtils::getWhiteScoreValues(botB, board, hist, pla, numVisits, logger, otherGameProps);
+  ReportedSearchValues values0 = PlayUtils::getWhiteScoreValues(botB, board, hist, pla, numVisits, otherGameProps);
   double lead = values0.lead;
   double winLoss = values0.winLossValue;
 
   //If we have a second bot, average the two
   if(botW != NULL && botW != botB) {
-    ReportedSearchValues values1 = PlayUtils::getWhiteScoreValues(botW, board, hist, pla, numVisits, logger, otherGameProps);
+    ReportedSearchValues values1 = PlayUtils::getWhiteScoreValues(botW, board, hist, pla, numVisits, otherGameProps);
     lead = 0.5 * (values0.lead + values1.lead);
     winLoss = 0.5 * (values0.winLossValue + values1.winLossValue);
   }
@@ -426,7 +426,6 @@ static double getNaiveEvenKomiHelper(
   BoardHistory& hist,
   Player pla,
   int64_t numVisits,
-  Logger& logger,
   const OtherGameProperties& otherGameProps,
   bool looseClipping
 ) {
@@ -437,7 +436,7 @@ static double getNaiveEvenKomiHelper(
   double lastWinLoss = 0.0;
   double lastLead = 0.0;
   for(int i = 0; i<3; i++) {
-    std::pair<double,double> result = evalKomi(scoreWLCache,botB,botW,board,hist,pla,numVisits,logger,otherGameProps,hist.rules.komi);
+    std::pair<double,double> result = evalKomi(scoreWLCache,botB,botW,board,hist,pla,numVisits,otherGameProps,hist.rules.komi);
     double lead = result.first;
     double winLoss = result.second;
 
@@ -463,9 +462,9 @@ static double getNaiveEvenKomiHelper(
     //Shift by the predicted lead
     double shift = -lead;
     //Under no situations should the shift be bigger in absolute value than the last shift
-    if(i > 0 && abs(shift) > abs(lastShift)) {
-      if(shift < 0) shift = -abs(lastShift);
-      else if(shift > 0) shift = abs(lastShift);
+    if(i > 0 && std::fabs(shift) > std::fabs(lastShift)) {
+      if(shift < 0) shift = -std::fabs(lastShift);
+      else if(shift > 0) shift = std::fabs(lastShift);
     }
     lastShift = shift;
 
@@ -478,14 +477,14 @@ static double getNaiveEvenKomiHelper(
     hist.setKomi(fairKomi);
 
     //After a small shift, break out to the binary search.
-    if(abs(shift) < 16.0)
+    if(std::fabs(shift) < 16.0)
       break;
   }
 
   //Try a small window and do a binary search
   auto evalWinLoss = [&](double delta) {
     double newKomi = hist.rules.komi + delta;
-    double winLoss = evalKomi(scoreWLCache,botB,botW,board,hist,pla,numVisits,logger,otherGameProps,PlayUtils::roundAndClipKomi(newKomi,board,looseClipping)).second;
+    double winLoss = evalKomi(scoreWLCache,botB,botW,board,hist,pla,numVisits,otherGameProps,PlayUtils::roundAndClipKomi(newKomi,board,looseClipping)).second;
     // cout << "Delta " << delta << " wr " << winLoss << endl;
     return winLoss;
   };
@@ -564,13 +563,12 @@ void PlayUtils::adjustKomiToEven(
   BoardHistory& hist,
   Player pla,
   int64_t numVisits,
-  Logger& logger,
   const OtherGameProperties& otherGameProps,
   Rand& rand
 ) {
   map<float,std::pair<double,double>> scoreWLCache;
   bool looseClipping = false;
-  double newKomi = getNaiveEvenKomiHelper(scoreWLCache,botB,botW,board,hist,pla,numVisits,logger,otherGameProps,looseClipping);
+  double newKomi = getNaiveEvenKomiHelper(scoreWLCache,botB,botW,board,hist,pla,numVisits,otherGameProps,looseClipping);
   double lower = floor(newKomi * 2.0) * 0.5;
   double upper = lower + 0.5;
   if(rand.nextBool((newKomi - lower) / (upper - lower)))
@@ -587,13 +585,12 @@ float PlayUtils::computeLead(
   BoardHistory& hist,
   Player pla,
   int64_t numVisits,
-  Logger& logger,
   const OtherGameProperties& otherGameProps
 ) {
   map<float,std::pair<double,double>> scoreWLCache;
   bool looseClipping = true;
   float oldKomi = hist.rules.komi;
-  double naiveKomi = getNaiveEvenKomiHelper(scoreWLCache,botB,botW,board,hist,pla,numVisits,logger,otherGameProps,looseClipping);
+  double naiveKomi = getNaiveEvenKomiHelper(scoreWLCache,botB,botW,board,hist,pla,numVisits,otherGameProps,looseClipping);
 
   bool granularityIsCoarse = hist.rules.scoringRule == Rules::SCORING_AREA && !hist.rules.hasButton;
   if(!granularityIsCoarse) {
@@ -602,7 +599,7 @@ float PlayUtils::computeLead(
   }
 
   auto evalWinLoss = [&](double newKomi) {
-    double winLoss = evalKomi(scoreWLCache,botB,botW,board,hist,pla,numVisits,logger,otherGameProps,PlayUtils::roundAndClipKomi(newKomi,board,looseClipping)).second;
+    double winLoss = evalKomi(scoreWLCache,botB,botW,board,hist,pla,numVisits,otherGameProps,PlayUtils::roundAndClipKomi(newKomi,board,looseClipping)).second;
     // cout << "Delta " << delta << " wr " << winLoss << endl;
     return winLoss;
   };
@@ -648,7 +645,7 @@ double PlayUtils::getSearchFactor(
   double searchFactor = 1.0;
   if(recentWinLossValues.size() >= 3 && params.winLossUtilityFactor - searchFactorWhenWinningThreshold > 1e-10) {
     double recentLeastWinning = pla == P_BLACK ? -params.winLossUtilityFactor : params.winLossUtilityFactor;
-    for(int i = recentWinLossValues.size()-3; i < recentWinLossValues.size(); i++) {
+    for(size_t i = recentWinLossValues.size()-3; i < recentWinLossValues.size(); i++) {
       if(pla == P_BLACK && recentWinLossValues[i] > recentLeastWinning)
         recentLeastWinning = recentWinLossValues[i];
       if(pla == P_WHITE && recentWinLossValues[i] < recentLeastWinning)
@@ -668,8 +665,7 @@ vector<double> PlayUtils::computeOwnership(
   const Board& board,
   const BoardHistory& hist,
   Player pla,
-  int64_t numVisits,
-  Logger& logger
+  int64_t numVisits
 ) {
   assert(numVisits > 0);
   bool oldAlwaysIncludeOwnerMap = bot->alwaysIncludeOwnerMap;
@@ -684,10 +680,9 @@ vector<double> PlayUtils::computeOwnership(
 
   bot->setParams(newParams);
   bot->setPosition(pla,board,hist);
-  bot->runWholeSearch(pla,logger);
+  bot->runWholeSearch(pla);
 
-  int64_t minVisitsForOwnership = 2;
-  vector<double> ownerships = bot->getAverageTreeOwnership(minVisitsForOwnership);
+  vector<double> ownerships = bot->getAverageTreeOwnership();
 
   bot->setParams(oldParams);
   bot->setAlwaysIncludeOwnerMap(oldAlwaysIncludeOwnerMap);
@@ -737,7 +732,6 @@ vector<bool> PlayUtils::computeAnticipatedStatusesWithOwnership(
   const BoardHistory& hist,
   Player pla,
   int64_t numVisits,
-  Logger& logger,
   vector<double>& ownershipsBuf
 ) {
   vector<bool> isAlive(Board::MAX_ARR_SIZE,false);
@@ -747,7 +741,7 @@ vector<bool> PlayUtils::computeAnticipatedStatusesWithOwnership(
     solved[i] = false;
   }
 
-  ownershipsBuf = computeOwnership(bot,board,hist,pla,numVisits,logger);
+  ownershipsBuf = computeOwnership(bot,board,hist,pla,numVisits);
   const vector<double>& ownerships = ownershipsBuf;
   int nnXLen = bot->nnXLen;
   int nnYLen = bot->nnYLen;
@@ -888,13 +882,14 @@ PlayUtils::BenchmarkResults PlayUtils::benchmarkSearchOnPositionsAndPrint(
   const CompactSgf* sgf,
   int numPositionsToUse,
   NNEvaluator* nnEval,
-  Logger& logger,
   const BenchmarkResults* baseline,
   double secondsPerGameMove,
   bool printElo
 ) {
   //Pick random positions from the SGF file, but deterministically
   vector<Move> moves = sgf->moves;
+  if(moves.size() > 0xFFFF)
+    moves.resize(0xFFFF);
   string posSeed = "benchmarkPosSeed|";
   for(int i = 0; i<moves.size(); i++) {
     posSeed += Global::intToString((int)moves[i].loc);
@@ -908,7 +903,7 @@ PlayUtils::BenchmarkResults PlayUtils::benchmarkSearchOnPositionsAndPrint(
       possiblePositionIdxs.push_back(i);
     }
     if(possiblePositionIdxs.size() > 0) {
-      for(int i = possiblePositionIdxs.size()-1; i > 1; i--) {
+      for(int i = (int)possiblePositionIdxs.size()-1; i > 1; i--) {
         int r = posRand.nextUInt(i);
         int tmp = possiblePositionIdxs[i];
         possiblePositionIdxs[i] = possiblePositionIdxs[r];
@@ -923,13 +918,13 @@ PlayUtils::BenchmarkResults PlayUtils::benchmarkSearchOnPositionsAndPrint(
 
   BenchmarkResults results;
   results.numThreads = params.numThreads;
-  results.totalPositions = possiblePositionIdxs.size();
+  results.totalPositions = (int)possiblePositionIdxs.size();
 
   nnEval->clearCache();
   nnEval->clearStats();
 
   Rand seedRand;
-  Search* bot = new Search(params,nnEval,Global::uint64ToString(seedRand.nextUInt64()));
+  Search* bot = new Search(params,nnEval,nnEval->getLogger(),Global::uint64ToString(seedRand.nextUInt64()));
 
   //Ignore the SGF rules, except for komi. Just use Tromp-taylor.
   Rules initialRules = Rules::getTrompTaylorish();
@@ -964,7 +959,7 @@ PlayUtils::BenchmarkResults PlayUtils::benchmarkSearchOnPositionsAndPrint(
     nnEval->clearCache();
 
     ClockTimer timer;
-    bot->runWholeSearch(nextPla,logger);
+    bot->runWholeSearch(nextPla);
     double seconds = timer.getSeconds();
 
     results.totalPositionsSearched += 1;
@@ -1015,9 +1010,9 @@ Rules PlayUtils::genRandomRules(Rand& rand) {
   vector<int> allowedTaxRules = { Rules::TAX_NONE, Rules::TAX_SEKI, Rules::TAX_ALL };
 
   Rules rules;
-  rules.koRule = allowedKoRules[rand.nextUInt(allowedKoRules.size())];
-  rules.scoringRule = allowedScoringRules[rand.nextUInt(allowedScoringRules.size())];
-  rules.taxRule = allowedTaxRules[rand.nextUInt(allowedTaxRules.size())];
+  rules.koRule = allowedKoRules[rand.nextUInt((uint32_t)allowedKoRules.size())];
+  rules.scoringRule = allowedScoringRules[rand.nextUInt((uint32_t)allowedScoringRules.size())];
+  rules.taxRule = allowedTaxRules[rand.nextUInt((uint32_t)allowedTaxRules.size())];
   rules.multiStoneSuicideLegal = rand.nextBool(0.5);
 
   if(rules.scoringRule == Rules::SCORING_AREA)
@@ -1071,8 +1066,7 @@ Loc PlayUtils::maybeFriendlyPass(
   const Player pla,
   Loc moveLoc,
   Search* bot,
-  int64_t numVisits,
-  Logger& logger
+  int64_t numVisits
 ) {
   if(cleanupBeforePass == enabled_t::True)
     return moveLoc;
@@ -1109,8 +1103,11 @@ Loc PlayUtils::maybeFriendlyPass(
   const BoardHistory hist = bot->getRootHist();
   assert(oldPla == pla);
 
+  if(!hist.isLegal(board,moveLoc,pla))
+    throw StringError("PlayUtils::maybeFriendlyPass called on illegal move " + Location::toString(moveLoc,board));
+
   vector<double> ownerships;
-  vector<bool> isAlive = computeAnticipatedStatusesWithOwnership(bot, board, hist, pla, numVisits, logger, ownerships);
+  vector<bool> isAlive = computeAnticipatedStatusesWithOwnership(bot, board, hist, pla, numVisits, ownerships);
 
   //Delete all dead groups from board
   Board cleanBoard = board;
@@ -1170,7 +1167,7 @@ Loc PlayUtils::maybeFriendlyPass(
       histAfterPass.makeBoardMoveAssumeLegal(boardAfterPass,Board::PASS_LOC,pla,NULL);
       Player plaAfterPass = getOpp(pla);
       bot->setPosition(plaAfterPass,boardAfterPass,histAfterPass);
-      bot->runWholeSearch(plaAfterPass,logger);
+      bot->runWholeSearch(plaAfterPass);
       valuesAfterPass = bot->getRootValuesRequireSuccess();
     }
     {
@@ -1179,7 +1176,7 @@ Loc PlayUtils::maybeFriendlyPass(
       histAfterMove.makeBoardMoveAssumeLegal(boardAfterMove,moveLoc,pla,NULL);
       Player plaAfterMove = getOpp(pla);
       bot->setPosition(plaAfterMove,boardAfterMove,histAfterMove);
-      bot->runWholeSearch(plaAfterMove,logger);
+      bot->runWholeSearch(plaAfterMove);
       valuesAfterMove = bot->getRootValuesRequireSuccess();
     }
 

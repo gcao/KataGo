@@ -5,6 +5,7 @@
 #include "../core/global.h"
 #include "../core/multithread.h"
 #include "../core/rand.h"
+#include "../core/threadsafecounter.h"
 #include "../core/threadsafequeue.h"
 #include "../dataio/trainingwrite.h"
 #include "../dataio/sgf.h"
@@ -109,6 +110,10 @@ class GameInitializer {
   bool isAllowedBSize(int xSize, int ySize);
 
   std::vector<int> getAllowedBSizes() const;
+  int getMinBoardXSize() const;
+  int getMinBoardYSize() const;
+  int getMaxBoardXSize() const;
+  int getMaxBoardYSize() const;
 
  private:
   void initShared(ConfigParser& cfg, Logger& logger);
@@ -162,6 +167,11 @@ class GameInitializer {
   std::vector<Sgf::PositionSample> hintPoses;
   std::vector<double> hintPosCumProbs;
   double hintPosesProb;
+
+  int minBoardXSize;
+  int minBoardYSize;
+  int maxBoardXSize;
+  int maxBoardYSize;
 };
 
 
@@ -246,6 +256,7 @@ namespace Play {
     bool doEndGameIfAllPassAlive, bool clearBotBeforeSearch,
     Logger& logger, bool logSearchInfo, bool logMoves,
     int maxMovesPerGame, const std::function<bool()>& shouldStop,
+    const WaitableFlag* shouldPause,
     const PlaySettings& playSettings, const OtherGameProperties& otherGameProps,
     Rand& gameRand,
     std::function<NNEvaluator*()> checkForNewNNEval,
@@ -260,6 +271,7 @@ namespace Play {
     bool doEndGameIfAllPassAlive, bool clearBotBeforeSearch,
     Logger& logger, bool logSearchInfo, bool logMoves,
     int maxMovesPerGame, const std::function<bool()>& shouldStop,
+    const WaitableFlag* shouldPause,
     const PlaySettings& playSettings, const OtherGameProperties& otherGameProps,
     Rand& gameRand,
     std::function<NNEvaluator*()> checkForNewNNEval,
@@ -308,6 +320,7 @@ public:
 
   //Will return NULL if stopped before the game completes. The caller is responsible for freeing the data
   //if it isn't NULL.
+  //afterInitialization can be used to run any post-initialization configuration on the search
   FinishedGameData* runGame(
     const std::string& seed,
     const MatchPairer::BotSpec& botSpecB,
@@ -316,9 +329,10 @@ public:
     const Sgf::PositionSample* startPosSample,
     Logger& logger,
     const std::function<bool()>& shouldStop,
+    const WaitableFlag* shouldPause,
     std::function<NNEvaluator*()> checkForNewNNEval,
-    std::function<void(const Board&, const BoardHistory&, Player, Loc, const std::vector<double>&, const std::vector<double>&, const std::vector<double>&, const Search*)> onEachMove,
-    bool alwaysIncludeOwnership
+    std::function<void(const MatchPairer::BotSpec&, Search*)> afterInitialization,
+    std::function<void(const Board&, const BoardHistory&, Player, Loc, const std::vector<double>&, const std::vector<double>&, const std::vector<double>&, const Search*)> onEachMove
   );
 
   const GameInitializer* getGameInitializer() const;

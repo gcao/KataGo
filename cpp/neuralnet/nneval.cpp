@@ -108,6 +108,10 @@ NNEvaluator::NNEvaluator(
    isKilled(false),
    numServerThreadsStartingUp(0),
    mainThreadWaitingForSpawn(),
+   numOngoingEvals(0),
+   numWaitingEvals(0),
+   numEvalsToAwaken(0),
+   waitingForFinish(),
    currentDoRandomize(doRandomize),
    currentDefaultSymmetry(defaultSymmetry),
    m_resultBufss(NULL),
@@ -125,6 +129,14 @@ NNEvaluator::NNEvaluator(
     throw StringError("maxBatchSize is negative: " + Global::intToString(maxBatchSize));
   if(gpuIdxByServerThread.size() != numThreads)
     throw StringError("gpuIdxByServerThread.size() != numThreads");
+
+  if(logger != NULL) {
+    logger->write(
+      "Initializing neural net buffer to be size " +
+      Global::intToString(nnXLen) + " * " + Global::intToString(nnYLen) +
+      (requireExactNNLen ? " exactly" : " allowing smaller boards")
+    );
+  }
 
   //Add three, just to give a bit of extra headroom, and make it a power of two
   numResultBufss = maxConcurrentEvals / maxBatchSize + 3;
@@ -177,13 +189,13 @@ NNEvaluator::~NNEvaluator() {
   delete[] m_resultBufss;
   m_resultBufss = NULL;
 
-  if(loadedModel != NULL)
-    NeuralNet::freeLoadedModel(loadedModel);
-  loadedModel = NULL;
-
   if(computeContext != NULL)
     NeuralNet::freeComputeContext(computeContext);
   computeContext = NULL;
+
+  if(loadedModel != NULL)
+    NeuralNet::freeLoadedModel(loadedModel);
+  loadedModel = NULL;
 
   delete nnCacheTable;
 }
@@ -199,6 +211,9 @@ string NNEvaluator::getInternalModelName() const {
     return "random";
   else
     return NeuralNet::getModelName(loadedModel);
+}
+Logger* NNEvaluator::getLogger() {
+  return logger;
 }
 bool NNEvaluator::isNeuralNetLess() const {
   return debugSkipNeuralNet;
@@ -243,6 +258,10 @@ enabled_t NNEvaluator::getUsingFP16Mode() const {
 }
 enabled_t NNEvaluator::getUsingNHWCMode() const {
   return usingNHWCMode;
+}
+
+bool NNEvaluator::supportsShorttermError() const {
+  return modelVersion >= 9;
 }
 
 bool NNEvaluator::getDoRandomize() const {
@@ -338,6 +357,7 @@ void NNEvaluator::killServerThreads() {
   isKilled = true;
   lock.unlock();
   serverWaitingForBatchStart.notify_all();
+  waitingForFinish.notify_all();
 
   for(size_t i = 0; i<serverThreads.size(); i++)
     serverThreads[i]->join();
@@ -347,6 +367,10 @@ void NNEvaluator::killServerThreads() {
 
   //Can unset now that threads are dead
   isKilled = false;
+
+  assert(numOngoingEvals == 0);
+  assert(numWaitingEvals == 0);
+  assert(numEvalsToAwaken == 0);
 }
 
 void NNEvaluator::serve(
@@ -354,6 +378,8 @@ void NNEvaluator::serve(
   int gpuIdxForThisThread,
   int serverThreadIdx
 ) {
+  int64_t numBatchesHandledThisThread = 0;
+  int64_t numRowsHandledThisThread = 0;
 
   ComputeHandle* gpuHandle = NULL;
   if(loadedModel != NULL)
@@ -377,9 +403,8 @@ void NNEvaluator::serve(
 
   vector<NNOutput*> outputBuf;
 
-  unique_lock<std::mutex> lock(bufferMutex,std::defer_lock);
+  unique_lock<std::mutex> lock(bufferMutex);
   while(true) {
-    lock.lock();
     while(m_currentResultBufsLen <= 0 && m_currentResultBufsIdx == m_oldestResultBufsIdx && !isKilled)
       serverWaitingForBatchStart.wait(lock);
 
@@ -401,6 +426,8 @@ void NNEvaluator::serve(
       m_oldestResultBufsIdx = (m_oldestResultBufsIdx + 1) & numResultBufssMask;
       numRows = maxNumRows;
     }
+
+    numOngoingEvals += 1;
     bool doRandomize = currentDoRandomize;
     int defaultSymmetry = currentDefaultSymmetry;
     lock.unlock();
@@ -471,57 +498,87 @@ void NNEvaluator::serve(
         resultBuf->clientWaitingForResult.notify_all();
         resultLock.unlock();
       }
-      continue;
     }
+    else {
+      outputBuf.clear();
+      for(int row = 0; row<numRows; row++) {
+        NNOutput* emptyOutput = new NNOutput();
+        assert(buf.resultBufs[row] != NULL);
+        emptyOutput->nnXLen = nnXLen;
+        emptyOutput->nnYLen = nnYLen;
+        if(buf.resultBufs[row]->includeOwnerMap)
+          emptyOutput->whiteOwnerMap = new float[nnXLen*nnYLen];
+        else
+          emptyOutput->whiteOwnerMap = NULL;
+        outputBuf.push_back(emptyOutput);
+      }
 
-    outputBuf.clear();
-    for(int row = 0; row<numRows; row++) {
-      NNOutput* emptyOutput = new NNOutput();
-      assert(buf.resultBufs[row] != NULL);
-      emptyOutput->nnXLen = nnXLen;
-      emptyOutput->nnYLen = nnYLen;
-      if(buf.resultBufs[row]->includeOwnerMap)
-        emptyOutput->whiteOwnerMap = new float[nnXLen*nnYLen];
-      else
-        emptyOutput->whiteOwnerMap = NULL;
-      outputBuf.push_back(emptyOutput);
-    }
-
-    for(int row = 0; row<numRows; row++) {
-      if(buf.resultBufs[row]->symmetry == NNInputs::SYMMETRY_NOTSPECIFIED) {
-        if(doRandomize)
-          buf.resultBufs[row]->symmetry = rand.nextUInt(NNInputs::NUM_SYMMETRY_COMBINATIONS);
-        else {
-          assert(defaultSymmetry >= 0 && defaultSymmetry <= NNInputs::NUM_SYMMETRY_COMBINATIONS-1);
-          buf.resultBufs[row]->symmetry = defaultSymmetry;
+      for(int row = 0; row<numRows; row++) {
+        if(buf.resultBufs[row]->symmetry == NNInputs::SYMMETRY_NOTSPECIFIED) {
+          if(doRandomize)
+            buf.resultBufs[row]->symmetry = rand.nextUInt(SymmetryHelpers::NUM_SYMMETRIES);
+          else {
+            assert(defaultSymmetry >= 0 && defaultSymmetry <= SymmetryHelpers::NUM_SYMMETRIES-1);
+            buf.resultBufs[row]->symmetry = defaultSymmetry;
+          }
         }
+      }
+
+      NeuralNet::getOutput(gpuHandle, buf.inputBuffers, numRows, buf.resultBufs, outputBuf);
+      assert(outputBuf.size() == numRows);
+
+      m_numRowsProcessed.fetch_add(numRows, std::memory_order_relaxed);
+      m_numBatchesProcessed.fetch_add(1, std::memory_order_relaxed);
+      numRowsHandledThisThread += numRows;
+      numBatchesHandledThisThread += 1;
+
+      for(int row = 0; row < numRows; row++) {
+        assert(buf.resultBufs[row] != NULL);
+        NNResultBuf* resultBuf = buf.resultBufs[row];
+        buf.resultBufs[row] = NULL;
+
+        unique_lock<std::mutex> resultLock(resultBuf->resultMutex);
+        assert(resultBuf->hasResult == false);
+        resultBuf->result = std::shared_ptr<NNOutput>(outputBuf[row]);
+        resultBuf->hasResult = true;
+        resultBuf->clientWaitingForResult.notify_all();
+        resultLock.unlock();
       }
     }
 
-    NeuralNet::getOutput(gpuHandle, buf.inputBuffers, numRows, buf.resultBufs, outputBuf);
-    assert(outputBuf.size() == numRows);
+    //Lock and update stats before looping again
+    lock.lock();
+    numOngoingEvals -= 1;
 
-    m_numRowsProcessed.fetch_add(numRows, std::memory_order_relaxed);
-    m_numBatchesProcessed.fetch_add(1, std::memory_order_relaxed);
-
-    for(int row = 0; row < numRows; row++) {
-      assert(buf.resultBufs[row] != NULL);
-      NNResultBuf* resultBuf = buf.resultBufs[row];
-      buf.resultBufs[row] = NULL;
-
-      unique_lock<std::mutex> resultLock(resultBuf->resultMutex);
-      assert(resultBuf->hasResult == false);
-      resultBuf->result = std::shared_ptr<NNOutput>(outputBuf[row]);
-      resultBuf->hasResult = true;
-      resultBuf->clientWaitingForResult.notify_all();
-      resultLock.unlock();
+    if(numWaitingEvals > 0) {
+      numEvalsToAwaken += numWaitingEvals;
+      numWaitingEvals = 0;
+      waitingForFinish.notify_all();
     }
-
     continue;
   }
 
   NeuralNet::freeComputeHandle(gpuHandle);
+  if(logger != NULL) {
+    logger->write(
+      "GPU " + Global::intToString(gpuIdxForThisThread) + " finishing, processed " +
+      Global::int64ToString(numRowsHandledThisThread) + " rows " +
+      Global::int64ToString(numBatchesHandledThisThread) + " batches"
+    );
+  }
 }
+
+void NNEvaluator::waitForNextNNEvalIfAny() {
+  unique_lock<std::mutex> lock(bufferMutex);
+  if(numOngoingEvals <= 0)
+    return;
+
+  numWaitingEvals++;
+  while(numEvalsToAwaken <= 0 && !isKilled)
+    waitingForFinish.wait(lock);
+  numEvalsToAwaken--;
+}
+
 
 static double softPlus(double x) {
   //Avoid blowup

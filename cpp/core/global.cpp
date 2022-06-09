@@ -9,15 +9,12 @@
 #include <chrono>
 #include <cstdarg>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <fstream>
-#include <inttypes.h>
+#include <cinttypes>
 #include <iomanip>
 #include <sstream>
-#include <sys/types.h>
-#include <ghc/filesystem.hpp>
 
 using namespace std;
 
@@ -67,6 +64,14 @@ string Global::floatToString(float x)
 string Global::doubleToString(double x)
 {
   stringstream ss;
+  ss << x;
+  return ss.str();
+}
+
+string Global::doubleToStringHighPrecision(double x)
+{
+  stringstream ss;
+  ss.precision(17);
   ss << x;
   return ss.str();
 }
@@ -179,28 +184,51 @@ bool Global::stringToBool(const string& str)
 bool Global::tryStringToUInt64(const string& str, uint64_t& x)
 {
   uint64_t val = 0;
-  istringstream in(trim(str));
+  string s = trim(str);
+  if(s.size() > 0 && s[0] == '-')
+    return false;
+  istringstream in(s);
   in >> val;
   if(in.fail() || in.peek() != EOF)
-  {
-    istringstream inhex(trim(str));
-    inhex >> hex >> val;
-    if(inhex.fail() || inhex.peek() != EOF)
+    return false;
+  x = val;
+  return true;
+}
+
+bool Global::tryHexStringToUInt64(const string& str, uint64_t& x)
+{
+  uint64_t val = 0;
+  for(char c: str) {
+    if(!(c >= '0' && c <= '9') &&
+       !(c >= 'A' && c <= 'F') &&
+       !(c >= 'a' && c <= 'f')
+    ) {
       return false;
-    x = val;
-    return true;
+    }
   }
+  istringstream in(str);
+  in >> std::hex >> val;
+  if(in.fail() || in.peek() != EOF)
+    return false;
   x = val;
   return true;
 }
 
 uint64_t Global::stringToUInt64(const string& str)
 {
-  uint64_t val = 0;
-  istringstream in(trim(str));
-  in >> val;
-  if(in.fail() || in.peek() != EOF)
+  uint64_t val;
+  bool suc = tryStringToUInt64(str,val);
+  if(!suc)
     throw IOError(string("could not parse uint64: ") + str);
+  return val;
+}
+
+uint64_t Global::hexStringToUInt64(const string& str)
+{
+  uint64_t val;
+  bool suc = tryHexStringToUInt64(str,val);
+  if(!suc)
+    throw IOError(string("could not parse uint64 from hex: ") + str);
   return val;
 }
 
@@ -248,12 +276,12 @@ double Global::stringToDouble(const string& str)
 
 bool Global::isWhitespace(char c)
 {
-  return contains(" \t\r\n",c);
+  return contains(" \t\r\n\v\f",c);
 }
 
 bool Global::isWhitespace(const string& s)
 {
-  size_t p = s.find_first_not_of(" \t\r\n");
+  size_t p = s.find_first_not_of(" \t\r\n\v\f");
   return p == string::npos;
 }
 
@@ -285,13 +313,12 @@ string Global::chopSuffix(const string& s, const string& suffix)
   return s.substr(0,s.size()-suffix.size());
 }
 
-
-string Global::trim(const string& s)
+string Global::trim(const std::string &s, const char* delims)
 {
-  size_t p2 = s.find_last_not_of(" \t\r\n");
+  size_t p2 = s.find_last_not_of(delims);
   if (p2 == string::npos)
     return string();
-  size_t p1 = s.find_first_not_of(" \t\r\n");
+  size_t p1 = s.find_first_not_of(delims);
   if (p1 == string::npos)
     p1 = 0;
 
@@ -652,82 +679,23 @@ uint64_t Global::readMem(const char* str)
   return readMem(string(str));
 }
 
-
-//IO-------------------------------------
-
-//Read entire file whole
-string Global::readFile(const char* filename)
-{
-  ifstream ifs(filename);
-  if(!ifs.good())
-    throw IOError(string("File not found: ") + filename);
-  string str((istreambuf_iterator<char>(ifs)), istreambuf_iterator<char>());
-  return str;
-}
-
-string Global::readFile(const string& filename)
-{
-  return readFile(filename.c_str());
-}
-
-string Global::readFileBinary(const char* filename)
-{
-  ifstream ifs(filename, ios::binary);
-  if(!ifs.good())
-    throw IOError(string("File not found: ") + filename);
-  string str((istreambuf_iterator<char>(ifs)), istreambuf_iterator<char>());
-  return str;
-}
-
-string Global::readFileBinary(const string& filename)
-{
-  return readFileBinary(filename.c_str());
-}
-
-//Read file into separate lines, using the specified delimiter character(s).
-//The delimiter characters are NOT included.
-vector<string> Global::readFileLines(const char* filename, char delimiter)
-{
-  ifstream ifs(filename);
-  if(!ifs.good())
-    throw IOError(string("File not found: ") + filename);
-
-  vector<string> vec;
-  string line;
-  while(getline(ifs,line,delimiter))
-    vec.push_back(line);
-  return vec;
-}
-
-vector<string> Global::readFileLines(const string& filename, char delimiter)
-{
-  return readFileLines(filename.c_str(), delimiter);
-}
-
-void Global::collectFiles(const string& dirname, std::function<bool(const string&)> fileFilter, vector<string>& collected)
-{
-  namespace gfs = ghc::filesystem;
-  try {
-    for(const gfs::directory_entry& entry: gfs::recursive_directory_iterator(dirname)) {
-      if(!gfs::is_directory(entry.status())) {
-        const gfs::path& path = entry.path();
-        string fileName = path.filename().string();
-        if(fileFilter(fileName)) {
-          collected.push_back(path.string());
-        }
-      }
-    }
-  }
-  catch(const gfs::filesystem_error& e) {
-    cerr << "Error recursively collectng files: " << e.what() << endl;
-    return;
-  }
-}
-
-//USER IO----------------------------
-
 void Global::pauseForKey()
 {
   cout << "Press any key to continue..." << endl;
   cin.get();
+}
+
+double Global::roundStatic(double x, double inverseScale) {
+  return round(x * inverseScale) / inverseScale;
+}
+double Global::roundDynamic(double x, int precision) {
+  double absx = std::fabs(x);
+  if(absx <= 1e-60)
+    return x;
+  int orderOfMagnitude = (int)floor(log10(absx));
+  int roundingMagnitude = orderOfMagnitude - precision;
+  if(roundingMagnitude >= 0)
+    return round(x);
+  double inverseScale = pow(10.0,-roundingMagnitude);
+  return roundStatic(x, inverseScale);
 }

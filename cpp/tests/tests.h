@@ -10,6 +10,8 @@
 #include "../game/rules.h"
 #include "../game/boardhistory.h"
 
+class NNEvaluator;
+
 namespace Tests {
   //testboardbasic.cpp
   void runBoardIOTests();
@@ -17,6 +19,8 @@ namespace Tests {
   void runBoardUndoTest();
   void runBoardHandicapTest();
   void runBoardStressTest();
+  void runBoardReplayTest();
+
 
   //testboardarea.cpp
   void runBoardAreaTests();
@@ -34,12 +38,20 @@ namespace Tests {
   //testnninputs.cpp
   void runNNInputsV3V4Tests();
   void runBasicSymmetryTests();
+  void runBoardSymmetryTests();
 
-  //testsearch.cpp
+  //testsearchnonn.cpp
   void runNNLessSearchTests();
+  //testsearch.cpp
   void runSearchTests(const std::string& modelFile, bool inputsNHWC, bool cudaNHWC, int symmetry, bool useFP16);
+  //testsearchv3.cpp
   void runSearchTestsV3(const std::string& modelFile, bool inputsNHWC, bool cudaNHWC, int symmetry, bool useFP16);
+  //testsearchv8.cpp
   void runSearchTestsV8(const std::string& modelFile, bool inputsNHWC, bool cudaNHWC, bool useFP16);
+  //testsearchv9.cpp
+  void runSearchTestsV9(const std::string& modelFile, bool inputsNHWC, bool cudaNHWC, bool useFP16);
+
+  //testsearchmisc.cpp
   void runNNOnTinyBoard(const std::string& modelFile, bool inputsNHWC, bool cudaNHWC, int symmetry, bool useFP16);
   void runNNSymmetries(const std::string& modelFile, bool inputsNHWC, bool cudaNHWC, bool useFP16);
   void runNNOnManyPoses(const std::string& modelFile, bool inputsNHWC, bool cudaNHWC, int symmetry, bool useFP16, const std::string& comparisonFile);
@@ -61,13 +73,23 @@ namespace Tests {
 
   //testownership.cpp
   void runOwnershipTests(const std::string& configFile, const std::string& modelFile);
+
+  //testnnevalcanary.cpp
+  void runCanaryTests(NNEvaluator* nnEval, int symmetry, bool print);
+
+  //testconfig.cpp
+  void runConfigTests(const std::vector<std::string>& args);
 }
 
 namespace TestCommon {
   bool boardsSeemEqual(const Board& b1, const Board& b2);
+
+  constexpr int MIN_BENCHMARK_SGF_DATA_SIZE = 7;
+  constexpr int MAX_BENCHMARK_SGF_DATA_SIZE = 19;
+  constexpr int DEFAULT_BENCHMARK_SGF_DATA_SIZE = std::min(Board::DEFAULT_LEN,MAX_BENCHMARK_SGF_DATA_SIZE);
   std::string getBenchmarkSGFData(int boardSize);
 
-  void overrideForOpenCL(bool& inputsNHWC, bool& useNHWC);
+  void overrideForBackends(bool& inputsNHWC, bool& useNHWC);
 }
 
 #endif

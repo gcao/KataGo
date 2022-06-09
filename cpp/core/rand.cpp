@@ -503,6 +503,65 @@ void Rand::runTests() {
   ostringstream out;
 
   {
+    const char* name = "Bit mixer tests";
+    out << Hash::murmurMix(12345) << endl;
+    out << Hash::murmurMix(298174913) << endl;
+    out << Hash::splitMix64(1234567) << endl;
+    out << Hash::splitMix64((uint64_t)1234567 + (uint64_t)0x9e3779b97f4a7c15ULL) << endl;
+    out << Global::uint64ToHexString(Hash::rrmxmx(0)) << endl;
+    out << Global::uint64ToHexString(Hash::rrmxmx(1)) << endl;
+    out << Global::uint64ToHexString(Hash::rrmxmx(0x0123456789abcdefULL)) << endl;
+    out << Global::uint64ToHexString(Hash::rrmxmx(0xfefefefefefefefeULL)) << endl;
+    out << Global::uint64ToHexString(Hash::nasam(0)) << endl;
+    out << Global::uint64ToHexString(Hash::nasam(1)) << endl;
+    out << Global::uint64ToHexString(Hash::nasam(0xfefefefefefefefeULL)) << endl;
+    string expected = R"%%(
+1716623506685013753
+8421665786179357259
+6457827717110365317
+3203168211198807973
+0000000000000000
+23085D6F7A569905
+C337A528D7E42497
+125C8836F02C998F
+0000000000000000
+9C1A051E07B9E10D
+3289B8F0A1EA039B
+)%%";
+    TestCommon::expect(name,out,expected);
+  }
+
+  for(int i = -10000; i<10000; i++) {
+    {
+      testAssert(i == Global::stringToInt(Global::intToString(i)));
+    }
+    {
+      int64_t x = (int64_t)i;
+      testAssert(x == Global::stringToInt64(Global::int64ToString(x)));
+    }
+    {
+      uint64_t x = (uint64_t)i;
+      testAssert(x == Global::stringToUInt64(Global::uint64ToString(x)));
+    }
+    {
+      uint64_t x = (uint64_t)i;
+      testAssert(x == Global::hexStringToUInt64(Global::uint64ToHexString(x)));
+    }
+    {
+      float x = (float)i / 100.0f;
+      testAssert(x == Global::stringToFloat(Global::floatToString(x)));
+    }
+    {
+      double x = (double)i / 100.0;
+      testAssert(x == Global::stringToDouble(Global::doubleToString(x)));
+    }
+    {
+      double x = (double)i / 1739.3;
+      testAssert(x == Global::stringToDouble(Global::doubleToStringHighPrecision(x)));
+    }
+  }
+
+  {
     const char* name = "Rand tests";
     Rand rand("abc");
 

@@ -14,7 +14,9 @@
 #include <iostream>
 #include <map>
 #include <set>
-#include <stdint.h>
+#include <cstdint>
+#include <cstdlib>
+#include <cmath>
 #include <string>
 #include <vector>
 #include <memory>
@@ -69,6 +71,7 @@ namespace Global
   std::string intToString(int x);
   std::string floatToString(float x);
   std::string doubleToString(double x);
+  std::string doubleToStringHighPrecision(double x);
   std::string int64ToString(int64_t x);
   std::string uint32ToString(uint32_t x);
   std::string uint64ToString(uint64_t x);
@@ -79,12 +82,14 @@ namespace Global
   int stringToInt(const std::string& str);
   int64_t stringToInt64(const std::string& str);
   uint64_t stringToUInt64(const std::string& str);
+  uint64_t hexStringToUInt64(const std::string& str);
   float stringToFloat(const std::string& str);
   double stringToDouble(const std::string& str);
   bool stringToBool(const std::string& str);
   bool tryStringToInt(const std::string& str, int& x);
   bool tryStringToInt64(const std::string& str, int64_t& x);
   bool tryStringToUInt64(const std::string& str, uint64_t& x);
+  bool tryHexStringToUInt64(const std::string& str, uint64_t& x);
   bool tryStringToFloat(const std::string& str, float& x);
   bool tryStringToDouble(const std::string& str, double& x);
   bool tryStringToBool(const std::string& str, bool& x);
@@ -100,7 +105,7 @@ namespace Global
   std::string chopSuffix(const std::string& s, const std::string& suffix);
 
   //Trim whitespace off both ends of string
-  std::string trim(const std::string& s);
+  std::string trim(const std::string& s, const char* delims = " \t\r\n\v\f");
 
   //Join strings with a delimiter between each one, from [start,end)
   std::string concat(const char* const* strs, size_t len, const char* delim);
@@ -147,27 +152,14 @@ namespace Global
   uint64_t readMem(const char* str);
   uint64_t readMem(const std::string& str);
 
-  //IO-------------------------------------
-
-  //Read entire file whole
-  std::string readFile(const char* filename);
-  std::string readFile(const std::string& filename);
-  std::string readFileBinary(const char* filename);
-  std::string readFileBinary(const std::string& filename);
-
-  //Read file into separate lines, using the specified delimiter character(s).
-  //The delimiter characters are NOT included.
-  std::vector<std::string> readFileLines(const char* filename, char delimiter);
-  std::vector<std::string> readFileLines(const std::string& filename, char delimiter);
-
-  //Recursively walk a directory and find all the files that match fileFilter.
-  //fileFilter receives just the file name and not the full path, but collected contains the paths.
-  void collectFiles(const std::string& dirname, std::function<bool(const std::string&)> fileFilter, std::vector<std::string>& collected);
-
-  //USER IO----------------------------
-
   //Display a message and ask the user to press a key to continue
   void pauseForKey();
+
+  //Round x to the nearest multiple of 1/inverseScale
+  double roundStatic(double x, double inverseScale);
+  //Round x to this many decimal digits of precision
+  double roundDynamic(double x, int precision);
+
 }
 
 struct StringError : public std::exception {
@@ -184,7 +176,9 @@ struct StringError : public std::exception {
 };
 
 //Common exception for IO
-struct IOError final : public StringError { IOError(const char* msg):StringError(msg) {}; IOError(const std::string& msg):StringError(msg) {}; };
+struct IOError : public StringError { IOError(const char* msg):StringError(msg) {}; IOError(const std::string& msg):StringError(msg) {}; };
+//Exception for config parsing
+struct ConfigParsingError final : public IOError { ConfigParsingError(const char* msg):IOError(msg) {}; ConfigParsingError(const std::string& msg):IOError(msg) {}; };
 //Common exception for parameter values
 struct ValueError final : public StringError { ValueError(const char* msg):StringError(msg) {}; ValueError(const std::string& msg):StringError(msg) {}; };
 //Common exception for command line argument handling

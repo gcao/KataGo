@@ -1,6 +1,7 @@
 #include "main.h"
 
 #include "core/os.h"
+#include "core/mainargs.h"
 
 #ifdef NO_GIT_REVISION
 #define GIT_REVISION "<omitted>"
@@ -10,12 +11,14 @@
 
 #include <sstream>
 
-using namespace std;
+//------------------------
+#include "../core/using.h"
+//------------------------
 
-static void printHelp(int argc, const char* argv[]) {
+static void printHelp(const vector<string>& args) {
   cout << endl;
-  if(argc >= 1)
-    cout << "Usage: " << argv[0] << " SUBCOMMAND ";
+  if(args.size() >= 1)
+    cout << "Usage: " << args[0] << " SUBCOMMAND ";
   else
     cout << "Usage: " << "./katago" << " SUBCOMMAND ";
   cout << endl;
@@ -54,79 +57,97 @@ runoutputtests : Run a bunch of things and dump details to stdout
 runsearchtests : Run a bunch of things using a neural net and dump details to stdout
 runsearchtestsv3 : Run a bunch more things using a neural net and dump details to stdout
 runsearchtestsv8 : Run a bunch more things using a neural net and dump details to stdout
+runsearchtestsv9 : Run a bunch more things using a neural net and dump details to stdout
 runselfplayinittests : Run some tests involving selfplay training init using a neural net and dump details to stdout
 runsekitrainwritetests : Run some tests involving seki train output
 
 )%%" << endl;
 }
 
-static int handleSubcommand(const string& subcommand, int argc, const char* argv[]) {
+static int handleSubcommand(const string& subcommand, const vector<string>& args) {
+  vector<string> subArgs(args.begin()+1,args.end());
   if(subcommand == "analysis")
-    return MainCmds::analysis(argc-1,&argv[1]);
+    return MainCmds::analysis(subArgs);
   if(subcommand == "benchmark")
-    return MainCmds::benchmark(argc-1,&argv[1]);
+    return MainCmds::benchmark(subArgs);
   if(subcommand == "contribute")
-    return MainCmds::contribute(argc-1,&argv[1]);
+    return MainCmds::contribute(subArgs);
   if(subcommand == "evalsgf")
-    return MainCmds::evalsgf(argc-1,&argv[1]);
+    return MainCmds::evalsgf(subArgs);
   else if(subcommand == "gatekeeper")
-    return MainCmds::gatekeeper(argc-1,&argv[1]);
+    return MainCmds::gatekeeper(subArgs);
   else if(subcommand == "genconfig")
-    return MainCmds::genconfig(argc-1,&argv[1],argv[0]);
+    return MainCmds::genconfig(subArgs,args[0]);
   else if(subcommand == "gtp")
-    return MainCmds::gtp(argc-1,&argv[1]);
+    return MainCmds::gtp(subArgs);
   else if(subcommand == "tuner")
-    return MainCmds::tuner(argc-1,&argv[1]);
+    return MainCmds::tuner(subArgs);
   else if(subcommand == "match")
-    return MainCmds::match(argc-1,&argv[1]);
+    return MainCmds::match(subArgs);
   else if(subcommand == "matchauto")
-    return MainCmds::matchauto(argc-1,&argv[1]);
+    return MainCmds::matchauto(subArgs);
   else if(subcommand == "selfplay")
-    return MainCmds::selfplay(argc-1,&argv[1]);
+    return MainCmds::selfplay(subArgs);
   else if(subcommand == "runtests")
-    return MainCmds::runtests(argc-1,&argv[1]);
+    return MainCmds::runtests(subArgs);
   else if(subcommand == "runnnlayertests")
-    return MainCmds::runnnlayertests(argc-1,&argv[1]);
+    return MainCmds::runnnlayertests(subArgs);
   else if(subcommand == "runnnontinyboardtest")
-    return MainCmds::runnnontinyboardtest(argc-1,&argv[1]);
+    return MainCmds::runnnontinyboardtest(subArgs);
   else if(subcommand == "runnnsymmetriestest")
-    return MainCmds::runnnsymmetriestest(argc-1,&argv[1]);
+    return MainCmds::runnnsymmetriestest(subArgs);
   else if(subcommand == "runownershiptests")
-    return MainCmds::runownershiptests(argc-1,&argv[1]);
+    return MainCmds::runownershiptests(subArgs);
   else if(subcommand == "runoutputtests")
-    return MainCmds::runoutputtests(argc-1,&argv[1]);
+    return MainCmds::runoutputtests(subArgs);
   else if(subcommand == "runsearchtests")
-    return MainCmds::runsearchtests(argc-1,&argv[1]);
+    return MainCmds::runsearchtests(subArgs);
   else if(subcommand == "runsearchtestsv3")
-    return MainCmds::runsearchtestsv3(argc-1,&argv[1]);
+    return MainCmds::runsearchtestsv3(subArgs);
   else if(subcommand == "runsearchtestsv8")
-    return MainCmds::runsearchtestsv8(argc-1,&argv[1]);
+    return MainCmds::runsearchtestsv8(subArgs);
+  else if(subcommand == "runsearchtestsv9")
+    return MainCmds::runsearchtestsv9(subArgs);
   else if(subcommand == "runselfplayinittests")
-    return MainCmds::runselfplayinittests(argc-1,&argv[1]);
+    return MainCmds::runselfplayinittests(subArgs);
   else if(subcommand == "runselfplayinitstattests")
-    return MainCmds::runselfplayinitstattests(argc-1,&argv[1]);
+    return MainCmds::runselfplayinitstattests(subArgs);
   else if(subcommand == "runsekitrainwritetests")
-    return MainCmds::runsekitrainwritetests(argc-1,&argv[1]);
+    return MainCmds::runsekitrainwritetests(subArgs);
   else if(subcommand == "runnnonmanyposestest")
-    return MainCmds::runnnonmanyposestest(argc-1,&argv[1]);
+    return MainCmds::runnnonmanyposestest(subArgs);
   else if(subcommand == "runnnbatchingtest")
-    return MainCmds::runnnbatchingtest(argc-1,&argv[1]);
+    return MainCmds::runnnbatchingtest(subArgs);
   else if(subcommand == "runtinynntests")
-    return MainCmds::runtinynntests(argc-1,&argv[1]);
+    return MainCmds::runtinynntests(subArgs);
+  else if(subcommand == "runnnevalcanarytests")
+    return MainCmds::runnnevalcanarytests(subArgs);
+  else if(subcommand == "runconfigtests")
+    return MainCmds::runconfigtests(subArgs);
   else if(subcommand == "samplesgfs")
-    return MainCmds::samplesgfs(argc-1,&argv[1]);
+    return MainCmds::samplesgfs(subArgs);
   else if(subcommand == "dataminesgfs")
-    return MainCmds::dataminesgfs(argc-1,&argv[1]);
+    return MainCmds::dataminesgfs(subArgs);
+  else if(subcommand == "genbook")
+    return MainCmds::genbook(subArgs);
+  else if(subcommand == "checkbook")
+    return MainCmds::checkbook(subArgs);
   else if(subcommand == "trystartposes")
-    return MainCmds::trystartposes(argc-1,&argv[1]);
+    return MainCmds::trystartposes(subArgs);
   else if(subcommand == "viewstartposes")
-    return MainCmds::viewstartposes(argc-1,&argv[1]);
+    return MainCmds::viewstartposes(subArgs);
   else if(subcommand == "demoplay")
-    return MainCmds::demoplay(argc-1,&argv[1]);
+    return MainCmds::demoplay(subArgs);
   else if(subcommand == "sampleinitializations")
-    return MainCmds::sampleinitializations(argc-1,&argv[1]);
+    return MainCmds::sampleinitializations(subArgs);
+  else if(subcommand == "runbeginsearchspeedtest")
+    return MainCmds::runbeginsearchspeedtest(subArgs);
+  else if(subcommand == "runownershipspeedtest")
+    return MainCmds::runownershipspeedtest(subArgs);
+  else if(subcommand == "runsleeptest")
+    return MainCmds::runsleeptest(subArgs);
   else if(subcommand == "printclockinfo")
-    return MainCmds::printclockinfo(argc-1,&argv[1]);
+    return MainCmds::printclockinfo(subArgs);
   else if(subcommand == "sandbox")
     return MainCmds::sandbox();
   else if(subcommand == "version") {
@@ -135,21 +156,24 @@ static int handleSubcommand(const string& subcommand, int argc, const char* argv
   }
   else {
     cout << "Unknown subcommand: " << subcommand << endl;
-    printHelp(argc,argv);
+    printHelp(args);
     return 1;
   }
   return 0;
 }
 
 
-int main(int argc, const char* argv[]) {
-  if(argc < 2) {
-    printHelp(argc,argv);
+int main(int argc, const char* const* argv) {
+  vector<string> args = MainArgs::getCommandLineArgsUTF8(argc,argv);
+  MainArgs::makeCoutAndCerrAcceptUTF8();
+
+  if(args.size() < 2) {
+    printHelp(args);
     return 0;
   }
-  string cmdArg = string(argv[1]);
+  string cmdArg = string(args[1]);
   if(cmdArg == "-h" || cmdArg == "--h" || cmdArg == "-help" || cmdArg == "--help" || cmdArg == "help") {
-    printHelp(argc,argv);
+    printHelp(args);
     return 0;
   }
 
@@ -158,7 +182,7 @@ int main(int argc, const char* argv[]) {
   //so explicitly catch everything and print
   int result;
   try {
-    result = handleSubcommand(cmdArg, argc, argv);
+    result = handleSubcommand(cmdArg, args);
   }
   catch(std::exception& e) {
     cerr << "Uncaught exception: " << e.what() << endl;
@@ -170,17 +194,17 @@ int main(int argc, const char* argv[]) {
   }
   return result;
 #else
-  return handleSubcommand(cmdArg, argc, argv);
+  return handleSubcommand(cmdArg, args);
 #endif
 }
 
 
 string Version::getKataGoVersion() {
-  return string("1.8.2");
+  return string("1.11.0");
 }
 
 string Version::getKataGoVersionForHelp() {
-  return string("KataGo v1.8.2");
+  return string("KataGo v1.11.0");
 }
 
 string Version::getKataGoVersionFullInfo() {
@@ -195,6 +219,8 @@ string Version::getKataGoVersionFullInfo() {
 #define STRINGIFY2(x) STRINGIFY(x)
   out << "Compiled with CUDA version " << STRINGIFY2(CUDA_TARGET_VERSION) << endl;
 #endif
+#elif defined(USE_TENSORRT_BACKEND)
+  out << "Using TensorRT backend" << endl;
 #elif defined(USE_OPENCL_BACKEND)
   out << "Using OpenCL backend" << endl;
 #elif defined(USE_EIGEN_BACKEND)
@@ -218,4 +244,21 @@ string Version::getKataGoVersionFullInfo() {
 
 string Version::getGitRevision() {
   return string(GIT_REVISION);
+}
+
+string Version::getGitRevisionWithBackend() {
+  string s = string(GIT_REVISION);
+
+#if defined(USE_CUDA_BACKEND)
+  s += "-cuda";
+#elif defined(USE_TENSORRT_BACKEND)
+  s += "-trt";
+#elif defined(USE_OPENCL_BACKEND)
+  s += "-opencl";
+#elif defined(USE_EIGEN_BACKEND)
+  s += "-eigen";
+#else
+  s += "-dummy";
+#endif
+  return s;
 }

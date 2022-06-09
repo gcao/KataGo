@@ -1,13 +1,45 @@
+: Running with following config:
+allowResignation = true
+cudaUseFP16 = false
+cudaUseNHWC = false
+forDeterministicTesting = true
+lagBuffer = 1.0
+logAllGTPCommunication = true
+logFile = tests/results/gtp/time.txt.log
+logSearchInfo = true
+logTimeStamp = false
+logToStderr = false
+maxPlayouts = 10000
+maxTimePondering = 60
+maxVisits = 100
+nnRandSeed = forTesting
+nnRandomize = false
+numSearchThreads = 1
+openclUseFP16 = false
+ponderingEnabled = false
+resignConsecTurns = 3
+resignThreshold = -0.90
+rootSymmetryPruning = false
+rules = tromp-taylor
+searchFactorAfterOnePass = 0.50
+searchFactorAfterTwoPass = 0.25
+searchFactorWhenWinning = 0.40
+searchFactorWhenWinningThreshold = 0.95
+searchRandSeed = forTesting
+trtUseFP16 = false
+
 : GTP Engine starting...
-: KataGo v1.8.2
+: KataGo v1.11.0
 : Using TrompTaylor rules initially, unless GTP/GUI overrides this
 : Using 1 CPU thread(s) for search
 : nnRandSeed0 = forTesting
 : After dedups: nnModelFile0 = tests/models/g170-b6c96-s175395328-d26788732.bin.gz useFP16 false useNHWC false
-: Cuda backend thread 0: Found GPU Tesla V100-SXM2-16GB memory 16945512448 compute capability major 7 minor 0
+: Initializing neural net buffer to be size 19 * 19 exactly
+: Cuda backend thread 0: Found GPU NVIDIA RTX A5000 memory 25434652672 compute capability major 8 minor 6
 : Cuda backend thread 0: Model version 8 useFP16 = false useNHWC = false
 : Cuda backend thread 0: Model name: g170-b6c96-s175395328-d26788732
 : Loaded neural net with nnXLen 19 nnYLen 19
+: Initializing board with boardXSize 19 boardYSize 19
 : Loaded config configs/gtp_example.cfg and/or command-line and query overrides
 : Loaded model tests/models/g170-b6c96-s175395328-d26788732.bin.gz
 : Config override: cudaUseFP16 = false
@@ -22,7 +54,9 @@
 : Config override: nnRandomize = false
 : Config override: numSearchThreads = 1
 : Config override: openclUseFP16 = false
+: Config override: rootSymmetryPruning = false
 : Config override: searchRandSeed = forTesting
+: Config override: trtUseFP16 = false
 : Model name: g170-b6c96-s175395328-d26788732
 : GTP ready, beginning main protocol loop
 : Controller: kata-debug-print-tc
@@ -474,4 +508,5 @@ White originalMainTime 60 increment 10 mainTimeLimit 60 maxTimePerMove 7 mainTim
 : Controller: kata-debug-print-tc
 : = Black originalMainTime 60 increment 10 mainTimeLimit 60 maxTimePerMove 7 mainTimeLeft 60 inOvertime 0 minRecMax 6 6 6 rrec0 6 rreclimit 6 rreclimit2 6
 White originalMainTime 60 increment 10 mainTimeLimit 60 maxTimePerMove 7 mainTimeLeft 30 inOvertime 0 minRecMax 0 6 6 rrec0 6 rreclimit 6 rreclimit2 6
+: GPU -1 finishing, processed 0 rows 0 batches
 : All cleaned up, quitting

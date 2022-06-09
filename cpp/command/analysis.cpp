@@ -4,6 +4,7 @@
 #include "../core/datetime.h"
 #include "../core/makedir.h"
 #include "../search/asyncbot.h"
+#include "../search/patternbonustable.h"
 #include "../program/setup.h"
 #include "../program/playutils.h"
 #include "../program/play.h"
@@ -29,7 +30,9 @@ struct AnalyzeRequest {
   Player perspective;
   int analysisPVLen;
   bool includeOwnership;
+  bool includeOwnershipStdev;
   bool includeMovesOwnership;
+  bool includeMovesOwnershipStdev;
   bool includePolicy;
   bool includePVVisits;
 
@@ -51,7 +54,7 @@ struct AnalyzeRequest {
 };
 
 
-int MainCmds::analysis(int argc, const char* const* argv) {
+int MainCmds::analysis(const vector<string>& args) {
   Board::initHash();
   ScoreValue::initTables();
   Rand seedRand;
@@ -73,7 +76,7 @@ int MainCmds::analysis(int argc, const char* const* argv) {
     TCLAP::SwitchArg quitWithoutWaitingArg("","quit-without-waiting","When stdin is closed, quit quickly without waiting for queued tasks");
     cmd.add(numAnalysisThreadsArg);
     cmd.add(quitWithoutWaitingArg);
-    cmd.parse(argc,argv);
+    cmd.parseArgs(args);
 
     modelFile = cmd.getModelFile();
     numAnalysisThreadsCmdlineSpecified = numAnalysisThreadsArg.isSet();
@@ -100,22 +103,10 @@ int MainCmds::analysis(int argc, const char* const* argv) {
   if(forDeterministicTesting)
     seedRand.init("forDeterministicTesting");
 
-  Logger logger;
-  if(cfg.contains("logFile") && cfg.contains("logDir"))
-    throw StringError("Cannot specify both logFile and logDir in config");
-  else if(cfg.contains("logFile"))
-    logger.addFile(cfg.getString("logFile"));
-  else if(cfg.contains("logDir")) {
-    MakeDir::make(cfg.getString("logDir"));
-    logger.addFile(cfg.getString("logDir") + "/" + DateTime::getCompactDateTimeString() + "-" + Global::uint32ToHexString(seedRand.nextUInt()) + ".log");
-  }
-
-  const bool logToStderr = cfg.contains("logToStderr") ? cfg.getBool("logToStderr") : true;
-  if(logToStderr)
-    logger.setLogToStderr(true);
-  const bool logTimeStamp = cfg.contains("logTimeStamp") ? cfg.getBool("logTimeStamp") : true;
-  if(!logTimeStamp)
-    logger.setLogTime(false);
+  const bool logToStdoutDefault = false;
+  const bool logToStderrDefault = true;
+  Logger logger(&cfg, logToStdoutDefault, logToStderrDefault);
+  const bool logToStderr = logger.isLoggingToStderr();
 
   logger.write("Analysis Engine starting...");
   logger.write(Version::getKataGoVersionForHelp());
@@ -139,6 +130,13 @@ int MainCmds::analysis(int argc, const char* const* argv) {
   Player defaultPerspective;
   loadParams(cfg, defaultParams, defaultPerspective, C_EMPTY);
 
+  std::unique_ptr<PatternBonusTable> patternBonusTable = nullptr;
+  {
+    std::vector<std::unique_ptr<PatternBonusTable>> tables = Setup::loadAvoidSgfPatternBonusTables(cfg,logger);
+    assert(tables.size() == 1);
+    patternBonusTable = std::move(tables[0]);
+  }
+
   const int analysisPVLen = cfg.contains("analysisPVLen") ? cfg.getInt("analysisPVLen",1,100) : 15;
   const bool assumeMultipleStartingBlackMovesAreHandicap =
     cfg.contains("assumeMultipleStartingBlackMovesAreHandicap") ? cfg.getBool("assumeMultipleStartingBlackMovesAreHandicap") : true;
@@ -147,13 +145,14 @@ int MainCmds::analysis(int argc, const char* const* argv) {
   NNEvaluator* nnEval;
   {
     Setup::initializeSession(cfg);
-    int maxConcurrentEvals = numAnalysisThreads * defaultParams.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
-    int expectedConcurrentEvals = numAnalysisThreads * defaultParams.numThreads;
-    int defaultMaxBatchSize = -1;
-    string expectedSha256 = "";
+    const int maxConcurrentEvals = numAnalysisThreads * defaultParams.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
+    const int expectedConcurrentEvals = numAnalysisThreads * defaultParams.numThreads;
+    const bool defaultRequireExactNNLen = false;
+    const int defaultMaxBatchSize = -1;
+    const string expectedSha256 = "";
     nnEval = Setup::initializeNNEvaluator(
       modelFile,modelFile,expectedSha256,cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,
-      NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,
+      NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,defaultRequireExactNNLen,
       Setup::SETUP_FOR_ANALYSIS
     );
   }
@@ -243,16 +242,17 @@ int MainCmds::analysis(int argc, const char* const* argv) {
 
   //Returns false if no analysis was reportable due to there being no root node or search results.
   auto reportAnalysis = [&preventEncore,&pushToWrite](const AnalyzeRequest* request, const Search* search, bool isDuringSearch) {
-    static constexpr int ownershipMinVisits = 3;
     json ret;
     ret["id"] = request->id;
     ret["turnNumber"] = request->turnNumber;
     ret["isDuringSearch"] = isDuringSearch;
 
     bool success = search->getAnalysisJson(
-      request->perspective, request->board, request->hist,
-      request->analysisPVLen, ownershipMinVisits, preventEncore, request->includePolicy,
-      request->includeOwnership,request->includeMovesOwnership,request->includePVVisits,
+      request->perspective,
+      request->analysisPVLen, preventEncore, request->includePolicy,
+      request->includeOwnership,request->includeOwnershipStdev,
+      request->includeMovesOwnership,request->includeMovesOwnershipStdev,
+      request->includePVVisits,
       ret
     );
 
@@ -262,7 +262,7 @@ int MainCmds::analysis(int argc, const char* const* argv) {
   };
 
   auto analysisLoop = [
-    &logger,&toAnalyzeQueue,&toWriteQueue,&preventEncore,&reportAnalysis,&reportNoAnalysis,&logSearchInfo,&nnEval,&openRequestsMutex,&openRequests
+    &logger,&toAnalyzeQueue,&reportAnalysis,&reportNoAnalysis,&logSearchInfo,&nnEval,&openRequestsMutex,&openRequests
   ](AsyncBot* bot, int threadIdx) {
     while(true) {
       std::pair<std::pair<int64_t,int64_t>,AnalyzeRequest*> analysisItem;
@@ -278,7 +278,7 @@ int MainCmds::analysis(int argc, const char* const* argv) {
       //Else, the request is live and we marked it as popped
       else {
         bot->setPosition(request->nextPla,request->board,request->hist);
-        bot->setAlwaysIncludeOwnerMap(request->includeOwnership || request->includeMovesOwnership);
+        bot->setAlwaysIncludeOwnerMap(request->includeOwnership || request->includeOwnershipStdev || request->includeMovesOwnership || request->includeMovesOwnershipStdev);
         bot->setParams(request->params);
         bot->setAvoidMoveUntilByLoc(request->avoidMoveUntilByLocBlack,request->avoidMoveUntilByLocWhite);
 
@@ -351,6 +351,7 @@ int MainCmds::analysis(int argc, const char* const* argv) {
   for(int threadIdx = 0; threadIdx<numAnalysisThreads; threadIdx++) {
     string searchRandSeed = Global::uint64ToHexString(seedRand.nextUInt64()) + Global::uint64ToHexString(seedRand.nextUInt64());
     AsyncBot* bot = new AsyncBot(defaultParams, nnEval, &logger, searchRandSeed);
+    bot->setCopyOfExternalPatternBonusTable(patternBonusTable);
     threads.push_back(std::thread(analysisLoopProtected,bot,threadIdx));
     bots.push_back(bot);
   }
@@ -479,7 +480,9 @@ int MainCmds::analysis(int argc, const char* const* argv) {
       rbase.perspective = defaultPerspective;
       rbase.analysisPVLen = analysisPVLen;
       rbase.includeOwnership = false;
+      rbase.includeOwnershipStdev = false;
       rbase.includeMovesOwnership = false;
+      rbase.includeMovesOwnershipStdev = false;
       rbase.includePolicy = false;
       rbase.includePVVisits = false;
       rbase.reportDuringSearch = false;
@@ -820,11 +823,10 @@ int MainCmds::analysis(int argc, const char* const* argv) {
             localCfg.overrideKeys(overrideSettings);
             loadParams(localCfg, rbase.params, rbase.perspective, defaultPerspective);
             SearchParams::failIfParamsDifferOnUnchangeableParameter(defaultParams,rbase.params);
-            //Hard failure on unused override keys newly present in the config
+            //Soft failure on unused override keys newly present in the config
             vector<string> unusedKeys = localCfg.unusedKeys();
             if(unusedKeys.size() > 0) {
-              reportErrorForId(rbase.id, "overrideSettings", string("Unknown config params: ") + Global::concat(unusedKeys,","));
-              continue;
+              reportWarningForId(rbase.id, "overrideSettings", string("Unknown config params: ") + Global::concat(unusedKeys,","));
             }
           }
           catch(const StringError& exception) {
@@ -864,8 +866,18 @@ int MainCmds::analysis(int argc, const char* const* argv) {
         if(!suc)
           continue;
       }
+      if(input.find("includeMovesOwnershipStdev") != input.end()) {
+        bool suc = parseBoolean(input, "includeMovesOwnershipStdev", rbase.includeMovesOwnershipStdev, "Must be a boolean");
+        if(!suc)
+          continue;
+      }
       if(input.find("includeOwnership") != input.end()) {
         bool suc = parseBoolean(input, "includeOwnership", rbase.includeOwnership, "Must be a boolean");
+        if(!suc)
+          continue;
+      }
+      if(input.find("includeOwnershipStdev") != input.end()) {
+        bool suc = parseBoolean(input, "includeOwnershipStdev", rbase.includeOwnershipStdev, "Must be a boolean");
         if(!suc)
           continue;
       }
@@ -1004,7 +1016,9 @@ int MainCmds::analysis(int argc, const char* const* argv) {
           newRequest->perspective = rbase.perspective;
           newRequest->analysisPVLen = rbase.analysisPVLen;
           newRequest->includeOwnership = rbase.includeOwnership;
+          newRequest->includeOwnershipStdev = rbase.includeOwnershipStdev;
           newRequest->includeMovesOwnership = rbase.includeMovesOwnership;
+          newRequest->includeMovesOwnershipStdev = rbase.includeMovesOwnershipStdev;
           newRequest->includePolicy = rbase.includePolicy;
           newRequest->includePVVisits = rbase.includePVVisits;
           newRequest->reportDuringSearch = rbase.reportDuringSearch;
