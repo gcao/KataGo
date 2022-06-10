@@ -1,5 +1,6 @@
 #include "../core/global.h"
 #include "../core/datetime.h"
+#include "../core/fileutils.h"
 #include "../core/makedir.h"
 #include "../core/config_parser.h"
 #include "../core/timer.h"
@@ -82,7 +83,7 @@ namespace {
        sgfOut(sOut),
        terminated(false)
     {
-      SearchParams baseParams = Setup::loadSingleParams(cfg);
+      SearchParams baseParams = Setup::loadSingleParams(cfg,Setup::SETUP_FOR_OTHER);
 
       drawEquivalentWinsForWhite = baseParams.drawEquivalentWinsForWhite;
       noResultUtilityForWhite = baseParams.noResultUtilityForWhite;
@@ -150,7 +151,7 @@ namespace {
 
         if(sgfOut != NULL) {
           assert(data->startHist.moveHistory.size() <= data->endHist.moveHistory.size());
-          WriteSgf::writeSgf(*sgfOut,data->bName,data->wName,data->endHist,data,false);
+          WriteSgf::writeSgf(*sgfOut,data->bName,data->wName,data->endHist,data,false,true);
           (*sgfOut) << endl;
         }
         delete data;
@@ -204,7 +205,7 @@ namespace {
 //-----------------------------------------------------------------------------------------
 
 
-int MainCmds::gatekeeper(int argc, const char* const* argv) {
+int MainCmds::gatekeeper(const vector<string>& args) {
   Board::initHash();
   ScoreValue::initTables();
   Rand seedRand;
@@ -214,6 +215,7 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
   string acceptedModelsDir;
   string rejectedModelsDir;
   string sgfOutputDir;
+  string selfplayDir;
   bool noAutoRejectOldModels;
   bool quitIfNoNetsToTest;
   try {
@@ -224,21 +226,24 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
     TCLAP::ValueArg<string> sgfOutputDirArg("","sgf-output-dir","Dir to output sgf files",true,string(),"DIR");
     TCLAP::ValueArg<string> acceptedModelsDirArg("","accepted-models-dir","Dir to write good models to",true,string(),"DIR");
     TCLAP::ValueArg<string> rejectedModelsDirArg("","rejected-models-dir","Dir to write bad models to",true,string(),"DIR");
+    TCLAP::ValueArg<string> selfplayDirArg("","selfplay-dir","Dir where selfplay data will be produced if a model passes",false,string(),"DIR");
     TCLAP::SwitchArg noAutoRejectOldModelsArg("","no-autoreject-old-models","Test older models than the latest accepted model");
     TCLAP::SwitchArg quitIfNoNetsToTestArg("","quit-if-no-nets-to-test","Terminate instead of waiting for a new net to test");
     cmd.add(testModelsDirArg);
     cmd.add(sgfOutputDirArg);
     cmd.add(acceptedModelsDirArg);
     cmd.add(rejectedModelsDirArg);
+    cmd.add(selfplayDirArg);
     cmd.setShortUsageArgLimit();
     cmd.add(noAutoRejectOldModelsArg);
     cmd.add(quitIfNoNetsToTestArg);
-    cmd.parse(argc,argv);
+    cmd.parseArgs(args);
 
     testModelsDir = testModelsDirArg.getValue();
     sgfOutputDir = sgfOutputDirArg.getValue();
     acceptedModelsDir = acceptedModelsDirArg.getValue();
     rejectedModelsDir = rejectedModelsDirArg.getValue();
+    selfplayDir = selfplayDirArg.getValue();
     noAutoRejectOldModels = noAutoRejectOldModelsArg.getValue();
     quitIfNoNetsToTest = quitIfNoNetsToTestArg.getValue();
 
@@ -251,6 +256,9 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
     checkDirNonEmpty("accepted-models-dir",acceptedModelsDir);
     checkDirNonEmpty("rejected-models-dir",rejectedModelsDir);
 
+    //Tolerate this argument being optional
+    //checkDirNonEmpty("selfplay-dir",selfplayDir);
+
     cmd.getConfig(cfg);
   }
   catch (TCLAP::ArgException &e) {
@@ -262,12 +270,12 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
   MakeDir::make(acceptedModelsDir);
   MakeDir::make(rejectedModelsDir);
   MakeDir::make(sgfOutputDir);
+  if(selfplayDir != "")
+    MakeDir::make(selfplayDir);
 
-  Logger logger;
+  Logger logger(&cfg);
   //Log to random file name to better support starting/stopping as well as multiple parallel runs
   logger.addFile(sgfOutputDir + "/log" + DateTime::getCompactDateTimeString() + "-" + Global::uint64ToHexString(seedRand.nextUInt64()) + ".log");
-  bool logToStdout = cfg.getBool("logToStdout");
-  logger.setLogToStdout(logToStdout);
 
   logger.write("Gatekeeper Engine starting...");
   logger.write(string("Git revision: ") + Version::getGitRevision());
@@ -278,13 +286,17 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
 
   PlaySettings playSettings = PlaySettings::loadForGatekeeper(cfg);
   GameRunner* gameRunner = new GameRunner(cfg, playSettings, logger);
+  const int minBoardXSizeUsed = gameRunner->getGameInitializer()->getMinBoardXSize();
+  const int minBoardYSizeUsed = gameRunner->getGameInitializer()->getMinBoardYSize();
+  const int maxBoardXSizeUsed = gameRunner->getGameInitializer()->getMaxBoardXSize();
+  const int maxBoardYSizeUsed = gameRunner->getGameInitializer()->getMaxBoardYSize();
 
   Setup::initializeSession(cfg);
 
   //Done loading!
   //------------------------------------------------------------------------------------
   logger.write("Loaded all config stuff, watching for new neural nets in " + testModelsDir);
-  if(!logToStdout)
+  if(!logger.isLoggingToStdout())
     cout << "Loaded all config stuff, watching for new neural nets in " + testModelsDir << endl;
 
   if(!std::atomic_is_lock_free(&shouldStop))
@@ -312,9 +324,13 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
     lock.unlock();
     logger.write("Data write loop cleaned up and terminating for " + modelNameBaseline + " vs " + modelNameCandidate);
   };
+  auto dataWriteLoopProtected = [&logger,&dataWriteLoop]() {
+    Logger::logThreadUncaught("data write loop", &logger, dataWriteLoop);
+  };
 
   auto loadLatestNeuralNet =
-    [&testModelsDir,&rejectedModelsDir,&acceptedModelsDir,&sgfOutputDir,&logger,&cfg,numGameThreads,noAutoRejectOldModels]() -> NetAndStuff* {
+    [&testModelsDir,&rejectedModelsDir,&acceptedModelsDir,&sgfOutputDir,&logger,&cfg,numGameThreads,noAutoRejectOldModels,
+     minBoardXSizeUsed,maxBoardXSizeUsed,minBoardYSizeUsed,maxBoardYSizeUsed]() -> NetAndStuff* {
     Rand rand;
 
     string testModelName;
@@ -343,24 +359,27 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
       string renameDest = rejectedModelsDir + "/" + testModelName;
       logger.write("Rejecting " + testModelDir + " automatically since older than best accepted model");
       logger.write("Moving " + testModelDir + " to " + renameDest);
-      std::rename(testModelDir.c_str(),renameDest.c_str());
+      FileUtils::rename(testModelDir,renameDest);
       return NULL;
     }
 
     // * 2 + 16 just in case to have plenty of room
-    int maxConcurrentEvals = cfg.getInt("numSearchThreads") * numGameThreads * 2 + 16;
-    int defaultMaxBatchSize = -1;
+    const int maxConcurrentEvals = cfg.getInt("numSearchThreads") * numGameThreads * 2 + 16;
+    const int expectedConcurrentEvals = cfg.getInt("numSearchThreads") * numGameThreads;
+    const int defaultMaxBatchSize = -1;
+    const bool defaultRequireExactNNLen = minBoardXSizeUsed == maxBoardXSizeUsed && minBoardYSizeUsed == maxBoardYSizeUsed;
+    const string expectedSha256 = "";
 
     NNEvaluator* testNNEval = Setup::initializeNNEvaluator(
-      testModelName,testModelFile,cfg,logger,rand,maxConcurrentEvals,
-      NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,
+      testModelName,testModelFile,expectedSha256,cfg,logger,rand,maxConcurrentEvals,expectedConcurrentEvals,
+      maxBoardXSizeUsed,maxBoardYSizeUsed,defaultMaxBatchSize,defaultRequireExactNNLen,
       Setup::SETUP_FOR_OTHER
     );
     logger.write("Loaded candidate neural net " + testModelName + " from: " + testModelFile);
 
     NNEvaluator* acceptedNNEval = Setup::initializeNNEvaluator(
-      acceptedModelName,acceptedModelFile,cfg,logger,rand,maxConcurrentEvals,
-      NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,
+      acceptedModelName,acceptedModelFile,expectedSha256,cfg,logger,rand,maxConcurrentEvals,expectedConcurrentEvals,
+      maxBoardXSizeUsed,maxBoardYSizeUsed,defaultMaxBatchSize,defaultRequireExactNNLen,
       Setup::SETUP_FOR_OTHER
     );
     logger.write("Loaded accepted neural net " + acceptedModelName + " from: " + acceptedModelFile);
@@ -368,12 +387,17 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
     string sgfOutputDirThisModel = sgfOutputDir + "/" + testModelName;
     MakeDir::make(sgfOutputDirThisModel);
     {
-      ofstream out(sgfOutputDirThisModel + "/" + "gatekeeper-" + Global::uint64ToHexString(rand.nextUInt64()) + ".cfg");
+      ofstream out;
+      FileUtils::open(out, sgfOutputDirThisModel + "/" + "gatekeeper-" + Global::uint64ToHexString(rand.nextUInt64()) + ".cfg");
       out << cfg.getContents();
       out.close();
     }
 
-    ofstream* sgfOut = sgfOutputDirThisModel.length() > 0 ? (new ofstream(sgfOutputDirThisModel + "/" + Global::uint64ToHexString(rand.nextUInt64()) + ".sgfs")) : NULL;
+    ofstream* sgfOut = NULL;
+    if(sgfOutputDirThisModel.length() > 0) {
+      sgfOut = new ofstream();
+      FileUtils::open(*sgfOut, sgfOutputDirThisModel + "/" + Global::uint64ToHexString(rand.nextUInt64()) + ".sgfs");
+    }
     NetAndStuff* newNet = new NetAndStuff(cfg, acceptedModelName, testModelName, testModelDir, acceptedNNEval, testNNEval, sgfOut);
 
     //Check for unused config keys
@@ -393,11 +417,14 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
     netAndStuff->registerGameThread();
     logger.write("Game loop thread " + Global::intToString(threadIdx) + " starting game testing candidate: " + netAndStuff->modelNameCandidate);
 
-    vector<std::atomic<bool>*> stopConditions = {&shouldStop,&(netAndStuff->terminated)};
+    auto shouldStopFunc = [&netAndStuff]() {
+      return shouldStop.load() || netAndStuff->terminated.load();
+    };
+    WaitableFlag* shouldPause = nullptr;
 
     Rand thisLoopSeedRand;
     while(true) {
-      if(shouldStop.load() || netAndStuff->terminated.load())
+      if(shouldStopFunc())
         break;
 
       lock.unlock();
@@ -409,8 +436,8 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
       if(netAndStuff->matchPairer->getMatchup(botSpecB, botSpecW, logger)) {
         string seed = gameSeedBase + ":" + Global::uint64ToHexString(thisLoopSeedRand.nextUInt64());
         gameData = gameRunner->runGame(
-          seed, botSpecB, botSpecW, NULL, logger,
-          stopConditions, NULL
+          seed, botSpecB, botSpecW, NULL, NULL, logger,
+          shouldStopFunc, shouldPause, nullptr, nullptr, nullptr
         );
       }
 
@@ -428,6 +455,9 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
 
     lock.unlock();
     logger.write("Game loop thread " + Global::intToString(threadIdx) + " terminating");
+  };
+  auto gameLoopProtected = [&logger,&gameLoop](int threadIdx) {
+    Logger::logThreadUncaught("game loop", &logger, [&](){ gameLoop(threadIdx); });
   };
 
   //Looping polling for new neural nets and loading them in
@@ -463,11 +493,11 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
     netAndStuffDataIsWritten = false;
 
     //And spawn off all the threads
-    std::thread newThread(dataWriteLoop);
+    std::thread newThread(dataWriteLoopProtected);
     newThread.detach();
     vector<std::thread> threads;
     for(int i = 0; i<numGameThreads; i++) {
-      threads.push_back(std::thread(gameLoop,i));
+      threads.push_back(std::thread(gameLoopProtected,i));
     }
 
     //Wait for all game threads to stop
@@ -507,7 +537,7 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
 
       string renameDest = rejectedModelsDir + "/" + netAndStuff->modelNameCandidate;
       logger.write("Moving " + netAndStuff->testModelDir + " to " + renameDest);
-      std::rename(netAndStuff->testModelDir.c_str(),renameDest.c_str());
+      FileUtils::rename(netAndStuff->testModelDir,renameDest);
     }
     else {
       logger.write(
@@ -520,9 +550,21 @@ int MainCmds::gatekeeper(int argc, const char* const* argv) {
         )
       );
 
+      //Make a bunch of the directories that selfplay will need so that there isn't a race on the selfplay
+      //machines to concurrently make it, since sometimes concurrent making of the same directory can corrupt
+      //a filesystem
+      if(selfplayDir != "") {
+        MakeDir::make(selfplayDir + "/" + netAndStuff->modelNameCandidate);
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        MakeDir::make(selfplayDir + "/" + netAndStuff->modelNameCandidate + "/" + "sgfs");
+        MakeDir::make(selfplayDir + "/" + netAndStuff->modelNameCandidate + "/" + "tdata");
+        MakeDir::make(selfplayDir + "/" + netAndStuff->modelNameCandidate + "/" + "vadata");
+      }
+      std::this_thread::sleep_for(std::chrono::seconds(2));
+
       string renameDest = acceptedModelsDir + "/" + netAndStuff->modelNameCandidate;
       logger.write("Moving " + netAndStuff->testModelDir + " to " + renameDest);
-      std::rename(netAndStuff->testModelDir.c_str(),renameDest.c_str());
+      FileUtils::rename(netAndStuff->testModelDir,renameDest);
     }
 
     //Clean up

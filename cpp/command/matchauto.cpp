@@ -1,4 +1,5 @@
 #include "../core/global.h"
+#include "../core/fileutils.h"
 #include "../core/makedir.h"
 #include "../core/config_parser.h"
 #include "../core/timer.h"
@@ -10,16 +11,19 @@
 #include "../command/commandline.h"
 #include "../main.h"
 
-#include <boost/filesystem.hpp>
 #include <csignal>
+#include <ghc/filesystem.hpp>
 
 using namespace std;
 
 static std::atomic<bool> sigReceived(false);
+static std::atomic<bool> shouldStop(false);
 static void signalHandler(int signal)
 {
-  if(signal == SIGINT || signal == SIGTERM)
+  if(signal == SIGINT || signal == SIGTERM) {
     sigReceived.store(true);
+    shouldStop.store(true);
+  }
 }
 
 namespace {
@@ -65,6 +69,11 @@ namespace {
     ConfigParser* cfg;
     Rand seedRand;
     int maxConcurrentEvals;
+    int expectedConcurrentEvals;
+    int minBoardXSizeUsed;
+    int minBoardYSizeUsed;
+    int maxBoardXSizeUsed;
+    int maxBoardYSizeUsed;
 
     map<string, NetAndStuff*> loadedNets;
 
@@ -73,11 +82,21 @@ namespace {
   public:
     NetManager(
       ConfigParser* c,
-      int maxConcurrentEvs
+      int maxConcurrentEvs,
+      int expectedConcurrentEvs,
+      int minBoardXSize,
+      int minBoardYSize,
+      int maxBoardXSize,
+      int maxBoardYSize
     )
       :cfg(c),
        seedRand(),
        maxConcurrentEvals(maxConcurrentEvs),
+       expectedConcurrentEvals(expectedConcurrentEvs),
+       minBoardXSizeUsed(minBoardXSize),
+       minBoardYSizeUsed(minBoardYSize),
+       maxBoardXSizeUsed(maxBoardXSize),
+       maxBoardYSizeUsed(maxBoardYSize),
        loadedNets()
     {
     }
@@ -95,10 +114,12 @@ namespace {
       auto iter = loadedNets.find(nnModelFile);
       NetAndStuff* netAndStuff;
       if(iter == loadedNets.end()) {
-        int defaultMaxBatchSize = -1;
+        const int defaultMaxBatchSize = -1;
+        const bool defaultRequireExactNNLen = minBoardXSizeUsed == maxBoardXSizeUsed && minBoardYSizeUsed == maxBoardYSizeUsed;
+        const string expectedSha256 = "";
         NNEvaluator* nnEval = Setup::initializeNNEvaluator(
-          nnModelFile,nnModelFile,*cfg,logger,seedRand,maxConcurrentEvals,
-          NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,
+          nnModelFile,nnModelFile,expectedSha256,*cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,
+          maxBoardXSizeUsed,maxBoardYSizeUsed,defaultMaxBatchSize,defaultRequireExactNNLen,
           Setup::SETUP_FOR_MATCH
         );
         netAndStuff = new NetAndStuff(nnEval);
@@ -245,15 +266,15 @@ namespace {
         }
       }
 
-      namespace bfs = boost::filesystem;
+      namespace gfs = ghc::filesystem;
 
-      for(bfs::directory_iterator iter(resultsDir); iter != bfs::directory_iterator(); ++iter) {
-        bfs::path dirPath = iter->path();
-        if(bfs::is_directory(dirPath))
+      for(gfs::directory_iterator iter(resultsDir); iter != gfs::directory_iterator(); ++iter) {
+        gfs::path dirPath = iter->path();
+        if(gfs::is_directory(dirPath))
           continue;
         string file = dirPath.string();
         if(Global::isSuffix(file,".results.csv")) {
-          vector<string> lines = Global::readFileLines(file,'\n');
+          vector<string> lines = FileUtils::readFileLines(file,'\n');
           for(int i = 0; i<lines.size(); i++) {
             string s = Global::trim(lines[i]);
             if(s.length() == 0)
@@ -390,7 +411,7 @@ namespace {
 }
 
 
-int MainCmds::matchauto(int argc, const char* const* argv) {
+int MainCmds::matchauto(const vector<string>& args) {
   Board::initHash();
   ScoreValue::initTables();
   Rand seedRand;
@@ -403,7 +424,7 @@ int MainCmds::matchauto(int argc, const char* const* argv) {
     KataGoCommandLine cmd("Play different nets against each other with different search settings in a match or tournament, experimental.");
     cmd.addConfigFileArg("","");
 
-    TCLAP::ValueArg<string> logFileArg("","log-file","Log file to output to",true,string(),"FILE");
+    TCLAP::ValueArg<string> logFileArg("","log-file","Log file to output to",false,string(),"FILE");
     TCLAP::ValueArg<string> sgfOutputDirArg("","sgf-output-dir","Dir to output sgf files",false,string(),"DIR");
     TCLAP::ValueArg<string> resultsDirArg("","results-dir","Dir to read/write win loss result files",true,string(),"DIR");
     cmd.add(logFileArg);
@@ -413,7 +434,7 @@ int MainCmds::matchauto(int argc, const char* const* argv) {
     cmd.setShortUsageArgLimit();
     cmd.addOverrideConfigArg();
 
-    cmd.parse(argc,argv);
+    cmd.parseArgs(args);
 
     logFile = logFileArg.getValue();
     sgfOutputDir = sgfOutputDirArg.getValue();
@@ -426,18 +447,16 @@ int MainCmds::matchauto(int argc, const char* const* argv) {
     return 1;
   }
 
-  Logger logger;
+  Logger logger(&cfg);
   logger.addFile(logFile);
-  bool logToStdout = cfg.getBool("logToStdout");
-  logger.setLogToStdout(logToStdout);
 
   logger.write("Auto Match Engine starting...");
   logger.write(string("Git revision: ") + Version::getGitRevision());
 
   //Load per-bot search config, first, which also tells us how many bots we're running
-  vector<SearchParams> paramss = Setup::loadParams(cfg);
+  vector<SearchParams> paramss = Setup::loadParams(cfg,Setup::SETUP_FOR_MATCH);
   assert(paramss.size() > 0);
-  int numBots = paramss.size();
+  int numBots = (int)paramss.size();
 
   //Load the names of the bots and which model each bot is using
   vector<string> nnModelFilesByBot;
@@ -464,6 +483,7 @@ int MainCmds::matchauto(int argc, const char* const* argv) {
 
   //Work out an upper bound on how many concurrent nneval requests we could end up making.
   int maxConcurrentEvals;
+  int expectedConcurrentEvals;
   {
     //Work out the max threads any one bot uses
     int maxBotThreads = 0;
@@ -471,53 +491,65 @@ int MainCmds::matchauto(int argc, const char* const* argv) {
       if(paramss[i].numThreads > maxBotThreads)
         maxBotThreads = paramss[i].numThreads;
     //Mutiply by the number of concurrent games we could have
-    maxConcurrentEvals = maxBotThreads * numGameThreads;
+    expectedConcurrentEvals = maxBotThreads * numGameThreads;
     //Multiply by 2 and add some buffer, just so we have plenty of headroom.
-    maxConcurrentEvals = maxConcurrentEvals * 2 + 16;
+    maxConcurrentEvals = expectedConcurrentEvals * 2 + 16;
   }
 
   //Initialize neural net inference engine globals, and set up model manager
   Setup::initializeSession(cfg);
 
-  NetManager* manager = new NetManager(&cfg,maxConcurrentEvals);
-
-  //Initialize object for randomly pairing bots
-  AutoMatchPairer * autoMatchPairer = new AutoMatchPairer(cfg,resultsDir,numBots,botNames,nnModelFilesByBot,paramss);
-
   //Initialize object for randomizing game settings and running games
   PlaySettings playSettings = PlaySettings::loadForMatch(cfg);
   GameRunner* gameRunner = new GameRunner(cfg, playSettings, logger);
+  const int minBoardXSizeUsed = gameRunner->getGameInitializer()->getMinBoardXSize();
+  const int minBoardYSizeUsed = gameRunner->getGameInitializer()->getMinBoardYSize();
+  const int maxBoardXSizeUsed = gameRunner->getGameInitializer()->getMaxBoardXSize();
+  const int maxBoardYSizeUsed = gameRunner->getGameInitializer()->getMaxBoardYSize();
+
+  NetManager* manager = new NetManager(&cfg,maxConcurrentEvals,expectedConcurrentEvals,minBoardXSizeUsed,minBoardYSizeUsed,maxBoardXSizeUsed,maxBoardYSizeUsed);
+
+  //Initialize object for randomly pairing bots
+  AutoMatchPairer* autoMatchPairer = new AutoMatchPairer(cfg,resultsDir,numBots,botNames,nnModelFilesByBot,paramss);
 
 
   //Done loading!
   //------------------------------------------------------------------------------------
   logger.write("Loaded all config stuff, starting matches");
-  if(!logToStdout)
+  if(!logger.isLoggingToStdout())
     cout << "Loaded all config stuff, starting matches" << endl;
 
   if(sgfOutputDir != string())
     MakeDir::make(sgfOutputDir);
   MakeDir::make(resultsDir);
 
-  if(!std::atomic_is_lock_free(&sigReceived))
-    throw StringError("sigReceived is not lock free, signal-quitting mechanism for terminating matches will NOT work!");
+  if(!std::atomic_is_lock_free(&shouldStop))
+    throw StringError("shouldStop is not lock free, signal-quitting mechanism for terminating matches will NOT work!");
   std::signal(SIGINT, signalHandler);
   std::signal(SIGTERM, signalHandler);
 
   std::mutex resultLock;
-  ofstream* resultOut = new ofstream(resultsDir + "/" + Global::uint64ToHexString(seedRand.nextUInt64()) + ".results.csv");
+  ofstream* resultOut = new ofstream();
+  FileUtils::open(*resultOut, resultsDir + "/" + Global::uint64ToHexString(seedRand.nextUInt64()) + ".results.csv");
 
   auto runMatchLoop = [
     &gameRunner,&autoMatchPairer,&sgfOutputDir,&logger,&resultLock,&resultOut,&manager,&gameSeedBase
   ](
     uint64_t threadHash
   ) {
-    ofstream* sgfOut = sgfOutputDir.length() > 0 ? (new ofstream(sgfOutputDir + "/" + Global::uint64ToHexString(threadHash) + ".sgfs")) : NULL;
-    vector<std::atomic<bool>*> stopConditions = {&sigReceived};
+    ofstream* sgfOut = NULL;
+    if(sgfOutputDir.length() > 0) {
+      sgfOut = new ofstream();
+      FileUtils::open(*sgfOut, sgfOutputDir + "/" + Global::uint64ToHexString(threadHash) + ".sgfs");
+    }
+    auto shouldStopFunc = []() {
+      return shouldStop.load();
+    };
+    WaitableFlag* shouldPause = nullptr;
 
     Rand thisLoopSeedRand;
     while(true) {
-      if(sigReceived.load())
+      if(shouldStop.load())
         break;
 
       FinishedGameData* gameData = NULL;
@@ -528,8 +560,8 @@ int MainCmds::matchauto(int argc, const char* const* argv) {
       if(autoMatchPairer->getMatchup(manager, forBot, botSpecB, botSpecW, logger)) {
         string seed = gameSeedBase + ":" + Global::uint64ToHexString(thisLoopSeedRand.nextUInt64());
         gameData = gameRunner->runGame(
-          seed, botSpecB, botSpecW, NULL, logger,
-          stopConditions, NULL
+          seed, botSpecB, botSpecW, NULL, NULL, logger,
+          shouldStopFunc, shouldPause, nullptr, nullptr, nullptr
         );
       }
 
@@ -539,7 +571,7 @@ int MainCmds::matchauto(int argc, const char* const* argv) {
       bool shouldContinue = gameData != NULL;
       if(gameData != NULL) {
         if(sgfOut != NULL) {
-          WriteSgf::writeSgf(*sgfOut,gameData->bName,gameData->wName,gameData->endHist,gameData,false);
+          WriteSgf::writeSgf(*sgfOut,gameData->bName,gameData->wName,gameData->endHist,gameData,false,true);
           (*sgfOut) << endl;
         }
 
@@ -560,7 +592,7 @@ int MainCmds::matchauto(int argc, const char* const* argv) {
         delete gameData;
       }
 
-      if(sigReceived.load())
+      if(shouldStop.load())
         break;
       if(!shouldContinue)
         break;

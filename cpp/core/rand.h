@@ -7,6 +7,10 @@
  * instances created simultaneously in different threads or on different machines should all be distinct.
  * Note: Signed integer functions might not be portable to other architectures.
  *
+ * On a single core basic cloud machine, roughly generates about 500 million uint32_t/second and
+ * can be initialized roughly 100k/second, and 250k/second for fixed seed.
+ *
+ *
  * Combines:
  * PCG32 (period 2^64)
  * XorShift1024Mult (period 2^1024-1)
@@ -104,6 +108,9 @@ class Rand
 
   //Returns a normally distributed double with mean 0 stdev 1
   double nextGaussian();
+  //Truncated refers to the probability distribution, not the sample
+  //So on falling outside the range, we redraw, rather than capping.
+  double nextGaussianTruncated(double bound);
   //Returns an exponentially distributed double with mean 1.
   double nextExponential();
   //Returns a logistically distributed double with mean 0 and scale 1 (cdf = 1/(1+exp(-x)))
@@ -274,6 +281,15 @@ inline double Rand::nextGaussian()
     hasGaussian = true;
     return v1 * multiplier;
   }
+}
+
+inline double Rand::nextGaussianTruncated(double bound)
+{
+  assert(bound >= 0.1);
+  double d = nextGaussian();
+  while(d < -bound || d > bound)
+    d = nextGaussian();
+  return d;
 }
 
 inline double Rand::nextExponential()

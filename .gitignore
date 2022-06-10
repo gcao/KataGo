@@ -27,10 +27,11 @@ cpp/runmatch.sh
 cpp/runmatchauto.sh
 cpp/runstuff.sh
 cpp/runwrite.sh
+cpp/tests/scratch
 
 cpp/program/gitinfo.h
 
-data/
+cpp/data/
 versions/
 cpp/build
 
@@ -39,6 +40,9 @@ mixmodels.sh
 runfindposes.sh
 runtraining.sh
 runlztest*.sh
+
+python/upload_all*.sh
+python/count_all*.sh
 
 tmp
 tmp.txt
@@ -50,6 +54,9 @@ log.txt
 # For clion IDE
 .idea
 
+# For vscode
+.vscode
+
 # For cmake
 CMakeCache.txt
 CMakeFiles/
@@ -60,3 +67,12 @@ cmake_install.cmake
 GPATH
 GRTAGS
 GTAGS
+
+cpp/external/httplib/cpp-httplib/
+cpp/external/nlohmann_json/nlohmann_json
+gtp.cfg
+katago_contribute/
+tmpsgf/
+watchgame.txt
+models/
+python/startposesupload.txt

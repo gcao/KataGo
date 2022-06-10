@@ -1,4 +1,6 @@
 #include "../dataio/trainingwrite.h"
+
+#include "../core/fileutils.h"
 #include "../neuralnet/modelversion.h"
 
 using namespace std;
@@ -22,8 +24,12 @@ SidePosition::SidePosition()
    pla(P_BLACK),
    unreducedNumVisits(),
    policyTarget(),
+   policySurprise(),
+   policyEntropy(),
+   searchEntropy(),
    whiteValueTargets(),
    targetWeight(),
+   targetWeightUnrounded(),
    numNeuralNetChangesSoFar()
 {}
 
@@ -33,8 +39,12 @@ SidePosition::SidePosition(const Board& b, const BoardHistory& h, Player p, int 
    pla(p),
    unreducedNumVisits(),
    policyTarget(),
+   policySurprise(),
+   policyEntropy(),
+   searchEntropy(),
    whiteValueTargets(),
    targetWeight(1.0f),
+   targetWeightUnrounded(1.0f),
    numNeuralNetChangesSoFar(numNNChangesSoFar)
 {}
 
@@ -68,15 +78,21 @@ FinishedGameData::FinishedGameData()
 
    hasFullData(false),
    targetWeightByTurn(),
+   targetWeightByTurnUnrounded(),
    policyTargetsByTurn(),
    whiteValueTargetsByTurn(),
+   nnRawStatsByTurn(),
    finalFullArea(NULL),
    finalOwnership(NULL),
    finalSekiAreas(NULL),
    finalWhiteScoring(NULL),
 
    sidePositions(),
-   changedNeuralNets()
+   changedNeuralNets(),
+   bTimeUsed(0.0),
+   wTimeUsed(0.0),
+   bMoveCount(0),
+   wMoveCount(0)
 {
 }
 
@@ -118,15 +134,24 @@ void FinishedGameData::printDebug(ostream& out) const {
   out << "usedInitialPosition " << usedInitialPosition << endl;
   out << "hasFullData " << hasFullData << endl;
   for(int i = 0; i<targetWeightByTurn.size(); i++)
-    out << "targetWeightByTurn " << i << " " << targetWeightByTurn[i] << endl;
+    out << "targetWeightByTurn " << i << " " << targetWeightByTurn[i] << " " << "unrounded" << " " << targetWeightByTurnUnrounded[i] << endl;
   for(int i = 0; i<policyTargetsByTurn.size(); i++) {
     out << "policyTargetsByTurn " << i << " ";
     out << "unreducedNumVisits " << policyTargetsByTurn[i].unreducedNumVisits << " ";
-    vector<PolicyTargetMove>& target = *(policyTargetsByTurn[i].policyTargets);
-    for(int j = 0; j<target.size(); j++)
-      out << Location::toString(target[j].loc,startBoard) << " " << target[j].policyTarget << " ";
+    if(policyTargetsByTurn[i].policyTargets != NULL) {
+      const vector<PolicyTargetMove>& target = *(policyTargetsByTurn[i].policyTargets);
+      for(int j = 0; j<target.size(); j++)
+        out << Location::toString(target[j].loc,startBoard) << " " << target[j].policyTarget << " ";
+    }
     out << endl;
   }
+  for (int i = 0; i < policySurpriseByTurn.size(); i++)
+    out << "policySurpriseByTurn " << i << " " << policySurpriseByTurn[i] << endl;
+  for (int i = 0; i < policyEntropyByTurn.size(); i++)
+    out << "policyEntropyByTurn " << i << " " << policyEntropyByTurn[i] << endl;
+  for (int i = 0; i < searchEntropyByTurn.size(); i++)
+    out << "searchEntropyByTurn " << i << " " << searchEntropyByTurn[i] << endl;
+
   for(int i = 0; i<whiteValueTargetsByTurn.size(); i++) {
     out << "whiteValueTargetsByTurn " << i << " ";
     out << whiteValueTargetsByTurn[i].win << " ";
@@ -139,38 +164,49 @@ void FinishedGameData::printDebug(ostream& out) const {
       out << "-" << " ";
     out << endl;
   }
-  for(int y = 0; y<startBoard.y_size; y++) {
-    for(int x = 0; x<startBoard.x_size; x++) {
-      Loc loc = Location::getLoc(x,y,startBoard.x_size);
-      out << PlayerIO::colorToChar(finalFullArea[loc]);
-    }
-    out << endl;
+  for(int i = 0; i<nnRawStatsByTurn.size(); i++) {
+    out << "Raw Stats " << nnRawStatsByTurn[i].whiteWinLoss << " " << nnRawStatsByTurn[i].whiteScoreMean << " " << nnRawStatsByTurn[i].policyEntropy << endl;
   }
-  for(int y = 0; y<startBoard.y_size; y++) {
-    for(int x = 0; x<startBoard.x_size; x++) {
-      Loc loc = Location::getLoc(x,y,startBoard.x_size);
-      out << PlayerIO::colorToChar(finalOwnership[loc]);
+  if(finalFullArea != NULL) {
+    for(int y = 0; y<startBoard.y_size; y++) {
+      for(int x = 0; x<startBoard.x_size; x++) {
+        Loc loc = Location::getLoc(x,y,startBoard.x_size);
+        out << PlayerIO::colorToChar(finalFullArea[loc]);
+      }
+      out << endl;
     }
-    out << endl;
   }
-  for(int y = 0; y<startBoard.y_size; y++) {
-    for(int x = 0; x<startBoard.x_size; x++) {
-      Loc loc = Location::getLoc(x,y,startBoard.x_size);
-      out << (int)finalSekiAreas[loc];
+  if(finalOwnership != NULL) {
+    for(int y = 0; y<startBoard.y_size; y++) {
+      for(int x = 0; x<startBoard.x_size; x++) {
+        Loc loc = Location::getLoc(x,y,startBoard.x_size);
+        out << PlayerIO::colorToChar(finalOwnership[loc]);
+      }
+      out << endl;
     }
-    out << endl;
   }
-  for(int y = 0; y<startBoard.y_size; y++) {
-    for(int x = 0; x<startBoard.x_size; x++) {
-      Loc loc = Location::getLoc(x,y,startBoard.x_size);
-      out << Global::strprintf(" %.3f",finalWhiteScoring[loc]);
+  if(finalSekiAreas != NULL) {
+    for(int y = 0; y<startBoard.y_size; y++) {
+      for(int x = 0; x<startBoard.x_size; x++) {
+        Loc loc = Location::getLoc(x,y,startBoard.x_size);
+        out << (int)finalSekiAreas[loc];
+      }
+      out << endl;
     }
-    out << endl;
   }
-
+  if(finalWhiteScoring != NULL) {
+    for(int y = 0; y<startBoard.y_size; y++) {
+      for(int x = 0; x<startBoard.x_size; x++) {
+        Loc loc = Location::getLoc(x,y,startBoard.x_size);
+        out << Global::strprintf(" %.3f",finalWhiteScoring[loc]);
+      }
+      out << endl;
+    }
+  }
   for(int i = 0; i<sidePositions.size(); i++) {
     SidePosition* sp = sidePositions[i];
     out << "Side position " << i << endl;
+    out << "targetWeight " << sp->targetWeight << " " << "unrounded" << " " << sp->targetWeightUnrounded << endl;
     sp->hist.printDebugInfo(out,sp->board);
   }
 }
@@ -313,13 +349,17 @@ static void fillValueTDTargets(const vector<ValueTargets>& whiteValueTargetsByTu
 
 void TrainingWriteBuffers::addRow(
   const Board& board, const BoardHistory& hist, Player nextPlayer,
-  int absoluteTurnNumber,
+  int turnIdx,
   float targetWeight,
   int64_t unreducedNumVisits,
   const vector<PolicyTargetMove>* policyTarget0, //can be null
   const vector<PolicyTargetMove>* policyTarget1, //can be null
+  double policySurprise,
+  double policyEntropy,
+  double searchEntropy,
   const vector<ValueTargets>& whiteValueTargets,
   int whiteValueTargetsIdx, //index in whiteValueTargets corresponding to this turn.
+  const NNRawStats& nnRawStats,
   const Board* finalBoard,
   Color* finalFullArea,
   Color* finalOwnership,
@@ -452,9 +492,9 @@ void TrainingWriteBuffers::addRow(
   //Unused
   rowGlobal[23] = 0.0f;
   rowGlobal[24] = 0.0f;
-  rowGlobal[30] = 0.0f;
-  rowGlobal[31] = 0.0f;
-  rowGlobal[32] = 0.0f;
+  rowGlobal[30] = (float)policySurprise;
+  rowGlobal[31] = (float)policyEntropy;
+  rowGlobal[32] = (float)searchEntropy;
   rowGlobal[35] = 0.0f;
 
   //Fill in whether we should use history or not
@@ -487,19 +527,19 @@ void TrainingWriteBuffers::addRow(
   rowGlobal[50] = (float)numNeuralNetsBehindLatest;
 
   //Some misc metadata
-  rowGlobal[51] = absoluteTurnNumber;
+  rowGlobal[51] = (float)turnIdx;
   rowGlobal[52] = data.hitTurnLimit ? 1.0f : 0.0f;
-  rowGlobal[53] = data.startHist.moveHistory.size();
-  rowGlobal[54] = data.numExtraBlack;
+  rowGlobal[53] = (float)data.startHist.moveHistory.size();
+  rowGlobal[54] = (float)data.numExtraBlack;
 
   //Metadata about how the game was initialized
-  rowGlobal[55] = data.mode;
-  rowGlobal[56] = data.beganInEncorePhase;
-  rowGlobal[57] = data.usedInitialPosition;
-  rowGlobal[58] = isSidePosition ? 1.0f : 0.0f;
+  rowGlobal[55] = (float)data.mode;
+  rowGlobal[56] = (float)hist.initialTurnNumber;
 
-  //Unused
-  rowGlobal[59] = 0.0f;
+  //Some stats
+  rowGlobal[57] = (float)(nextPlayer == P_WHITE ? nnRawStats.whiteWinLoss : -nnRawStats.whiteWinLoss);
+  rowGlobal[58] = (float)(nextPlayer == P_WHITE ? nnRawStats.whiteScoreMean : -nnRawStats.whiteScoreMean);
+  rowGlobal[59] = (float)nnRawStats.policyEntropy;
 
   //Original number of visits
   rowGlobal[60] = (float)unreducedNumVisits;
@@ -515,7 +555,9 @@ void TrainingWriteBuffers::addRow(
 
   //Unused
   rowGlobal[62] = 0.0f;
-  rowGlobal[63] = 0.0f;
+
+  //Version
+  rowGlobal[63] = 1.0f;
 
   assert(64 == GLOBAL_TARGET_NUM_CHANNELS);
 
@@ -594,7 +636,7 @@ void TrainingWriteBuffers::addRow(
     assert(boards.size() > 0);
 
     rowGlobal[33] = 1.0f;
-    int endIdx = boards.size()-1;
+    int endIdx = (int)boards.size()-1;
     const Board& board2 = boards[std::min(whiteValueTargetsIdx+8,endIdx)];
     const Board& board3 = boards[std::min(whiteValueTargetsIdx+32,endIdx)];
     assert(board2.y_size == board.y_size && board2.x_size == board.x_size);
@@ -808,6 +850,13 @@ TrainingDataWriter::~TrainingDataWriter()
   delete writeBuffers;
 }
 
+bool TrainingDataWriter::isEmpty() const {
+  return writeBuffers->curRows <= 0;
+}
+int64_t TrainingDataWriter::numRowsInBuffer() const {
+  return writeBuffers->curRows;
+}
+
 void TrainingDataWriter::writeAndClearIfFull() {
   if(writeBuffers->curRows >= writeBuffers->maxRows || (isFirstFile && writeBuffers->curRows >= firstFileMaxRows)) {
     flushIfNonempty();
@@ -837,17 +886,24 @@ bool TrainingDataWriter::flushIfNonempty(string& resultingFilename) {
     string tmpFilename = resultingFilename + ".tmp";
     writeBuffers->writeToZipFile(tmpFilename);
     writeBuffers->clear();
-    std::rename(tmpFilename.c_str(),resultingFilename.c_str());
+    FileUtils::rename(tmpFilename,resultingFilename);
   }
   return true;
 }
 
 void TrainingDataWriter::writeGame(const FinishedGameData& data) {
-  int numMoves = data.endHist.moveHistory.size() - data.startHist.moveHistory.size();
+  int numMoves = (int)(data.endHist.moveHistory.size() - data.startHist.moveHistory.size());
   assert(numMoves >= 0);
+  assert(data.startHist.moveHistory.size() <= data.endHist.moveHistory.size());
+  assert(data.endHist.moveHistory.size() <= 100000000);
   assert(data.targetWeightByTurn.size() == numMoves);
+  assert(data.targetWeightByTurnUnrounded.size() == numMoves);
   assert(data.policyTargetsByTurn.size() == numMoves);
+  assert(data.policySurpriseByTurn.size() == numMoves);
+  assert(data.policyEntropyByTurn.size() == numMoves);
+  assert(data.searchEntropyByTurn.size() == numMoves);
   assert(data.whiteValueTargetsByTurn.size() == numMoves+1);
+  assert(data.nnRawStatsByTurn.size() == numMoves);
 
   //Some sanity checks
   #ifndef NDEBUG
@@ -880,11 +936,11 @@ void TrainingDataWriter::writeGame(const FinishedGameData& data) {
     Player nextPlayer = data.startPla;
     posHistForFutureBoards.push_back(board);
 
-    int startTurnNumber = data.startHist.moveHistory.size();
-    for(int turnNumberAfterStart = 0; turnNumberAfterStart<numMoves; turnNumberAfterStart++) {
-      int absoluteTurnNumber = turnNumberAfterStart + startTurnNumber;
+    int startTurnIdx = (int)data.startHist.moveHistory.size();
+    for(int turnAfterStart = 0; turnAfterStart<numMoves; turnAfterStart++) {
+      int turnIdx = turnAfterStart + startTurnIdx;
 
-      Move move = data.endHist.moveHistory[absoluteTurnNumber];
+      Move move = data.endHist.moveHistory[turnIdx];
       assert(move.pla == nextPlayer);
       assert(hist.isLegal(board,move.loc,move.pla));
       hist.makeBoardMoveAssumeLegal(board, move.loc, move.pla, NULL);
@@ -899,20 +955,20 @@ void TrainingDataWriter::writeGame(const FinishedGameData& data) {
   Player nextPlayer = data.startPla;
 
   //Write main game rows
-  int startTurnNumber = data.startHist.moveHistory.size();
-  for(int turnNumberAfterStart = 0; turnNumberAfterStart<numMoves; turnNumberAfterStart++) {
-    double targetWeight = data.targetWeightByTurn[turnNumberAfterStart];
-    int absoluteTurnNumber = turnNumberAfterStart + startTurnNumber;
+  int startTurnIdx = (int)data.startHist.moveHistory.size();
+  for(int turnAfterStart = 0; turnAfterStart<numMoves; turnAfterStart++) {
+    double targetWeight = data.targetWeightByTurn[turnAfterStart];
+    int turnIdx = turnAfterStart + startTurnIdx;
 
-    int64_t unreducedNumVisits = data.policyTargetsByTurn[turnNumberAfterStart].unreducedNumVisits;
-    const vector<PolicyTargetMove>* policyTarget0 = data.policyTargetsByTurn[turnNumberAfterStart].policyTargets;
-    const vector<PolicyTargetMove>* policyTarget1 = (turnNumberAfterStart + 1 < numMoves) ? data.policyTargetsByTurn[turnNumberAfterStart+1].policyTargets : NULL;
+    int64_t unreducedNumVisits = data.policyTargetsByTurn[turnAfterStart].unreducedNumVisits;
+    const vector<PolicyTargetMove>* policyTarget0 = data.policyTargetsByTurn[turnAfterStart].policyTargets;
+    const vector<PolicyTargetMove>* policyTarget1 = (turnAfterStart + 1 < numMoves) ? data.policyTargetsByTurn[turnAfterStart+1].policyTargets : NULL;
     bool isSidePosition = false;
 
     int numNeuralNetsBehindLatest = 0;
     for(int i = 0; i<data.changedNeuralNets.size(); i++) {
-      if(data.changedNeuralNets[i]->turnNumber > absoluteTurnNumber) {
-        numNeuralNetsBehindLatest = data.changedNeuralNets.size()-i;
+      if(data.changedNeuralNets[i]->turnIdx > turnIdx) {
+        numNeuralNetsBehindLatest = (int)data.changedNeuralNets.size()-i;
         break;
       }
     }
@@ -922,13 +978,17 @@ void TrainingDataWriter::writeGame(const FinishedGameData& data) {
         if(debugOut == NULL || rowCount % debugOnlyWriteEvery == 0) {
           writeBuffers->addRow(
             board,hist,nextPlayer,
-            absoluteTurnNumber,
+            turnIdx,
             1.0,
             unreducedNumVisits,
             policyTarget0,
             policyTarget1,
+            data.policySurpriseByTurn[turnAfterStart],
+            data.policyEntropyByTurn[turnAfterStart],
+            data.searchEntropyByTurn[turnAfterStart],
             data.whiteValueTargetsByTurn,
-            turnNumberAfterStart,
+            turnAfterStart,
+            data.nnRawStatsByTurn[turnAfterStart],
             &(data.endHist.getRecentBoard(0)),
             data.finalFullArea,
             data.finalOwnership,
@@ -947,7 +1007,7 @@ void TrainingDataWriter::writeGame(const FinishedGameData& data) {
     }
 
 
-    Move move = data.endHist.moveHistory[absoluteTurnNumber];
+    Move move = data.endHist.moveHistory[turnIdx];
     assert(move.pla == nextPlayer);
     assert(hist.isLegal(board,move.loc,move.pla));
     hist.makeBoardMoveAssumeLegal(board, move.loc, move.pla, NULL);
@@ -964,21 +1024,25 @@ void TrainingDataWriter::writeGame(const FinishedGameData& data) {
       if(targetWeight >= 1.0 || rand.nextBool(targetWeight)) {
         if(debugOut == NULL || rowCount % debugOnlyWriteEvery == 0) {
 
-          int absoluteTurnNumber = sp->hist.moveHistory.size();
-          assert(absoluteTurnNumber >= data.startHist.moveHistory.size());
+          int turnIdx = (int)sp->hist.moveHistory.size();
+          assert(turnIdx >= data.startHist.moveHistory.size());
           whiteValueTargetsBuf[0] = sp->whiteValueTargets;
           bool isSidePosition = true;
           int numNeuralNetsBehindLatest = (int)data.changedNeuralNets.size() - sp->numNeuralNetChangesSoFar;
 
           writeBuffers->addRow(
             sp->board,sp->hist,sp->pla,
-            absoluteTurnNumber,
+            turnIdx,
             1.0,
             sp->unreducedNumVisits,
             &(sp->policyTarget),
             NULL,
+            sp->policySurprise,
+            sp->policyEntropy,
+            sp->searchEntropy,
             whiteValueTargetsBuf,
             0,
+            sp->nnRawStats,
             NULL,
             NULL,
             NULL,

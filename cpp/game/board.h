@@ -9,6 +9,11 @@
 
 #include "../core/global.h"
 #include "../core/hash.h"
+#include "../external/nlohmann_json/json.hpp"
+
+#ifndef COMPILE_MAX_BOARD_LEN
+#define COMPILE_MAX_BOARD_LEN 19
+#endif
 
 //TYPES AND CONSTANTS-----------------------------------------------------------------
 
@@ -16,15 +21,16 @@ struct Board;
 
 //Player
 typedef int8_t Player;
-static const Player P_BLACK = 1;
-static const Player P_WHITE = 2;
+static constexpr Player P_BLACK = 1;
+static constexpr Player P_WHITE = 2;
 
 //Color of a point on the board
 typedef int8_t Color;
-static const Color C_EMPTY = 0;
-static const Color C_BLACK = 1;
-static const Color C_WHITE = 2;
-static const Color C_WALL = 3;
+static constexpr Color C_EMPTY = 0;
+static constexpr Color C_BLACK = 1;
+static constexpr Color C_WHITE = 2;
+static constexpr Color C_WALL = 3;
+static constexpr int NUM_BOARD_COLORS = 4;
 
 static inline Color getOpp(Color c)
 {return c ^ 3;}
@@ -49,6 +55,11 @@ namespace Location
 
   void getAdjacentOffsets(short adj_offsets[8], int x_size);
   bool isAdjacent(Loc loc0, Loc loc1, int x_size);
+  Loc getMirrorLoc(Loc loc, int x_size, int y_size);
+  Loc getCenterLoc(int x_size, int y_size);
+  Loc getCenterLoc(const Board& b);
+  bool isCentral(Loc loc, int x_size, int y_size);
+  bool isNearCentral(Loc loc, int x_size, int y_size);
   int distance(Loc loc0, Loc loc1, int x_size);
   int euclideanDistanceSquared(Loc loc0, Loc loc1, int x_size);
 
@@ -61,6 +72,12 @@ namespace Location
   bool tryOfString(const std::string& str, const Board& b, Loc& result);
   Loc ofString(const std::string& str, int x_size, int y_size);
   Loc ofString(const std::string& str, const Board& b);
+
+  //Same, but will parse "null" as Board::NULL_LOC
+  bool tryOfStringAllowNull(const std::string& str, int x_size, int y_size, Loc& result);
+  bool tryOfStringAllowNull(const std::string& str, const Board& b, Loc& result);
+  Loc ofStringAllowNull(const std::string& str, int x_size, int y_size);
+  Loc ofStringAllowNull(const std::string& str, const Board& b);
 
   std::vector<Loc> parseSequence(const std::string& str, const Board& b);
 }
@@ -81,20 +98,22 @@ struct Board
 
   //Board parameters and Constants----------------------------------------
 
-  static const int MAX_LEN = 19;  //Maximum edge length allowed for the board
-  static const int MAX_PLAY_SIZE = MAX_LEN * MAX_LEN;  //Maximum number of playable spaces
-  static const int MAX_ARR_SIZE = (MAX_LEN+1)*(MAX_LEN+2)+1; //Maximum size of arrays needed
+  static constexpr int MAX_LEN = COMPILE_MAX_BOARD_LEN;  //Maximum edge length allowed for the board
+  static constexpr int DEFAULT_LEN = std::min(MAX_LEN,19); //Default edge length for board if unspecified
+  static constexpr int MAX_PLAY_SIZE = MAX_LEN * MAX_LEN;  //Maximum number of playable spaces
+  static constexpr int MAX_ARR_SIZE = (MAX_LEN+1)*(MAX_LEN+2)+1; //Maximum size of arrays needed
 
   //Location used to indicate an invalid spot on the board.
-  static const Loc NULL_LOC = 0;
+  static constexpr Loc NULL_LOC = 0;
   //Location used to indicate a pass move is desired.
-  static const Loc PASS_LOC = 1;
+  static constexpr Loc PASS_LOC = 1;
 
   //Zobrist Hashing------------------------------
   static bool IS_ZOBRIST_INITALIZED;
   static Hash128 ZOBRIST_SIZE_X_HASH[MAX_LEN+1];
   static Hash128 ZOBRIST_SIZE_Y_HASH[MAX_LEN+1];
   static Hash128 ZOBRIST_BOARD_HASH[MAX_ARR_SIZE][4];
+  static Hash128 ZOBRIST_BOARD_HASH2[MAX_ARR_SIZE][4];
   static Hash128 ZOBRIST_PLAYER_HASH[4];
   static Hash128 ZOBRIST_KO_LOC_HASH[MAX_ARR_SIZE];
   static Hash128 ZOBRIST_KO_MARK_HASH[MAX_ARR_SIZE][4];
@@ -137,7 +156,7 @@ struct Board
   };
 
   //Constructors---------------------------------
-  Board();  //Create Board of size (19,19)
+  Board();  //Create Board of size (DEFAULT_LEN,DEFAULT_LEN)
   Board(int x, int y); //Create Board of size (x,y)
   Board(const Board& other);
 
@@ -145,6 +164,8 @@ struct Board
 
   //Functions------------------------------------
 
+  //Gets the number of stones of the chain at loc. Precondition: location must be black or white.
+  int getChainSize(Loc loc) const;
   //Gets the number of liberties of the chain at loc. Precondition: location must be black or white.
   int getNumLiberties(Loc loc) const;
   //Returns the number of liberties a new stone placed here would have, or max if it would be >= max.
@@ -160,26 +181,40 @@ struct Board
   bool isIllegalSuicide(Loc loc, Player pla, bool isMultiStoneSuicideLegal) const;
   //Check if moving here is illegal due to simple ko
   bool isKoBanned(Loc loc) const;
-  //Check if moving here is legal.
-  bool isLegal(Loc loc, Player pla, bool isMultiStoneSuicideLegal) const;
   //Check if moving here is legal, ignoring simple ko
   bool isLegalIgnoringKo(Loc loc, Player pla, bool isMultiStoneSuicideLegal) const;
+  //Check if moving here is legal. Equivalent to isLegalIgnoringKo && !isKoBanned
+  bool isLegal(Loc loc, Player pla, bool isMultiStoneSuicideLegal) const;
   //Check if this location is on the board
   bool isOnBoard(Loc loc) const;
   //Check if this location contains a simple eye for the specified player.
   bool isSimpleEye(Loc loc, Player pla) const;
+  //Check if a move at this location would be a capture of an opponent group.
+  bool wouldBeCapture(Loc loc, Player pla) const;
   //Check if a move at this location would be a capture in a simple ko mouth.
   bool wouldBeKoCapture(Loc loc, Player pla) const;
   Loc getKoCaptureLoc(Loc loc, Player pla) const;
   //Check if this location is adjacent to stones of the specified color
   bool isAdjacentToPla(Loc loc, Player pla) const;
+  bool isAdjacentOrDiagonalToPla(Loc loc, Player pla) const;
+  //Check if this location is adjacent a given chain.
+  bool isAdjacentToChain(Loc loc, Loc chain) const;
   //Does this connect two pla distinct groups that are not both pass-alive and not within opponent pass-alive area either?
   bool isNonPassAliveSelfConnection(Loc loc, Player pla, Color* passAliveArea) const;
   //Is this board empty?
   bool isEmpty() const;
+  //Count the number of stones on the board
+  int numStonesOnBoard() const;
+  int numPlaStonesOnBoard(Player pla) const;
+
+  //Get a hash that combines the position of the board with simple ko prohibition and a player to move.
+  Hash128 getSitHashWithSimpleKo(Player pla) const;
 
   //Lift any simple ko ban recorded on thie board due to an immediate prior ko capture.
   void clearSimpleKoLoc();
+  //Directly set that there is a simple ko prohibition on this location. Note that this is not necessarily safe
+  //when also using a BoardHistory, since the BoardHistory may not know about this change, or the game could be in cleanup phase, etc.
+  void setSimpleKoLoc(Loc loc);
 
   //Sets the specified stone if possible. Returns true usually, returns false location or color were out of range.
   bool setStone(Loc loc, Color color);
@@ -201,6 +236,11 @@ struct Board
   //Get what the position hash would be if we were to play this move and resolve captures and suicides.
   //Assumes the move is on an empty location.
   Hash128 getPosHashAfterMove(Loc loc, Player pla) const;
+
+  //Returns true if, for a move just played at loc, the sum of the number of stones in loc's group and the sizes of the empty regions it touches
+  //are greater than bound. See also https://senseis.xmp.net/?Cycle for some interesting test cases for thinking about this bound.
+  //Returns false for passes.
+  bool simpleRepetitionBoundGt(Loc loc, int bound) const;
 
   //Get a random legal move that does not fill a simple eye.
   /* Loc getRandomMCLegal(Player pla); */
@@ -241,11 +281,16 @@ struct Board
 
   //Run some basic sanity checks on the board state, throws an exception if not consistent, for testing/debugging
   void checkConsistency() const;
+  //For the moment, only used in testing since it does extra consistency checks.
+  //If we need a version to be used in "prod", we could make an efficient version maybe as operator==.
+  bool isEqualForTesting(const Board& other, bool checkNumCaptures, bool checkSimpleKo) const;
 
   static Board parseBoard(int xSize, int ySize, const std::string& s);
   static Board parseBoard(int xSize, int ySize, const std::string& s, char lineDelimiter);
   static void printBoard(std::ostream& out, const Board& board, Loc markLoc, const std::vector<Move>* hist);
   static std::string toStringSimple(const Board& board, char lineDelimiter);
+  static nlohmann::json toJson(const Board& board);
+  static Board ofJson(const nlohmann::json& data);
 
   //Data--------------------------------------------
 
@@ -298,11 +343,15 @@ struct Board
     Color* result
   ) const;
 
+  bool isAdjacentToPlaHead(Player pla, Loc loc, Loc plaHead) const;
+
   void calculateIndependentLifeAreaHelper(
     const Color* basicArea,
     Color* result,
     int& whiteMinusBlackIndependentLifeRegionCount
   ) const;
+
+  bool countEmptyHelper(bool* emptyCounted, Loc initialLoc, int& count, int bound) const;
 
   //static void monteCarloOwner(Player player, Board* board, int mc_counts[]);
 };

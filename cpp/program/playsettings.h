@@ -10,7 +10,11 @@ struct PlaySettings {
   double startPosesPolicyInitAreaProp; //Avg number of moves when using a starting position from sgf
   double compensateAfterPolicyInitProb; //Chance to adjust komi to cancel the effect of imbalanced init
   //Occasionally try some alternative moves and search the responses to them.
-  double forkSidePositionProb;
+  double sidePositionProb;
+
+  //Temperature to use for placing handicap stones and for initializing the board position
+  double policyInitAreaTemperature;
+  double handicapTemperature;
 
   //Use this many visits in a short search to estimate the score, for adjusting komi
   int compensateKomiVisits;
@@ -27,7 +31,7 @@ struct PlaySettings {
   int forkGameMaxChoices; //Fork between the favorite of this many random legal moves, at maximum
 
   //Hack to make learning of seki easier - fork positions with different rules when we have sekis
-  bool sekiForkHack;
+  double sekiForkHackProb;
   //Hack to improve learning of very weird komi and very lopsided positions
   bool fancyKomiVarying;
 
@@ -47,6 +51,8 @@ struct PlaySettings {
   double policySurpriseDataWeight;
   //Probabilistically favor samples that had high winLossValue surprise (kl divergence).
   double valueSurpriseDataWeight;
+  //Scale frequency weights for writing data by this
+  double scaleDataWeight;
 
   //Record positions from within the search tree that had at least this many visits, recording only with this weight.
   bool recordTreePositions;
@@ -69,6 +75,9 @@ struct PlaySettings {
   double normalAsymmetricPlayoutProb; //Probability of asymmetric playouts on normal games
   double maxAsymmetricRatio;
   double minAsymmetricCompensateKomiProb; //Minimum probability to make game fair if asymmetric (other probs will also override)
+
+  //Record time taken per move
+  bool recordTimePerMove;
 
   PlaySettings();
   ~PlaySettings();

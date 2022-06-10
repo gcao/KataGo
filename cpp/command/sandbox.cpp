@@ -16,8 +16,8 @@ using namespace std;
 // int MainCmds::sandbox() {
 //   Board::initHash();
 
-//   Logger logger;
-//   logger.setLogToStdout(true);
+//   const bool logToStdout = true;
+//   Logger logger(nullptr, logToStdout);
 //   logger.addFile("tmp.txt");
 
 //   string tensorflowGpuVisibleDeviceList = ""; //use default
@@ -194,10 +194,28 @@ using namespace std;
 
 
 int MainCmds::sandbox() {
+  // Rand rand;
+  // while(true) {
+  //   uint32_t x[16];
+  //   for(int i = 0; i<16; i++)
+  //     x[i] = rand.nextUInt();
+  //   std::cout.write(reinterpret_cast<const char*>(&x),sizeof(x));
+  // }
+
+  // int64_t sum = 0;
+  // for(int i = 0; i<100000; i++) {
+  //   string s = "akldjfoaijefiwofijeaofj" + Global::intToString(i);
+  //   Rand rand(s);
+  //   for(int j = 0; j<8; j++) {
+  //     sum += rand.nextUInt();
+  //   }
+  // }
+  // cout << sum << endl;
+
 //   Board::initHash();
 
-//   Logger logger;
-//   logger.setLogToStdout(true);
+//   const bool logToStdout = true;
+//   Logger logger(nullptr, logToStdout);
 //   logger.addFile("tmp.txt");
 
 //   NeuralNet::globalInitialize();
@@ -314,8 +332,8 @@ int MainCmds::sandbox() {
 // int MainCmds::sandbox() {
 //   Board::initHash();
 
-//   Logger logger;
-//   logger.setLogToStdout(true);
+//   const bool logToStdout = true;
+//   Logger logger(nullptr, logToStdout);
 
 //   cudaSetDevice(0);
 
@@ -400,8 +418,8 @@ int MainCmds::sandbox() {
 // int MainCmds::sandbox() {
 //   Board::initHash();
 
-//   Logger logger;
-//   logger.setLogToStdout(true);
+//   const bool logToStdout = true;
+//   Logger logger(nullptr, logToStdout);
 
 //   cudaSetDevice(0);
 
@@ -489,8 +507,8 @@ int MainCmds::sandbox() {
 // int MainCmds::sandbox() {
 //   Board::initHash();
 
-//   Logger logger;
-//   logger.setLogToStdout(true);
+//   const bool logToStdout = true;
+//   Logger logger(nullptr, logToStdout);
 
 //   cudaSetDevice(0);
 
@@ -577,8 +595,8 @@ int MainCmds::sandbox() {
 // int MainCmds::sandbox() {
 //   Board::initHash();
 
-//   Logger logger;
-//   logger.setLogToStdout(true);
+//   const bool logToStdout = true;
+//   Logger logger(nullptr, logToStdout);
 
 //   cudaSetDevice(0);
 
@@ -663,8 +681,8 @@ int MainCmds::sandbox() {
 // int MainCmds::sandbox() {
 //   Board::initHash();
 
-//   Logger logger;
-//   logger.setLogToStdout(true);
+//   const bool logToStdout = true;
+//   Logger logger(nullptr, logToStdout);
 
 //   cudaSetDevice(0);
 
@@ -817,8 +835,8 @@ int MainCmds::sandbox() {
 // int MainCmds::sandbox() {
 //   Board::initHash();
 
-//   Logger logger;
-//   logger.setLogToStdout(true);
+//   const bool logToStdout = true;
+//   Logger logger(nullptr, logToStdout);
 
 //   CUDA_ERR(cudaSetDevice(0));
 
@@ -895,8 +913,8 @@ int MainCmds::sandbox() {
 // int MainCmds::sandbox() {
 //   Board::initHash();
 
-//   Logger logger;
-//   logger.setLogToStdout(true);
+//   const bool logToStdout = true;
+//   Logger logger(nullptr, logToStdout);
 
 //   checkCudaErrors(cudaSetDevice(0));
 
@@ -948,8 +966,8 @@ int MainCmds::sandbox() {
 // int MainCmds::sandbox() {
 //   Board::initHash();
 
-//   Logger logger;
-//   logger.setLogToStdout(true);
+//   const bool logToStdout = true;
+//   Logger logger(nullptr, logToStdout);
 
 //   checkCudaErrors(cudaSetDevice(0));
 
@@ -1001,8 +1019,8 @@ int MainCmds::sandbox() {
 // int MainCmds::sandbox() {
 //   Board::initHash();
 
-//   Logger logger;
-//   logger.setLogToStdout(true);
+//   const bool logToStdout = true;
+//   Logger logger(nullptr, logToStdout);
 
 //   checkCudaErrors(cudaSetDevice(0));
 
@@ -1316,8 +1334,8 @@ int MainCmds::sandbox() {
 // int MainCmds::sandbox() {
 //   Board::initHash();
 
-//   Logger logger;
-//   logger.setLogToStdout(true);
+//   const bool logToStdout = true;
+//   Logger logger(nullptr, logToStdout);
 //   logger.addFile("tmp.txt");
 
 //   Session* session;
@@ -1443,8 +1461,8 @@ int MainCmds::sandbox() {
 // int MainCmds::sandbox() {
 //   Board::initHash();
 
-//   Logger logger;
-//   logger.setLogToStdout(true);
+//   const bool logToStdout = true;
+//   Logger logger(nullptr, logToStdout);
 //   logger.addFile("tmp.txt");
 
 //   int maxBatchSize = 8;

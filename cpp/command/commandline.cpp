@@ -1,26 +1,15 @@
 #include "../command/commandline.h"
 
+#include "../core/fileutils.h"
 #include "../core/os.h"
+#include "../core/logger.h"
 #include "../dataio/homedata.h"
 #include "../program/setup.h"
 #include "../main.h"
 
-#include <boost/filesystem.hpp>
-namespace bfs = boost::filesystem;
-
 using namespace std;
 
 //--------------------------------------------------------------------------------------
-
-static bool doesPathExist(const string& path) {
-  try {
-    bfs::path bfsPath(path);
-    return bfs::exists(bfsPath);
-  }
-  catch(const bfs::filesystem_error&) {
-    return false;
-  }
-}
 
 static string getDefaultConfigPathForHelp(const string& defaultConfigFileName) {
   return HomeData::getDefaultFilesDirForHelpMessage() + "/" + defaultConfigFileName;
@@ -106,7 +95,7 @@ class KataHelpOutput : public TCLAP::StdOutput
     // TCLAP adds arguments in reverse order for some reason. So we iterate in reverse for help output.
     // Also we limit based on shortUsageArgLimit.
     int lowerLimit = shortUsageArgLimit < 0 ? 0 : std::max(0, (int)argVec.size() - numBuiltInArgs - 1 - shortUsageArgLimit + 1);
-    for(int i = argVec.size() - numBuiltInArgs - 1; i >= lowerLimit; i--) {
+    for(int i = (int)argVec.size() - numBuiltInArgs - 1; i >= lowerLimit; i--) {
       if(!xorHandler.contains(argVec[i]))
         s += " " + argVec[i]->shortID();
     }
@@ -146,7 +135,7 @@ class KataHelpOutput : public TCLAP::StdOutput
 
     // TCLAP adds arguments in reverse order for some reason. So we iterate in reverse for help output.
     // Also we limit based on shortUsageArgLimit.
-    for(int i = argVec.size() - numBuiltInArgs - 1; i >= 0; i--) {
+    for(int i = (int)argVec.size() - numBuiltInArgs - 1; i >= 0; i--) {
       if(!xorHandler.contains(argVec[i])) {
         spacePrint(os, argVec[i]->longID(), 75, 3, 3);
         spacePrint(os, argVec[i]->getDescription(), 75, 5, 0);
@@ -155,7 +144,7 @@ class KataHelpOutput : public TCLAP::StdOutput
     }
 
     //Now also show the default args.
-    for(int i = argVec.size() - numBuiltInArgs; i < argVec.size(); i++) {
+    for(int i = (int)argVec.size() - numBuiltInArgs; i < argVec.size(); i++) {
       if(!xorHandler.contains(argVec[i])) {
         spacePrint(os, argVec[i]->longID(), 75, 3, 3);
         spacePrint(os, argVec[i]->getDescription(), 75, 5, 0);
@@ -179,7 +168,7 @@ KataGoCommandLine::KataGoCommandLine(const string& message)
   configFileArg(NULL),
   overrideConfigArg(NULL),
   defaultConfigFileName(),
-  numBuiltInArgs(_argList.size()),
+  numBuiltInArgs((int)_argList.size()),
   helpOutput(NULL)
 {
   helpOutput = new KataHelpOutput(numBuiltInArgs, -1);
@@ -198,8 +187,14 @@ string KataGoCommandLine::defaultGtpConfigFileName() {
   return "default_gtp.cfg";
 }
 
+void KataGoCommandLine::parseArgs(const vector<string>& args) {
+  vector<string> mutableCopy = args;
+  // Call the underlying tclap parse(vector<string>&);
+  return parse(mutableCopy);
+}
+
 void KataGoCommandLine::setShortUsageArgLimit() {
-  helpOutput->setShortUsageArgLimit(_argList.size() - numBuiltInArgs);
+  helpOutput->setShortUsageArgLimit((int)_argList.size() - numBuiltInArgs);
 }
 
 void KataGoCommandLine::addModelFileArg() {
@@ -216,29 +211,34 @@ void KataGoCommandLine::addModelFileArg() {
 
 //Empty string indicates no default
 void KataGoCommandLine::addConfigFileArg(const string& defaultCfgFileName, const string& exampleConfigFile) {
+  bool required = true;
+  if(!defaultCfgFileName.empty()) {
+    required = false;
+  }
+  addConfigFileArg(defaultCfgFileName, exampleConfigFile, required);
+}
+
+void KataGoCommandLine::addConfigFileArg(const string& defaultCfgFileName, const string& exampleConfigFile, bool required) {
   assert(configFileArg == NULL);
   defaultConfigFileName = defaultCfgFileName;
 
-  string helpDesc = "Config file to use";
-  bool required = true;
+  string helpDesc = "Config file(s) to use, can be one or multiple files";
   if(!exampleConfigFile.empty())
     helpDesc += " (see " + exampleConfigFile + " or configs/" + exampleConfigFile + ")";
   helpDesc += ".";
   if(!defaultConfigFileName.empty()) {
     helpDesc += " Defaults to: " + getDefaultConfigPathForHelp(defaultConfigFileName);
-    required = false;
   }
   //We don't apply the default directly here, but rather in getConfig(). It's more robust if we don't attempt any
   //filesystem access (which could fail) before we've even constructed the command arguments and help.
-  string defaultPath = "";
-  configFileArg = new TCLAP::ValueArg<string>("","config",helpDesc,required,defaultPath,"FILE");
+  configFileArg = new TCLAP::MultiArg<string>("","config",helpDesc,required,"FILE");
   this->add(*configFileArg);
 }
 
 void KataGoCommandLine::addOverrideConfigArg() {
   assert(overrideConfigArg == NULL);
-  overrideConfigArg = new TCLAP::ValueArg<string>(
-    "","override-config","Override config parameters. Format: \"key=value, key=value,...\"",false,string(),"KEYVALUEPAIRS"
+  overrideConfigArg = new TCLAP::MultiArg<string>(
+    "","override-config","Override config parameters. Format: \"key=value, key=value,...\"",false,"KEYVALUEPAIRS"
   );
   this->add(*overrideConfigArg);
 }
@@ -254,7 +254,7 @@ string KataGoCommandLine::getModelFile() const {
       if(paths.size() > 0)
         pathForErrMsg = paths[0];
       for(const string& path: paths)
-        if(doesPathExist(path))
+        if(FileUtils::exists(path))
           return path;
     }
     catch(const StringError& err) {
@@ -271,18 +271,18 @@ bool KataGoCommandLine::modelFileIsDefault() const {
   return modelFileArg->getValue().empty();
 }
 
-string KataGoCommandLine::getConfigFile() const {
+vector<string> KataGoCommandLine::getConfigFiles() const {
   assert(configFileArg != NULL);
-  string configFile = configFileArg->getValue();
-  if(configFile.empty() && !defaultConfigFileName.empty()) {
+  vector<string> configFiles = configFileArg->getValue();
+  if(configFiles.empty() && !defaultConfigFileName.empty()) {
     string pathForErrMsg;
     try {
       vector<string> paths = getDefaultConfigPaths(defaultConfigFileName);
       if(paths.size() > 0)
         pathForErrMsg = paths[0];
       for(const string& path: paths)
-        if(doesPathExist(path))
-          return path;
+        if(FileUtils::exists(path))
+          return { path };
     }
     catch(const StringError& err) {
       throw StringError(string("'-config CONFIG_FILE_NAME.cfg was not provided but encountered error searching for default: ") + err.what());
@@ -291,22 +291,57 @@ string KataGoCommandLine::getConfigFile() const {
       pathForErrMsg = getDefaultConfigPathForHelp(defaultConfigFileName);
     throw StringError("-config CONFIG_FILE_NAME.cfg was not specified to tell KataGo where to find the config, and default was not found at " + pathForErrMsg);
   }
-  return configFile;
+  return configFiles;
+}
+
+void KataGoCommandLine::maybeApplyOverrideConfigArg(ConfigParser& cfg) const {
+  if(overrideConfigArg != NULL) {
+    vector<string> overrideConfigs = overrideConfigArg->getValue();
+    for(const string& overrideConfig : overrideConfigs) {
+      if(overrideConfig != "") {
+        map<string,string> newkvs = ConfigParser::parseCommaSeparated(overrideConfig);
+        //HACK to avoid a common possible conflict - if we specify some of the rules options on one side, the other side should be erased.
+        vector<pair<set<string>,set<string>>> mutexKeySets = Setup::getMutexKeySets();
+        cfg.overrideKeys(newkvs,mutexKeySets);
+      }
+    }
+  }
+}
+
+void KataGoCommandLine::logOverrides(Logger& logger) const {
+  if(overrideConfigArg != NULL) {
+    vector<string> overrideConfigs = overrideConfigArg->getValue();
+    for(const string& overrideConfig : overrideConfigs) {
+      if(overrideConfig != "") {
+        map<string,string> newkvs = ConfigParser::parseCommaSeparated(overrideConfig);
+        for(const auto& x: newkvs) {
+          logger.write("Config override: " + x.first + " = " + x.second);
+        }
+      }
+    }
+  }
 }
 
 //cfg must be uninitialized, this will initialize it based on user-provided arguments
 void KataGoCommandLine::getConfig(ConfigParser& cfg) const {
-  string configFile = getConfigFile();
-  cfg.initialize(configFile);
-
-  if(overrideConfigArg != NULL) {
-    string overrideConfig = overrideConfigArg->getValue();
-    if(overrideConfig != "") {
-      map<string,string> newkvs = ConfigParser::parseCommaSeparated(overrideConfig);
-      //HACK to avoid a common possible conflict - if we specify some of the rules options on one side, the other side should be erased.
-      vector<pair<set<string>,set<string>>> mutexKeySets = Setup::getMutexKeySets();
-      cfg.overrideKeys(newkvs,mutexKeySets);
+  vector<string> configFiles = getConfigFiles();
+  assert(!configFiles.empty());
+  cfg.initialize(configFiles[0]);
+  if(configFiles.size() > 1) {
+    configFiles.erase(configFiles.begin());
+    for(const string& overrideFile : configFiles) {
+      cfg.overrideKeys(overrideFile);
     }
   }
+  maybeApplyOverrideConfigArg(cfg);
+}
 
+void KataGoCommandLine::getConfigAllowEmpty(ConfigParser& cfg) const {
+  if(configFileArg->getValue().empty() && defaultConfigFileName.empty()) {
+    cfg.initialize(std::map<string,string>());
+    maybeApplyOverrideConfigArg(cfg);
+  }
+  else {
+    getConfig(cfg);
+  }
 }

@@ -9,8 +9,11 @@ using namespace std;
 
 void Tests::runOwnershipTests(const string& configFile, const string& modelFile) {
   ConfigParser cfg(configFile);
-  Logger logger;
-  logger.setLogToStderr(true);
+
+  const bool logToStdoutDefault = false;
+  const bool logToStderrDefault = true;
+  Logger logger(&cfg, logToStdoutDefault, logToStderrDefault);
+
   Rand seedRand;
 
   Rules ttRules = Rules::parseRules("tromp-taylor");
@@ -18,26 +21,29 @@ void Tests::runOwnershipTests(const string& configFile, const string& modelFile)
 
   int nnXLen = 19;
   int nnYLen = 19;
-  SearchParams params = Setup::loadSingleParams(cfg);
+  SearchParams params = Setup::loadSingleParams(cfg,Setup::SETUP_FOR_GTP);
   NNEvaluator* nnEval;
   {
     Setup::initializeSession(cfg);
-    int maxConcurrentEvals = params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
-    int defaultMaxBatchSize = std::max(8,((params.numThreads+3)/4)*4);
+    const int maxConcurrentEvals = params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
+    const int expectedConcurrentEvals = params.numThreads;
+    const int defaultMaxBatchSize = std::max(8,((params.numThreads+3)/4)*4);
+    const bool requireExactNNLen = false;
+    const string expectedSha256 = "";
     nnEval = Setup::initializeNNEvaluator(
-      modelFile,modelFile,cfg,logger,seedRand,maxConcurrentEvals,
-      nnXLen,nnYLen,defaultMaxBatchSize,
+      modelFile,modelFile,expectedSha256,cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,
+      nnXLen,nnYLen,defaultMaxBatchSize,requireExactNNLen,
       Setup::SETUP_FOR_GTP
     );
   }
 
-  Search* bot = new Search(params, nnEval, Global::uint64ToString(seedRand.nextUInt64()));
+  Search* bot = new Search(params, nnEval, &logger, Global::uint64ToString(seedRand.nextUInt64()));
 
   auto runOnBoard = [&](const Board& board, Rules rules) {
     Player nextPla = P_BLACK;
     BoardHistory hist(board,nextPla,rules,0);
     int64_t numVisits = 100;
-    vector<double> ownership = PlayUtils::computeOwnership(bot,board,hist,nextPla,numVisits,logger);
+    vector<double> ownership = PlayUtils::computeOwnership(bot,board,hist,nextPla,numVisits);
     cout << "=================================================================================" << endl;
     cout << rules << endl;
     cout << board << endl;

@@ -1,5 +1,6 @@
 #include "../core/global.h"
 #include "../core/config_parser.h"
+#include "../core/fileutils.h"
 #include "../core/timer.h"
 #include "../dataio/sgf.h"
 #include "../search/asyncbot.h"
@@ -15,8 +16,8 @@
 #include <sstream>
 #include <fstream>
 
-#include <boost/filesystem.hpp>
-namespace bfs = boost::filesystem;
+#include <ghc/filesystem.hpp>
+namespace gfs = ghc::filesystem;
 
 using namespace std;
 
@@ -42,15 +43,18 @@ static vector<PlayUtils::BenchmarkResults> doAutoTuneThreads(
   std::function<void(int)> reallocateNNEvalWithEnoughBatchSize
 );
 
+#ifdef USE_EIGEN_BACKEND
+static const int64_t defaultMaxVisits = 80;
+#else
 static const int64_t defaultMaxVisits = 800;
+#endif
+
 static constexpr double defaultSecondsPerGameMove = 5.0;
 static const int ternarySearchInitialMax = 32;
 
-int MainCmds::benchmark(int argc, const char* const* argv) {
+int MainCmds::benchmark(const vector<string>& args) {
   Board::initHash();
   ScoreValue::initTables();
-
-  static const string defaultThreadsToTest = "1,2,4,6,8,12,16,24";
 
   ConfigParser cfg;
   string modelFile;
@@ -60,19 +64,30 @@ int MainCmds::benchmark(int argc, const char* const* argv) {
   vector<int> numThreadsToTest;
   int numPositionsPerGame;
   bool autoTuneThreads;
-  int secondsPerGameMove;
+  double secondsPerGameMove;
   try {
     KataGoCommandLine cmd("Benchmark with gtp config to test speed with different numbers of threads.");
     cmd.addConfigFileArg(KataGoCommandLine::defaultGtpConfigFileName(),"gtp_example.cfg");
     cmd.addModelFileArg();
     TCLAP::ValueArg<long> visitsArg("v","visits","How many visits to use per search (default " + Global::int64ToString(defaultMaxVisits) + ")",false,(long)defaultMaxVisits,"VISITS");
-    TCLAP::ValueArg<string> threadsArg("t","threads","Test these many threads, comma-separated (default " + defaultThreadsToTest + ")",false,defaultThreadsToTest,"THREADS");
+    TCLAP::ValueArg<string> threadsArg("t","threads","Test these many threads, comma-separated, e.g. '4,8,12,16' ",false,"","THREADS");
     TCLAP::ValueArg<int> numPositionsPerGameArg("n","numpositions","How many positions to sample from a game (default 10)",false,10,"NUM");
     TCLAP::ValueArg<string> sgfFileArg("","sgf", "Optional game to sample positions from (default: uses a built-in-set of positions)",false,string(),"FILE");
-    TCLAP::ValueArg<int> boardSizeArg("","boardsize", "Size of board to benchmark on (9-19), default 19",false,-1,"SIZE");
-    TCLAP::SwitchArg autoTuneThreadsArg("s","tune","Automatically search for the optimal number of threads");
-    TCLAP::ValueArg<int> secondsPerGameMoveArg("i","time","Typical amount of time per move spent while playing, in seconds (default " +
-                                               Global::doubleToString(defaultSecondsPerGameMove) + ")",false,defaultSecondsPerGameMove,"SECONDS");
+    TCLAP::ValueArg<int> boardSizeArg(
+      "","boardsize",
+      "Size of board to benchmark on (" +
+      Global::intToString(TestCommon::MIN_BENCHMARK_SGF_DATA_SIZE) + "-" +
+      Global::intToString(TestCommon::MAX_BENCHMARK_SGF_DATA_SIZE) + "), default " +
+      Global::intToString(TestCommon::DEFAULT_BENCHMARK_SGF_DATA_SIZE),
+      false,-1,"SIZE"
+    );
+    TCLAP::SwitchArg autoTuneThreadsArg("s","tune","Automatically search for the optimal number of threads (default if not specifying specific numbers of threads)");
+    TCLAP::ValueArg<double> secondsPerGameMoveArg(
+      "i","time",
+      "Typical amount of time per move spent while playing, in seconds (default " +
+      Global::doubleToString(defaultSecondsPerGameMove) + ")",
+      false,defaultSecondsPerGameMove,"SECONDS"
+    );
     cmd.add(visitsArg);
     cmd.add(threadsArg);
     cmd.add(numPositionsPerGameArg);
@@ -85,7 +100,7 @@ int MainCmds::benchmark(int argc, const char* const* argv) {
     cmd.add(boardSizeArg);
     cmd.add(autoTuneThreadsArg);
     cmd.add(secondsPerGameMoveArg);
-    cmd.parse(argc,argv);
+    cmd.parseArgs(args);
 
     modelFile = cmd.getModelFile();
     sgfFile = sgfFileArg.getValue();
@@ -98,7 +113,7 @@ int MainCmds::benchmark(int argc, const char* const* argv) {
 
     if(boardSize != -1 && sgfFile != "")
       throw StringError("Cannot specify both -sgf and -boardsize at the same time");
-    if(boardSize != -1 && (boardSize < 9 || boardSize > 19))
+    if(boardSize != -1 && (boardSize < TestCommon::MIN_BENCHMARK_SGF_DATA_SIZE || boardSize > TestCommon::MAX_BENCHMARK_SGF_DATA_SIZE))
       throw StringError("Board size to test: invalid value " + Global::intToString(boardSize));
     if(maxVisits <= 1 || maxVisits >= 1000000000)
       throw StringError("Number of visits to use: invalid value " + Global::int64ToString(maxVisits));
@@ -106,8 +121,12 @@ int MainCmds::benchmark(int argc, const char* const* argv) {
       throw StringError("Number of positions per game to use: invalid value " + Global::intToString(numPositionsPerGame));
     if(secondsPerGameMove <= 0 || secondsPerGameMove > 1000000)
       throw StringError("Number of seconds per game move to assume: invalid value " + Global::doubleToString(secondsPerGameMove));
-    if(desiredThreadsStr != defaultThreadsToTest && autoTuneThreads)
+    if(desiredThreadsStr != "" && autoTuneThreads)
       throw StringError("Cannot both automatically tune threads and specify fixed exact numbers of threads to test");
+
+    //Apply default
+    if(desiredThreadsStr == "")
+      autoTuneThreads = true;
 
     if(!autoTuneThreads) {
       vector<string> desiredThreadsPieces = Global::split(desiredThreadsStr,',');
@@ -134,23 +153,27 @@ int MainCmds::benchmark(int argc, const char* const* argv) {
     return 1;
   }
 
+  const bool logToStdoutDefault = true;
+  Logger logger(&cfg, logToStdoutDefault);
+  logger.write("Loading model and initializing benchmark...");
+
   CompactSgf* sgf;
   if(sgfFile != "") {
     sgf = CompactSgf::loadFile(sgfFile);
   }
   else {
-    if(boardSize == -1)
-      boardSize = 19;
-
+    if(boardSize == -1) {
+      int defaultBoardXSize = TestCommon::DEFAULT_BENCHMARK_SGF_DATA_SIZE;
+      int defaultBoardYSize = TestCommon::DEFAULT_BENCHMARK_SGF_DATA_SIZE;
+      Setup::loadDefaultBoardXYSize(cfg,logger,defaultBoardXSize,defaultBoardYSize);
+      boardSize = std::max(defaultBoardXSize,defaultBoardYSize);
+    }
+    logger.write("Testing with default positions for board size: " + Global::intToString(boardSize));
     string sgfData = TestCommon::getBenchmarkSGFData(boardSize);
     sgf = CompactSgf::parse(sgfData);
   }
 
-  Logger logger;
-  logger.setLogToStdout(true);
-  logger.write("Loading model and initializing benchmark...");
-
-  SearchParams params = Setup::loadSingleParams(cfg);
+  SearchParams params = Setup::loadSingleParams(cfg,Setup::SETUP_FOR_BENCHMARK);
   params.maxVisits = maxVisits;
   params.maxPlayouts = maxVisits;
   params.maxTime = 1e20;
@@ -197,11 +220,18 @@ int MainCmds::benchmark(int argc, const char* const* argv) {
   if(nnEval->getUsingFP16Mode() == enabled_t::False)
     cout << "If you have a strong GPU capable of FP16 tensor cores (e.g. RTX2080) setting these both to true may give a large performance boost." << endl;
 #endif
+#ifdef USE_TENSORRT_BACKEND
+  cout << "Your GTP config is currently set to trtUseFP16 = " << nnEval->getUsingFP16Mode().toString() << endl;
+  if(nnEval->getUsingFP16Mode() == enabled_t::False)
+    cout << "If you have a strong GPU capable of FP16 tensor cores (e.g. RTX2080) setting this to true may give a large performance boost." << endl;
+#endif
 #ifdef USE_OPENCL_BACKEND
   cout << "You are currently using the OpenCL version of KataGo." << endl;
-  //TODO update when we have FP16 opencl
   cout << "If you have a strong GPU capable of FP16 tensor cores (e.g. RTX2080), "
-       << "using the Cuda version of KataGo instead may give a large performance boost." << endl;
+       << "using the Cuda version of KataGo instead may give a mild performance boost." << endl;
+#endif
+#ifdef USE_EIGEN_BACKEND
+  cout << "You are currently using the Eigen (CPU) version of KataGo. Due to having no GPU, it may be slow." << endl;
 #endif
   cout << endl;
   cout << "Your GTP config is currently set to use numSearchThreads = " << params.numThreads << endl;
@@ -220,6 +250,11 @@ int MainCmds::benchmark(int argc, const char* const* argv) {
     cout << "If you care about performance, you may want to edit numSearchThreads in " << cfg.getFileName() << " based on the above results!" << endl;
     if(cfg.contains("nnMaxBatchSize"))
       cout << "WARNING: Your nnMaxBatchSize is hardcoded to " + cfg.getString("nnMaxBatchSize") + ", recommend deleting it and using the default (which this benchmark assumes)" << endl;
+#ifdef USE_EIGEN_BACKEND
+    if(cfg.contains("numEigenThreadsPerModel")) {
+      cout << "Note: Your numEigenThreadsPerModel is hardcoded to " + cfg.getString("numEigenThreadsPerModel") + ", consider deleting it and using the default (which this benchmark assumes when computing its performance stats)" << endl;
+    }
+#endif
 
     cout << "If you intend to do much longer searches, configure the seconds per game move you expect with the '-time' flag and benchmark again." << endl;
     cout << "If you intend to do short or fixed-visit searches, use lower numSearchThreads for better strength, high threads will weaken strength." << endl;
@@ -236,33 +271,45 @@ int MainCmds::benchmark(int argc, const char* const* argv) {
   return 0;
 }
 
+static void warmStartNNEval(const CompactSgf* sgf, Logger& logger, const SearchParams& params, NNEvaluator* nnEval, Rand& seedRand) {
+  Board board(sgf->xSize,sgf->ySize);
+  Player nextPla = P_BLACK;
+  BoardHistory hist(board,nextPla,Rules(),0);
+  SearchParams thisParams = params;
+  thisParams.numThreads = 1;
+  thisParams.maxVisits = 5;
+  thisParams.maxPlayouts = 5;
+  thisParams.maxTime = 1e20;
+  AsyncBot* bot = new AsyncBot(thisParams, nnEval, &logger, Global::uint64ToString(seedRand.nextUInt64()));
+  bot->setPosition(nextPla,board,hist);
+  bot->genMoveSynchronous(nextPla,TimeControls());
+  delete bot;
+}
+
 static NNEvaluator* createNNEval(int maxNumThreads, CompactSgf* sgf, const string& modelFile, Logger& logger, ConfigParser& cfg, const SearchParams& params) {
-  int maxConcurrentEvals = maxNumThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
-  int defaultMaxBatchSize = std::max(8,((maxNumThreads+3)/4)*4);
+  const int maxConcurrentEvals = maxNumThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
+  int expectedConcurrentEvals = maxNumThreads;
+  const int defaultMaxBatchSize = std::max(8,((maxNumThreads+3)/4)*4);
 
   Rand seedRand;
 
+#ifdef USE_EIGEN_BACKEND
+  //For warm-starting eigen, we really don't need all that many backend threads, which are determined
+  //via expectedConcurrentEvals.
+  if(expectedConcurrentEvals > 2)
+    expectedConcurrentEvals = 2;
+#endif
+
+  const bool defaultRequireExactNNLen = true;
+  const string expectedSha256 = "";
   NNEvaluator* nnEval = Setup::initializeNNEvaluator(
-    modelFile,modelFile,cfg,logger,seedRand,maxConcurrentEvals,
-    sgf->xSize,sgf->ySize,defaultMaxBatchSize,
+    modelFile,modelFile,expectedSha256,cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,
+    sgf->xSize,sgf->ySize,defaultMaxBatchSize,defaultRequireExactNNLen,
     Setup::SETUP_FOR_BENCHMARK
   );
 
   //Run on a sample position just to get any initialization and logs out of the way
-  {
-    Board board(sgf->xSize,sgf->ySize);
-    Player nextPla = P_BLACK;
-    BoardHistory hist(board,nextPla,Rules(),0);
-    SearchParams thisParams = params;
-    thisParams.numThreads = 1;
-    thisParams.maxVisits = 5;
-    thisParams.maxPlayouts = 5;
-    thisParams.maxTime = 1e20;
-    AsyncBot* bot = new AsyncBot(thisParams, nnEval, &logger, Global::uint64ToString(seedRand.nextUInt64()));
-    bot->setPosition(nextPla,board,hist);
-    bot->genMoveSynchronous(nextPla,TimeControls());
-    delete bot;
-  }
+  warmStartNNEval(sgf,logger,params,nnEval,seedRand);
 
   cout.flush();
   cerr.flush();
@@ -275,6 +322,27 @@ static NNEvaluator* createNNEval(int maxNumThreads, CompactSgf* sgf, const strin
   return nnEval;
 }
 
+static void setNumThreads(SearchParams& params, NNEvaluator* nnEval, Logger& logger, int numThreads, const CompactSgf* sgf) {
+  params.numThreads = numThreads;
+#ifdef USE_EIGEN_BACKEND
+  //Eigen is a little interesting in that by default, it sets numNNServerThreadsPerModel based on numSearchThreads
+  //So, reset the number of threads in the nnEval each time we change the search numthreads
+  //Also, disable the logger to suppress the kill and respawn messages.
+  logger.setDisabled(true);
+  nnEval->killServerThreads();
+  nnEval->setNumThreads(vector<int>(numThreads,-1));
+  nnEval->spawnServerThreads();
+  //Also since we killed and respawned all the threads, re-warm them
+  Rand seedRand;
+  warmStartNNEval(sgf,logger,params,nnEval,seedRand);
+  logger.setDisabled(false);
+#else
+  (void)nnEval;
+  (void)logger;
+  (void)numThreads;
+  (void)sgf;
+#endif
+}
 
 static vector<PlayUtils::BenchmarkResults> doFixedTuneThreads(
   const SearchParams& params,
@@ -289,18 +357,19 @@ static vector<PlayUtils::BenchmarkResults> doFixedTuneThreads(
   vector<PlayUtils::BenchmarkResults> results;
 
   if(numThreadsToTest.size() > 1)
-    cout << "Testing different numbers of threads: " << endl;
+    cout << "Testing different numbers of threads (board size " << sgf->xSize << "x" << sgf->ySize << "): " << endl;
+  else
+    cout << "Testing (board size " << sgf->xSize << "x" << sgf->ySize << "): " << endl;
 
   for(int i = 0; i<numThreadsToTest.size(); i++) {
     const PlayUtils::BenchmarkResults* baseline = (i == 0) ? NULL : &results[0];
     SearchParams thisParams = params;
-    thisParams.numThreads = numThreadsToTest[i];
+    setNumThreads(thisParams,nnEval,logger,numThreadsToTest[i],sgf);
     PlayUtils::BenchmarkResults result = PlayUtils::benchmarkSearchOnPositionsAndPrint(
       thisParams,
       sgf,
       numPositionsPerGame,
       nnEval,
-      logger,
       baseline,
       secondsPerGameMove,
       printElo
@@ -322,7 +391,7 @@ static vector<PlayUtils::BenchmarkResults> doAutoTuneThreads(
 ) {
   vector<PlayUtils::BenchmarkResults> results;
 
-  cout << "Automatically trying different numbers of threads to home in on the best: " << endl;
+  cout << "Automatically trying different numbers of threads to home in on the best (board size " << sgf->xSize << "x" << sgf->ySize << "): " << endl;
   cout << endl;
 
   map<int, PlayUtils::BenchmarkResults> resultCache; // key is threads
@@ -332,13 +401,12 @@ static vector<PlayUtils::BenchmarkResults> doAutoTuneThreads(
       const PlayUtils::BenchmarkResults* baseline = NULL;
       bool printElo = false;
       SearchParams thisParams = params;
-      thisParams.numThreads = numThreads;
+      setNumThreads(thisParams,nnEval,logger,numThreads,sgf);
       PlayUtils::BenchmarkResults result = PlayUtils::benchmarkSearchOnPositionsAndPrint(
         thisParams,
         sgf,
         numPositionsPerGame,
         nnEval,
-        logger,
         baseline,
         secondsPerGameMove,
         printElo
@@ -365,20 +433,32 @@ static vector<PlayUtils::BenchmarkResults> doAutoTuneThreads(
 
   sort(possibleNumbersOfThreads.begin(), possibleNumbersOfThreads.end());
 
-  int ternarySearchMax = ternarySearchInitialMax;
+  //Adjusted for number of GPUs - it makes no sense to test low values if you have lots of GPUs
+  int ternarySearchMin = nnEval->getNumGpus();
+  int ternarySearchMax = (int)round(ternarySearchInitialMax * 0.5 * (1 + nnEval->getNumGpus()));
+  if(ternarySearchMax < ternarySearchMin * 4)
+    ternarySearchMax = ternarySearchMin * 4;
+
   while(true) {
     reallocateNNEvalWithEnoughBatchSize(ternarySearchMax);
     cout << endl;
 
     int start = 0;
-    int end = ternarySearchMax;
-
-    cout << "Possible numbers of threads to test: ";
+    int end = (int)possibleNumbersOfThreads.size()-1;
     for(int i = 0; i < possibleNumbersOfThreads.size(); i++) {
+      if(possibleNumbersOfThreads[i] < ternarySearchMin) {
+        start = i + 1;
+      }
       if(possibleNumbersOfThreads[i] > ternarySearchMax) {
         end = i - 1;
         break;
       }
+    }
+    if(start > end)
+      start = end;
+
+    cout << "Possible numbers of threads to test: ";
+    for(int i = start; i <= end; i++) {
       cout << possibleNumbersOfThreads[i] << ", ";
     }
     cout << endl;
@@ -411,10 +491,11 @@ static vector<PlayUtils::BenchmarkResults> doAutoTuneThreads(
       }
     }
 
-    // If our optimal thread count is in the top 2/3 of the maximum search limit, triple the search limit and repeat.
-    if(3 * bestThreads > 2 * ternarySearchMax && ternarySearchMax < 1000) {
-      ternarySearchMax *= 3;
-      cout << endl << endl << "Optimal number of threads is fairly high, tripling the search limit and trying again." << endl << endl;
+    //If our optimal thread count is in the top 2/3 of the maximum search limit, increase the search limit and repeat.
+    if(3 * bestThreads > 2 * ternarySearchMax && ternarySearchMax < 5000) {
+      ternarySearchMin = ternarySearchMax / 2;
+      ternarySearchMax = ternarySearchMax * 2 + 32;
+      cout << endl << endl << "Optimal number of threads is fairly high, increasing the search limit and trying again." << endl << endl;
       continue;
     }
     else {
@@ -431,7 +512,7 @@ static vector<PlayUtils::BenchmarkResults> doAutoTuneThreads(
 }
 
 
-int MainCmds::genconfig(int argc, const char* const* argv, const char* firstCommand) {
+int MainCmds::genconfig(const vector<string>& args, const string& firstCommand) {
   Board::initHash();
   ScoreValue::initTables();
 
@@ -444,7 +525,7 @@ int MainCmds::genconfig(int argc, const char* const* argv, const char* firstComm
 
     TCLAP::ValueArg<string> outputFileArg("","output","Path to write new config (default gtp.cfg)",false,string("gtp.cfg"),"FILE");
     cmd.add(outputFileArg);
-    cmd.parse(argc,argv);
+    cmd.parseArgs(args);
 
     outputFile = outputFileArg.getValue();
     modelFile = cmd.getModelFile();
@@ -460,9 +541,13 @@ int MainCmds::genconfig(int argc, const char* const* argv, const char* firstComm
       try {
         cout << prompt << std::flush;
         string line;
-        std::getline(std::cin, line);
-        parse(Global::trim(line));
-        break;
+        if(std::getline(std::cin, line)) {
+          parse(Global::trim(line));
+          break;
+        }
+        else {
+          break;
+        }
       }
       catch(const StringError& err) {
         string what = err.what();
@@ -470,6 +555,9 @@ int MainCmds::genconfig(int argc, const char* const* argv, const char* firstComm
         if(what.length() > 0)
           cout << err.what() << endl;
       }
+    }
+    if(!std::cin) {
+      throw StringError("Stdin was closed - failing and not generating a config");
     }
   };
 
@@ -483,7 +571,7 @@ int MainCmds::genconfig(int argc, const char* const* argv, const char* firstComm
       throw StringError("Please answer y or n");
   };
 
-  if(bfs::exists(bfs::path(outputFile))) {
+  if(gfs::exists(gfs::path(outputFile))) {
     bool b = false;
     promptAndParseInput("File " + outputFile + " already exists, okay to overwrite it with an entirely new config (y/n)?\n", [&](const string& line) { parseYN(line,b); });
     if(!b) {
@@ -492,7 +580,7 @@ int MainCmds::genconfig(int argc, const char* const* argv, const char* firstComm
     }
   }
 
-  int boardSize = 19;
+  int boardSize = TestCommon::DEFAULT_BENCHMARK_SGF_DATA_SIZE;
   string sgfData = TestCommon::getBenchmarkSGFData(boardSize);
   CompactSgf* sgf = CompactSgf::parse(sgfData);
 
@@ -634,6 +722,7 @@ int MainCmds::genconfig(int argc, const char* const* argv, const char* firstComm
   cout << "=========================================================================" << endl;
   cout << "GPUS AND RAM" << endl;
 
+#ifndef USE_EIGEN_BACKEND
   {
     cout << endl;
     cout << "Finding available GPU-like devices..." << endl;
@@ -654,12 +743,13 @@ int MainCmds::genconfig(int argc, const char* const* argv, const char* firstComm
         }
       });
   }
+#endif
 
   {
     cout << endl;
     string prompt =
       "By default, KataGo will cache up to about 3GB of positions in memory (RAM), in addition to\n"
-      "whatever the current search is using. Specify a max in GB or leave blank for default:\n";
+      "whatever the current search is using. Specify a different max in GB or leave blank for default:\n";
     promptAndParseInput(prompt, [&](const string& line) {
         string s = Global::toLower(line);
         if(Global::isSuffix(s,"gb"))
@@ -693,7 +783,7 @@ int MainCmds::genconfig(int argc, const char* const* argv, const char* firstComm
   cout << "PERFORMANCE TUNING" << endl;
 
   bool skipThreadTuning = false;
-  if(bfs::exists(bfs::path(outputFile))) {
+  if(gfs::exists(gfs::path(outputFile))) {
     int oldConfigNumSearchThreads = -1;
     try {
       ConfigParser oldCfg(outputFile);
@@ -767,11 +857,11 @@ int MainCmds::genconfig(int argc, const char* const* argv, const char* firstComm
     istringstream inConfig(configFileContents);
     ConfigParser cfg(inConfig);
 
-    Logger logger;
-    logger.setLogToStdout(true);
+    const bool logToStdOut = true;
+    Logger logger(&cfg, logToStdOut);
     logger.write("Loading model and initializing benchmark...");
 
-    SearchParams params = Setup::loadSingleParams(cfg);
+    SearchParams params = Setup::loadSingleParams(cfg,Setup::SETUP_FOR_BENCHMARK);
     params.maxVisits = defaultMaxVisits;
     params.maxPlayouts = defaultMaxVisits;
     params.maxTime = 1e20;
@@ -780,22 +870,28 @@ int MainCmds::genconfig(int argc, const char* const* argv, const char* firstComm
 
     Setup::initializeSession(cfg);
 
+    int maxNumThreadsForCurrentNNEval = -1;
     NNEvaluator* nnEval = NULL;
     auto reallocateNNEvalWithEnoughBatchSize = [&](int maxNumThreads) {
+      if(nnEval != NULL && maxNumThreads <= maxNumThreadsForCurrentNNEval)
+        return;
       if(nnEval != NULL)
         delete nnEval;
       nnEval = createNNEval(maxNumThreads, sgf, modelFile, logger, cfg, params);
+      maxNumThreadsForCurrentNNEval = maxNumThreads;
     };
     cout << endl;
 
     int64_t maxVisits;
     if(maxVisitsFromUser > 0) {
       maxVisits = maxVisitsFromUser;
+      //Make sure we have an nneval that isn't null
+      reallocateNNEvalWithEnoughBatchSize(ternarySearchInitialMax);
     }
     else {
       cout << "Running quick initial benchmark at 16 threads!" << endl;
       vector<int> numThreads = {16};
-      reallocateNNEvalWithEnoughBatchSize(ternarySearchInitialMax);
+      reallocateNNEvalWithEnoughBatchSize(std::max(16,ternarySearchInitialMax));
       vector<PlayUtils::BenchmarkResults> results = doFixedTuneThreads(params,sgf,3,nnEval,logger,secondsPerGameMove,numThreads,false);
       double visitsPerSecond = results[0].totalVisits / (results[0].totalSeconds + 0.00001);
       //Make tests use about 2 seconds each
@@ -836,7 +932,8 @@ int MainCmds::genconfig(int argc, const char* const* argv, const char* firstComm
   cout << "DONE" << endl;
   cout << endl;
   cout << "Writing new config file to " << outputFile << endl;
-  ofstream out(outputFile, ofstream::out | ofstream::trunc);
+  ofstream out;
+  FileUtils::open(out, outputFile, ofstream::out | ofstream::trunc);
   out << configFileContents;
   out.close();
 

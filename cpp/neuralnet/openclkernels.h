@@ -4,8 +4,14 @@
 #include "../core/global.h"
 
 namespace OpenCLKernels {
+  extern std::string fp16StorageDefine;
+  extern std::string fp16ComputeDefine;
+
+  extern std::string common;
   extern std::string conv2dNCHW;
-  extern std::string winogradConvNCHW;
+  extern std::string winogradTransformNCHW;
+  extern std::string winogradBNReluTransformNCHW;
+  extern std::string winogradUntransformNCHW;
   extern std::string scaleBiasMaskNCHW;
   extern std::string scaleBiasMaskReluNCHW;
   extern std::string addPointWise;
@@ -17,13 +23,11 @@ namespace OpenCLKernels {
   extern std::string addChannelBiasesNCHW;
   extern std::string addCBiasesNC;
   extern std::string addCBiasesNCRelu;
-  extern std::string transposeNCHW;
-  extern std::string mirror;
   extern std::string extractChannel0NCHW;
 
   extern std::string xgemmDirect;
   extern std::string xgemm;
-
+  extern std::string hgemmWmma;
 }
 
 

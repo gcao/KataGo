@@ -6,23 +6,23 @@ DESCRIPTION:
 
 USAGE: 
 
-   match  -config <FILE> -log-file <FILE> [-sgf-output-dir <DIR>] [...other
-          flags...]
+   match  -config <FILE> ...  [-log-file <FILE>] [-sgf-output-dir <DIR>]
+          [...other flags...]
 
 
 Where: 
 
-   -config <FILE>
-     (required)  Config file to use (see match_example.cfg or
-     configs/match_example.cfg).
+   -config <FILE>  (accepted multiple times)
+     (required)  Config file(s) to use, can be one or multiple files (see
+     match_example.cfg or configs/match_example.cfg).
 
    -log-file <FILE>
-     (required)  Log file to output to
+     Log file to output to
 
    -sgf-output-dir <DIR>
      Dir to output sgf files
 
-   -override-config <KEYVALUEPAIRS>
+   -override-config <KEYVALUEPAIRS>  (accepted multiple times)
      Override config parameters. Format: "key=value, key=value,..."
 
    --,  -ignore_rest

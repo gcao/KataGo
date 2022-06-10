@@ -19,8 +19,12 @@ namespace Hash
 
   uint64_t basicLCong(uint64_t x);
   uint64_t basicLCong2(uint64_t x);
+
+  //Bit mixers
   uint64_t murmurMix(uint64_t x);
   uint64_t splitMix64(uint64_t x);
+  uint64_t rrmxmx(uint64_t x);
+  uint64_t nasam(uint64_t x);
 
   void jenkinsMix(uint32_t& a, uint32_t& b, uint32_t& c);
   uint32_t jenkinsMixSingle(uint32_t a, uint32_t b, uint32_t c);
@@ -55,6 +59,8 @@ struct Hash128
   Hash128& operator&=(const Hash128 other);
 
   friend std::ostream& operator<<(std::ostream& out, const Hash128 other);
+  std::string toString() const;
+  static Hash128 ofString(const std::string& s);
 };
 
 inline Hash128::Hash128()

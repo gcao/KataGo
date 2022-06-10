@@ -1,5 +1,8 @@
 #include "../tests/tests.h"
 
+#include "../game/graphhash.h"
+#include "../program/playutils.h"
+
 using namespace std;
 using namespace TestCommon;
 
@@ -317,7 +320,7 @@ BC50 BC50 x 52 y 20
     out << board2 << endl;
 
     string expected = R"%%(
-HASH: FF41A6A8C248603FA60347F93F085846
+HASH: 27902CF3F972B1855303DB453BF8DE63
    A B C D E F
  5 . . . . . .
  4 . . . . . .
@@ -326,7 +329,7 @@ HASH: FF41A6A8C248603FA60347F93F085846
  1 . . . . . .
 
 
-HASH: 6B93B11D3BA70C1DF1D07EE065566210
+HASH: BC864FD8F525EE9D6B590472C800841A
    A B C D E F
  5 . . . . . .
  4 . . . . . .
@@ -724,6 +727,121 @@ After white
 
   //============================================================================
   {
+    const char* name = "Distance";
+    Board board(17,12);
+
+    auto testDistance = [&](int x0, int y0, int x1, int y1) {
+      out << "distance (" << x0 << "," << y0 << ") (" << x1 << "," << y1 << ") = " <<
+      Location::distance(Location::getLoc(x0,y0,board.x_size),Location::getLoc(x1,y1,board.x_size),board.x_size) << endl;
+    };
+    auto testEuclideanDistance = [&](int x0, int y0, int x1, int y1) {
+      out << "euclideanSq (" << x0 << "," << y0 << ") (" << x1 << "," << y1 << ") = " <<
+      Location::euclideanDistanceSquared(Location::getLoc(x0,y0,board.x_size),Location::getLoc(x1,y1,board.x_size),board.x_size) << endl;
+    };
+    testDistance(13,6,12,3);
+    testDistance(13,6,12,4);
+    testDistance(13,6,12,5);
+    testDistance(13,6,12,6);
+    testDistance(13,6,12,7);
+    testDistance(13,6,13,3);
+    testDistance(13,6,13,4);
+    testDistance(13,6,13,5);
+    testDistance(13,6,13,6);
+    testDistance(13,6,13,7);
+    testDistance(13,6,14,3);
+    testDistance(13,6,14,4);
+    testDistance(13,6,14,5);
+    testDistance(13,6,14,6);
+    testDistance(13,6,14,7);
+    testDistance(13,6,15,3);
+    testDistance(13,6,15,4);
+    testDistance(13,6,15,5);
+    testDistance(13,6,15,6);
+    testDistance(13,6,15,7);
+    testDistance(13,6,0,0);
+    testDistance(13,6,16,11);
+    testDistance(13,6,0,11);
+    testDistance(13,6,16,0);
+    testEuclideanDistance(13,6,12,3);
+    testEuclideanDistance(13,6,12,4);
+    testEuclideanDistance(13,6,12,5);
+    testEuclideanDistance(13,6,12,6);
+    testEuclideanDistance(13,6,12,7);
+    testEuclideanDistance(13,6,13,3);
+    testEuclideanDistance(13,6,13,4);
+    testEuclideanDistance(13,6,13,5);
+    testEuclideanDistance(13,6,13,6);
+    testEuclideanDistance(13,6,13,7);
+    testEuclideanDistance(13,6,14,3);
+    testEuclideanDistance(13,6,14,4);
+    testEuclideanDistance(13,6,14,5);
+    testEuclideanDistance(13,6,14,6);
+    testEuclideanDistance(13,6,14,7);
+    testEuclideanDistance(13,6,15,3);
+    testEuclideanDistance(13,6,15,4);
+    testEuclideanDistance(13,6,15,5);
+    testEuclideanDistance(13,6,15,6);
+    testEuclideanDistance(13,6,15,7);
+    testEuclideanDistance(13,6,0,0);
+    testEuclideanDistance(13,6,16,11);
+    testEuclideanDistance(13,6,0,11);
+    testEuclideanDistance(13,6,16,0);
+
+    string expected = R"%%(
+distance (13,6) (12,3) = 4
+distance (13,6) (12,4) = 3
+distance (13,6) (12,5) = 2
+distance (13,6) (12,6) = 1
+distance (13,6) (12,7) = 2
+distance (13,6) (13,3) = 3
+distance (13,6) (13,4) = 2
+distance (13,6) (13,5) = 1
+distance (13,6) (13,6) = 0
+distance (13,6) (13,7) = 1
+distance (13,6) (14,3) = 4
+distance (13,6) (14,4) = 3
+distance (13,6) (14,5) = 2
+distance (13,6) (14,6) = 1
+distance (13,6) (14,7) = 2
+distance (13,6) (15,3) = 5
+distance (13,6) (15,4) = 4
+distance (13,6) (15,5) = 3
+distance (13,6) (15,6) = 2
+distance (13,6) (15,7) = 3
+distance (13,6) (0,0) = 19
+distance (13,6) (16,11) = 8
+distance (13,6) (0,11) = 18
+distance (13,6) (16,0) = 9
+euclideanSq (13,6) (12,3) = 10
+euclideanSq (13,6) (12,4) = 5
+euclideanSq (13,6) (12,5) = 2
+euclideanSq (13,6) (12,6) = 1
+euclideanSq (13,6) (12,7) = 2
+euclideanSq (13,6) (13,3) = 9
+euclideanSq (13,6) (13,4) = 4
+euclideanSq (13,6) (13,5) = 1
+euclideanSq (13,6) (13,6) = 0
+euclideanSq (13,6) (13,7) = 1
+euclideanSq (13,6) (14,3) = 10
+euclideanSq (13,6) (14,4) = 5
+euclideanSq (13,6) (14,5) = 2
+euclideanSq (13,6) (14,6) = 1
+euclideanSq (13,6) (14,7) = 2
+euclideanSq (13,6) (15,3) = 13
+euclideanSq (13,6) (15,4) = 8
+euclideanSq (13,6) (15,5) = 5
+euclideanSq (13,6) (15,6) = 4
+euclideanSq (13,6) (15,7) = 5
+euclideanSq (13,6) (0,0) = 205
+euclideanSq (13,6) (16,11) = 34
+euclideanSq (13,6) (0,11) = 194
+euclideanSq (13,6) (16,0) = 45
+)%%";
+    expect(name,out,expected);
+  }
+
+  //============================================================================
+  {
     const char* name = "IsAdjacentToPla";
     Board board = Board::parseBoard(9,9,R"%%(
 .........
@@ -780,6 +898,68 @@ Adj white
 011110111
 001101111
 
+)%%";
+    expect(name,out,expected);
+  }
+
+
+  //============================================================================
+  {
+    const char* name = "wouldBeCapture";
+    Board board = Board::parseBoard(9,9,R"%%(
+.....oxx.
+..o.o.oox
+.oxo.oxx.
+.o.o..x..
+.xox.x.xo
+..x..oxo.
+....o.oxx
+xo...oxox
+.xo..x.oo
+)%%");
+
+    out << endl;
+    out << "WouldBeCapture black" << endl;
+    for(int y = 0; y<board.y_size; y++) {
+      for(int x = 0; x<board.x_size; x++) {
+        Loc loc = Location::getLoc(x,y,board.x_size);
+        out << (int)board.wouldBeCapture(loc,P_BLACK);
+      }
+      out << endl;
+    }
+    out << endl;
+    out << "WouldBeCapture white" << endl;
+    for(int y = 0; y<board.y_size; y++) {
+      for(int x = 0; x<board.x_size; x++) {
+        Loc loc = Location::getLoc(x,y,board.x_size);
+        out << (int)board.wouldBeCapture(loc,P_WHITE);
+      }
+      out << endl;
+    }
+    out << endl;
+
+    string expected = R"%%(
+WouldBeCapture black
+000000000
+000001000
+000000000
+001000000
+000000000
+000000001
+000001000
+000000000
+000000100
+
+WouldBeCapture white
+000000001
+000000000
+000000000
+001000000
+000000100
+000000001
+000000000
+000000000
+100000100
 )%%";
     expect(name,out,expected);
   }
@@ -1421,6 +1601,296 @@ o.ooo.ox.
     expect(name,out,expected);
   }
 
+  //============================================================================
+  {
+    const char* name = "simpleRepetitionBoundOpen";
+    Board board = Board::parseBoard(19,19,R"%%(
+   A B C D E F G H J K L M N O P Q R S T
+19 . . . . . . . . . . . . . . . . . . .
+18 . . . . . . . . . . . . . . . . . . .
+17 . . . . . . . . . . . . . . . . . . .
+16 . . . . . . . . . . . . . . . O . . .
+15 . . . . . . . . . . . . . . . . . . .
+14 . . . . . . . . . . . . . . . . . . .
+13 . . . . . . . . . . . . . . . . . . .
+12 . . . . . . . . . . . . . . . . . . .
+11 . . . . . . . . . . . . . . . . . . .
+10 . . . . . . . . . . . . . . . . . . .
+ 9 . . . . . . . . . . . . . . . . . . .
+ 8 . . . . . . . . . . . . . . . . . . .
+ 7 . . O . . . . . . . . . . . . . . . .
+ 6 . . X O . . . . . . . . . . . . . . .
+ 5 . . X . . . . . . . . . . . . . . . .
+ 4 . . . X . . . . . . . . . . . . . . .
+ 3 . . . . . . . . . . . . . . . . . . .
+ 2 . . . . . . . . . . . . . . . . . . .
+ 1 . . . . . . . . . . . . . . . . . . .
+)%%");
+
+    Board startBoard = board;
+    for(Player pla = 0; pla <= 2; pla++) {
+      for(int y = 0; y<board.y_size; y++) {
+        for(int x = 0; x<board.x_size; x++) {
+          Loc loc = Location::getLoc(x,y,board.x_size);
+          if(board.colors[loc] != C_EMPTY) {
+            if(pla != C_EMPTY) {
+              out << "   " << PlayerIO::colorToChar(board.colors[loc]);
+            }
+            else {
+              int bound;
+              for(bound = 0; bound < 362; bound++) {
+                if(!board.simpleRepetitionBoundGt(loc,bound))
+                  break;
+              }
+              out << Global::strprintf(" %3d", bound);
+              for(; bound < 362; bound++) {
+                testAssert(!board.simpleRepetitionBoundGt(loc,bound));
+              }
+            }
+            board.checkConsistency();
+          }
+          else {
+            if(pla == C_EMPTY) {
+              out << "   .";
+            }
+            else {
+              Board boardCopy = board;
+              boardCopy.clearSimpleKoLoc();
+              bool isMultiStoneSuicideLegal = true;
+              bool suc = boardCopy.playMove(loc, pla, isMultiStoneSuicideLegal);
+              if(!suc)
+                out << "   .";
+              else {
+                int bound;
+                for(bound = 0; bound < 362; bound++) {
+                  if(!boardCopy.simpleRepetitionBoundGt(loc,bound))
+                    break;
+                }
+                out << Global::strprintf(" %3d", bound);
+                for(; bound < 362; bound++) {
+                  testAssert(!boardCopy.simpleRepetitionBoundGt(loc,bound));
+                }
+              }
+              boardCopy.checkConsistency();
+            }
+          }
+        }
+        out << endl;
+      }
+      out << endl;
+    }
+    board.checkConsistency();
+    testAssert(boardsSeemEqual(board,startBoard));
+
+    string expected = R"%%(
+   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   .   .   .   .   .   .   .   .   .   .   .   .   .   . 356   .   .   .
+   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   . 356   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   . 357 356   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   . 357   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   .   . 356   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .   .
+
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355   O 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355   O 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 357   X   O 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 357   X 358 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 358   X 356 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 356 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 356 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 356   O 356 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 356 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 356 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 356   O 357 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355   X   O 356 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355   X 356 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355   X 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+ 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355 355
+)%%";
+    expect(name,out,expected);
+  }
+
+  //============================================================================
+  {
+    const char* name = "simpleRepetitionBound";
+    Board board = Board::parseBoard(19,19,R"%%(
+   A B C D E F G H J K L M N O P Q R S T
+19 . . X O . X O . X O O . . . . O X . .
+18 . . . X X O O X . . X O O . O X X X X
+17 . X . . X X X X X X X . . O O O X O .
+16 X . . X O X O O O O X X O O X O X X .
+15 O X X . O O . O . . X . O X X X O X .
+14 . O O O . . X O X X X O O . X X O X O
+13 O . . . . O O X O O O O . O X O O O .
+12 X O O O O . X X . . O X X . X O . O X
+11 . X . X . X . . X . O . X . X X X O .
+10 X . . X . . X O X X O O X O . X O . O
+ 9 . X . O X . X X O . X O . O X . O . .
+ 8 . X . O . . X O O . X O O X X X O X .
+ 7 . O X . . O O . . X X O . O X X O O .
+ 6 X X O X . . . . X . X O O . . X X O .
+ 5 O . O O O O O X . . . X O O O X O X .
+ 4 . O . O X X . O X X X X X O X X O . .
+ 3 . . . O X O O O X . . X O X . X O . .
+ 2 . . O X X O X X O . X . O X . . O X .
+ 1 . . O . . X . O O . . X O . . . O . .
+)%%");
+
+    Board startBoard = board;
+    for(Player pla = 0; pla <= 2; pla++) {
+      for(int y = 0; y<board.y_size; y++) {
+        for(int x = 0; x<board.x_size; x++) {
+          Loc loc = Location::getLoc(x,y,board.x_size);
+          if(board.colors[loc] != C_EMPTY) {
+            if(pla != C_EMPTY) {
+              out << "   " << PlayerIO::colorToChar(board.colors[loc]);
+            }
+            else {
+              int bound;
+              for(bound = 0; bound < 362; bound++) {
+                if(!board.simpleRepetitionBoundGt(loc,bound))
+                  break;
+              }
+              out << Global::strprintf(" %3d", bound);
+              for(; bound < 362; bound++) {
+                testAssert(!board.simpleRepetitionBoundGt(loc,bound));
+              }
+            }
+            board.checkConsistency();
+          }
+          else {
+            if(pla == C_EMPTY) {
+              out << "   .";
+            }
+            else {
+              Board boardCopy = board;
+              boardCopy.clearSimpleKoLoc();
+              bool isMultiStoneSuicideLegal = true;
+              bool suc = boardCopy.playMove(loc, pla, isMultiStoneSuicideLegal);
+              if(!suc)
+                out << "   .";
+              else {
+                int bound;
+                for(bound = 0; bound < 362; bound++) {
+                  if(!boardCopy.simpleRepetitionBoundGt(loc,bound))
+                    break;
+                }
+                out << Global::strprintf(" %3d", bound);
+                for(; bound < 362; bound++) {
+                  testAssert(!boardCopy.simpleRepetitionBoundGt(loc,bound));
+                }
+              }
+              boardCopy.checkConsistency();
+            }
+          }
+        }
+        out << endl;
+      }
+      out << endl;
+    }
+    board.checkConsistency();
+    testAssert(boardsSeemEqual(board,startBoard));
+
+    string expected = R"%%(
+   .   .  11   2   .   2   4   .   4   9   9   .   .   .   .   6  15   .   .
+   .   .   .  37  37   4   4  37   .   .  37   9   9   .  46  15  15  15  15
+   .  11   .   .  37  37  37  37  37  37  37   .   .  46  46  46  15   4   .
+  11   .   .  12  11  37   9   9   9   9  37  37  46  46  18  46  15  15   .
+   2  13  13   .  11  11   .   9   .   .  37   .  46  18  18  18  25  15   .
+   .  11  11  11   .   .   8   9  37  37  37  46  46   .  18  18  25  15   5
+   8   .   .   .   .   9   9   9  46  46  46  46   .   5  18  25  25  25   .
+   2  30  30  30  30   .   9   9   .   .  46   9   9   .  18  25   .  25   3
+   .   7   .  21   .  18   .   .  10   .  46   .   9   .  18  18  18  25   .
+  10   .   .  21   .   .  20   3  10  10  46  46   9   6   .  18  21   .  16
+   .  10   .  21  15   .  20  20  19   .  25  46   .   6  22   .  21   .   .
+   .  10   .  21   .   .  20  19  19   .  25  46  46  22  22  22  21  15   .
+   .   4  20   .   .  16  16   .   .  25  25  46   .   4  22  22  21  21   .
+   6   6  33  15   .   .   .   .  19   .  25  46  46   .   .  22  22  21   .
+  11   .  33  33  33  33  33  19   .   .   .  18  46  46  46  22  25  15   .
+   .  11   .  33   8   8   .   6  18  18  18  18  18  46  22  22  25   .   .
+   .   .   .  33   8   6   6   6  18   .   .  18  10   8   .  22  25   .   .
+   .   .  13   8   8   6   3   3   9   .   7   .  10   8   .   .  25  15   .
+   .   .  13   .   .   4   .   9   9   .   .   7  10   .   .   .  25   .   .
+
+  10  11   X   O  39   X   O  41   X   O   O   5   5   5   6   O   X  15  15
+  10  11  38   X   X   O   O   X  38  37   X   O   O   5   O   X   X   X   X
+  12   X  11  39   X   X   X   X   X   X   X  37   2   O   O   O   X   O  16
+   X  15  14   X   O   X   O   O   O   O   X   X   O   O   X   O   X   X  15
+   O   X   X  14   O   O   8   O  37  37   X  37   O   X   X   X   O   X  15
+   2   O   O   O   6   8   X   O   X   X   X   O   O  18   X   X   O   X   O
+   O   6   6   6   6   O   O   X   O   O   O   O   9   O   X   O   O   O   3
+   X   O   O   O   O  24   X   X  14   3   O   X   X  25   X   O  18   O   X
+  12   X  23   X  25   X  28  15   X  10   O   9   X  25   X   X   X   O   3
+   X  13  21   X  22  22   X   O   X   X   O   O   X   O  38   X   O  14   O
+  12   X  10   O   X  21   X   X   O  33   X   O   9   O   X  38   O  15  14
+  10   X  25   O  15  20   X   O   O  25   X   O   O   X   X   X   O   X  15
+   7   O   X  21  14   O   O  14  26   X   X   O   .   O   X   X   O   O  14
+   X   X   O   X  15  14  14  20   X  26   X   O   O   2  22   X   X   O  14
+   O   6   O   O   O   O   O   X  34  18  39   X   O   O   O   X   O   X  15
+   9   O   9   O   X   X  13   O   X   X   X   X   X   O   X   X   O  15  14
+   9   9   9   O   X   O   O   O   X  18  19   X   O   X  24   X   O  15  14
+   9   9   O   X   X   O   X   X   O   7   X  20   O   X   8  22   O   X  15
+   9   9   O   8  10   X   6   O   O   5   8   X   O   8   6   6   O  15  14
+
+  10  10   X   O   3   X   O   4   X   O   O  13   9   5  47   O   X   2   2
+  10  10  10   X   X   O   O   X   2   9   X   O   O  48   O   X   X   X   X
+  10   X  10  10   X   X   X   X   X   X   X   9  48   O   O   O   X   O   4
+   X  10  10   X   O   X   O   O   O   O   X   X   O   O   X   O   X   X   3
+   O   X   X  15   O   O  19   O   9   9   X  46   O   X   X   X   O   X   5
+  13   O   O   O  15  14   X   O   X   X   X   O   O  49   X   X   O   X   O
+   O  36  35  35  32   O   O   X   O   O   O   O  49   O   X   O   O   O  29
+   X   O   O   O   O  32   X   X  46  46   O   X   X   5   X   O  25   O   X
+   2   X  30   X  30   X   2   3   X  46   O  46   X   6   X   X   X   O  26
+   X   5   5   X  14  14   X   O   X   X   O   O   X   O   6   X   O  33   O
+   3   X  21   O   X  14   X   X   O  19   X   O  51   O   X  21   O  21  16
+   3   X  21   O  21  16   X   O   O  19   X   O   O   X   X   X   O   X  14
+   4   O   X  21  16   O   O  21  19   X   X   O  47   O   X   X   O   O  21
+   X   X   O   X  33  35  35  14   X   4   X   O   O  47  46   X   X   O  21
+   O  35   O   O   O   O   O   X   4   4   4   X   O   O   O   X   O   X  14
+  12   O  34   O   X   X  38   O   X   X   X   X   X   O   X   X   O  25  14
+   9  11  37   O   X   O   O   O   X   5   5   X   O   X   6   X   O  25  14
+   9  13   O   X   X   O   X   X   O   9   X  10   O   X   6  25   O   X  14
+   9  13   O  13   2   X  11   O   O   9   5   X   O  10   6  25   O  25  14
+)%%";
+    expect(name,out,expected);
+  }
+
 }
 
 
@@ -1486,10 +1956,10 @@ void Tests::runBoardUndoTest() {
 
   string expected = R"%%(
 
-regularMoveCount 2431
-passCount 482
-koCaptureCount 25
-suicideCount 87
+regularMoveCount 2446
+passCount 475
+koCaptureCount 24
+suicideCount 79
 
 )%%";
   expect("Board undo test move counts",out,expected);
@@ -1684,7 +2154,13 @@ void Tests::runBoardStressTest() {
           testAssert(boardsSeemEqual(copy,board));
           testAssert(loc < 0 || loc >= Board::MAX_ARR_SIZE || board.colors[loc] != C_EMPTY || board.isIllegalSuicide(loc,pla,multiStoneSuicideLegal[i]) || board.isKoBanned(loc));
           if(board.isKoBanned(loc)) {
-            testAssert(board.colors[loc] == C_EMPTY && (board.wouldBeKoCapture(loc,C_BLACK) || board.wouldBeKoCapture(loc,C_WHITE)));
+            testAssert(board.colors[loc] == C_EMPTY);
+            testAssert(board.wouldBeKoCapture(loc,C_BLACK) || board.wouldBeKoCapture(loc,C_WHITE));
+            testAssert(board.wouldBeCapture(loc,C_BLACK) || board.wouldBeCapture(loc,C_WHITE));
+            if(board.isAdjacentToPla(loc,getOpp(pla))) {
+              testAssert(board.wouldBeKoCapture(loc,pla));
+              testAssert(board.wouldBeCapture(loc,pla));
+            }
             koBanCount++;
           }
         }
@@ -1699,6 +2175,7 @@ void Tests::runBoardStressTest() {
           testAssert(board.colors[loc] == C_EMPTY);
           testAssert(board.isLegal(loc,pla,multiStoneSuicideLegal[i]));
           testAssert(multiStoneSuicideLegal[i]);
+          testAssert(!copy.wouldBeCapture(loc,pla));
           suicideCount++;
         }
         else {
@@ -1709,9 +2186,14 @@ void Tests::runBoardStressTest() {
           if(board.ko_loc != Board::NULL_LOC) {
             koCaptureCount++;
             testAssert(copy.wouldBeKoCapture(loc,pla));
+            testAssert(copy.wouldBeCapture(loc,pla));
           }
           else
             testAssert(!copy.wouldBeKoCapture(loc,pla));
+          if(!board.isAdjacentToPla(loc,getOpp(pla)) && copy.isAdjacentToPla(loc,getOpp(pla)))
+            testAssert(copy.wouldBeCapture(loc,pla));
+          if(!copy.isAdjacentToPla(loc,getOpp(pla)))
+            testAssert(!copy.wouldBeCapture(loc,pla));
 
           regularMoveCount++;
         }
@@ -1733,16 +2215,115 @@ void Tests::runBoardStressTest() {
     out << "Caps " << boards[i].numBlackCaptures << " " << boards[i].numWhiteCaptures << endl;
   string expected = R"%%(
 
-regularMoveCount 37740
-passCount 280
-koCaptureCount 188
-koBanCount 31
-suicideCount 451
-Caps 4839 4688
-Caps 4853 4672
-Caps 5002 4967
-Caps 4369 4382
+regularMoveCount 38017
+passCount 273
+koCaptureCount 212
+koBanCount 45
+suicideCount 440
+Caps 4753 5024
+Caps 4821 4733
+Caps 4995 5041
+Caps 4420 4335
 
 )%%";
   expect("Board stress test move counts",out,expected);
 }
+
+void Tests::runBoardReplayTest() {
+  cout << "Running board replay test" << endl;
+  Rand rand("runBoardReplayTest");
+
+  Board base = Board::parseBoard(9,5,R"%%(
+.xo.o.ooo
+xo.oooooo
+.xooxxxo.
+oxxxxx.xo
+.o.xx.xo.
+)%%");
+
+  for(int rep = 0; rep<6000; rep++) {
+    Board board(base);
+    Player pla = rand.nextBool(0.5) ? P_BLACK : P_WHITE;
+    int initialEncorePhase = rand.nextBool(0.9) ? 0 : rand.nextBool(0.5) ? 1 : 2;
+    Rules rules = rand.nextBool(0.8) ? Rules::parseRules("japanese") : Rules::parseRules("chinese");
+    if(rules.scoringRule == Rules::SCORING_AREA)
+      initialEncorePhase = 0;
+    if(rand.nextBool(0.1))
+      rules.koRule = rand.nextBool(0.5) ? Rules::KO_SITUATIONAL : Rules::KO_POSITIONAL;
+    if(rand.nextBool(0.2))
+      rules.taxRule = rand.nextBool(0.5) ? Rules::TAX_SEKI : rand.nextBool(0.5) ? Rules::TAX_NONE : Rules::TAX_ALL;
+    BoardHistory hist(board,pla,rules,initialEncorePhase);
+    hist.setInitialTurnNumber(rand.nextInt(0,40));
+    hist.setAssumeMultipleStartingBlackMovesAreHandicap(rand.nextBool(0.5));
+
+    double drawEquivalentWinsForWhite = 0.7;
+    int repBound = rand.nextInt(1,5);
+
+    Hash128 graphHash = GraphHash::getGraphHashFromScratch(hist, pla, repBound, drawEquivalentWinsForWhite);
+
+    bool anyKomiSet = false;
+    double passProb = rand.nextDouble(0.05,0.80);
+    int numSteps = rand.nextInt(6,15);
+    for(int i = 0; i<numSteps; i++) {
+      BoardHistory tmpHist(board,pla,rules,hist.encorePhase);
+      Loc moveLoc;
+      if(rand.nextBool(passProb))
+        moveLoc = Board::PASS_LOC;
+      else {
+        moveLoc = PlayUtils::chooseRandomLegalMove(board,tmpHist,pla,rand,Board::NULL_LOC);
+        //Resample to increase likelihood of capture moves.
+        if(!board.wouldBeCapture(moveLoc,pla))
+          moveLoc = PlayUtils::chooseRandomLegalMove(board,tmpHist,pla,rand,Board::NULL_LOC);
+        //Resample to decrease likelihood of moves not adjacent to opponent
+        if(!board.isAdjacentToPla(moveLoc,getOpp(pla)))
+          moveLoc = PlayUtils::chooseRandomLegalMove(board,tmpHist,pla,rand,Board::NULL_LOC);
+      }
+      bool preventEncore = rand.nextBool(0.5);
+      if(rand.nextBool(0.5)) {
+        // if(!hist.isLegal(board,moveLoc,pla))
+        //   cout << "AAAA" << endl;
+        bool suc = hist.makeBoardMoveTolerant(board, moveLoc, pla, preventEncore);
+        testAssert(suc);
+      }
+      else {
+        if(hist.isLegal(board,moveLoc,pla))
+          hist.makeBoardMoveAssumeLegal(board, moveLoc, pla, NULL, preventEncore);
+        else
+          continue;
+      }
+      pla = getOpp(pla);
+      if(rand.nextBool(0.1))
+        pla = getOpp(pla);
+      if(rand.nextBool(0.025)) {
+        anyKomiSet = true;
+        hist.setKomi(hist.rules.komi + (float)(rand.nextBool(0.5) ? -0.5 : +0.5));
+      }
+
+      graphHash = GraphHash::getGraphHash(graphHash, hist, pla, repBound, drawEquivalentWinsForWhite);
+    }
+
+    BoardHistory histCopy = hist.copyToInitial();
+    Board boardCopy = histCopy.getRecentBoard(0);
+    for(int i = 0; i<hist.moveHistory.size(); i++) {
+      histCopy.makeBoardMoveAssumeLegal(boardCopy, hist.moveHistory[i].loc, hist.moveHistory[i].pla, NULL, hist.preventEncoreHistory[i]);
+    }
+    if(rand.nextBool(0.05))
+      histCopy = hist;
+    //if(rep < 100)
+    //  hist.printDebugInfo(cout,board);
+
+    testAssert(boardCopy.isEqualForTesting(board, true, true));
+    testAssert(boardCopy.isEqualForTesting(histCopy.getRecentBoard(0), true, true));
+    testAssert(histCopy.getRecentBoard(0).isEqualForTesting(hist.getRecentBoard(0), true, true));
+    testAssert(BoardHistory::getSituationRulesAndKoHash(boardCopy,histCopy,pla,drawEquivalentWinsForWhite) == hist.getSituationRulesAndKoHash(board,hist,pla,drawEquivalentWinsForWhite));
+    testAssert(histCopy.currentSelfKomi(P_BLACK, drawEquivalentWinsForWhite) == hist.currentSelfKomi(P_BLACK, drawEquivalentWinsForWhite));
+    testAssert(histCopy.currentSelfKomi(P_WHITE, drawEquivalentWinsForWhite) == hist.currentSelfKomi(P_WHITE, drawEquivalentWinsForWhite));
+    testAssert(histCopy.initialTurnNumber == hist.initialTurnNumber);
+    testAssert(histCopy.presumedNextMovePla == hist.presumedNextMovePla);
+    testAssert(histCopy.assumeMultipleStartingBlackMovesAreHandicap == hist.assumeMultipleStartingBlackMovesAreHandicap);
+    testAssert(GraphHash::getStateHash(histCopy, pla, drawEquivalentWinsForWhite) == GraphHash::getStateHash(hist, pla, drawEquivalentWinsForWhite));
+    testAssert(GraphHash::getGraphHashFromScratch(histCopy, pla, repBound, drawEquivalentWinsForWhite) == GraphHash::getGraphHashFromScratch(hist, pla, repBound, drawEquivalentWinsForWhite));
+    testAssert(anyKomiSet || graphHash == GraphHash::getGraphHashFromScratch(hist, pla, repBound, drawEquivalentWinsForWhite));
+  }
+}
+

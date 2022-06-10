@@ -3,6 +3,7 @@
 
 #include "../core/global.h"
 #include "../core/hash.h"
+#include "../core/rand.h"
 #include "../dataio/trainingwrite.h"
 #include "../game/board.h"
 #include "../game/boardhistory.h"
@@ -25,6 +26,7 @@ struct SgfNode {
 
   bool hasProperty(const char* key) const;
   std::string getSingleProperty(const char* key) const;
+  const std::vector<std::string> getProperties(const char* key) const;
 
   bool hasPlacements() const;
   void accumPlacements(std::vector<Move>& moves, int xSize, int ySize) const;
@@ -36,6 +38,8 @@ struct SgfNode {
 };
 
 struct Sgf {
+  static constexpr int RANK_UNKNOWN = -100000;
+
   std::string fileName;
   std::vector<SgfNode*> nodes;
   std::vector<Sgf*> children;
@@ -58,11 +62,21 @@ struct Sgf {
   bool hasRules() const;
   Rules getRulesOrFail() const;
   int getHandicapValue() const;
+  Player getSgfWinner() const;
+  Color getFirstPlayerColor() const;
+
+  int getRank(Player pla) const; //dan ranks are 1d=0, 2d=1,... 9d=8. Kyu ranks are negative.
+  std::string getPlayerName(Player pla) const;
 
   void getPlacements(std::vector<Move>& moves, int xSize, int ySize) const;
   void getMoves(std::vector<Move>& moves, int xSize, int ySize) const;
 
-  int depth() const;
+  //Maximum depth of sgf tree in nodes
+  int64_t depth() const;
+  //Total number of sgf nodes
+  int64_t nodeCount() const;
+  //Total number of sgf branches (0 for a linear sgf, 1 if there is 1 fork, etc)
+  int64_t branchCount() const;
 
   struct PositionSample {
     Board board;
@@ -74,18 +88,43 @@ struct Sgf {
     int initialTurnNumber;
     //Hinted move that may be good at the end of position sample, or Board::NULL_LOC
     Loc hintLoc;
+    //The weight of this sample, for random selection
+    double weight;
 
     static std::string toJsonLine(const PositionSample& sample);
     static PositionSample ofJsonLine(const std::string& s);
+
+    //Return a copy of tihs sample with all player stones and moves flipped to the opposite color
+    Sgf::PositionSample getColorFlipped() const;
+
+    //For the moment, only used in testing since it does extra consistency checks.
+    //If we need a version to be used in "prod", we could make an efficient version maybe as operator==.
+    bool isEqualForTesting(const PositionSample& other, bool checkNumCaptures, bool checkSimpleKo) const;
   };
 
   //Loads SGF all unique positions in ALL branches of that SGF.
   //Hashes are used to filter out "identical" positions when loading many files from different SGFs that may have overlapping openings, etc.
   //The hashes are not guaranteed to correspond to position hashes, or anything else external to this function itself.
   //May raise an exception on illegal moves or other SGF issues, only partially appending things on to the boards and hists.
-  void loadAllUniquePositions(std::set<Hash128>& uniqueHashes, std::vector<PositionSample>& samples) const;
+  //If rand is provided, will randomize order of iteration through the SGF.
+  //If hashParent is true, will determine uniqueness by the combination of parent hash and own hash.
+  void loadAllUniquePositions(
+    std::set<Hash128>& uniqueHashes,
+    bool hashComments,
+    bool hashParent,
+    bool flipIfPassOrWFirst,
+    Rand* rand,
+    std::vector<PositionSample>& samples
+  ) const;
   //f is allowed to mutate and consume sample.
-  void iterAllUniquePositions(std::set<Hash128>& uniqueHashes, std::function<void(PositionSample&,const BoardHistory&)> f) const;
+  void iterAllUniquePositions(
+    std::set<Hash128>& uniqueHashes,
+    bool hashComments,
+    bool hashParent,
+    bool flipIfPassOrWFirst,
+    Rand* rand,
+    std::function<void(PositionSample&,const BoardHistory&,const std::string&)> f
+  ) const;
 
   static std::set<Hash128> readExcludes(const std::vector<std::string>& files);
 
@@ -99,14 +138,23 @@ struct Sgf {
     PositionSample& sampleBuf,
     int initialTurnNumber,
     std::set<Hash128>& uniqueHashes,
-    std::function<void(PositionSample&,const BoardHistory&)> f
+    bool hashComments,
+    bool hashParent,
+    bool flipIfPassOrWFirst,
+    Rand* rand,
+    std::vector<std::pair<int64_t,int64_t>>& variationTraceNodesBranch,
+    std::function<void(PositionSample&,const BoardHistory&,const std::string&)> f
   ) const;
   void samplePositionIfUniqueHelper(
     Board& board, BoardHistory& hist, Player nextPla,
     PositionSample& sampleBuf,
     int initialTurnNumber,
     std::set<Hash128>& uniqueHashes,
-    std::function<void(PositionSample&,const BoardHistory&)> f
+    bool hashComments,
+    bool hashParent,
+    bool flipIfPassOrWFirst,
+    const std::string& comments,
+    std::function<void(PositionSample&,const BoardHistory&,const std::string&)> f
   ) const;
 };
 
@@ -117,7 +165,7 @@ struct CompactSgf {
   std::vector<Move> moves;
   int xSize;
   int ySize;
-  int depth;
+  int64_t depth;
   float komi;
   Player sgfWinner;
   Hash128 hash;
@@ -139,11 +187,11 @@ struct CompactSgf {
   Rules getRulesOrWarn(const Rules& defaultRules, std::function<void(const std::string& msg)> f) const;
 
   void setupInitialBoardAndHist(const Rules& initialRules, Board& board, Player& nextPla, BoardHistory& hist) const;
-  void playMovesAssumeLegal(Board& board, Player& nextPla, BoardHistory& hist, int turnNumber) const;
-  void setupBoardAndHistAssumeLegal(const Rules& initialRules, Board& board, Player& nextPla, BoardHistory& hist, int turnNumber) const;
+  void playMovesAssumeLegal(Board& board, Player& nextPla, BoardHistory& hist, int64_t turnIdx) const;
+  void setupBoardAndHistAssumeLegal(const Rules& initialRules, Board& board, Player& nextPla, BoardHistory& hist, int64_t turnIdx) const;
   //These throw a StringError upon illegal move.
-  void playMovesTolerant(Board& board, Player& nextPla, BoardHistory& hist, int turnNumber, bool preventEncore) const;
-  void setupBoardAndHistTolerant(const Rules& initialRules, Board& board, Player& nextPla, BoardHistory& hist, int turnNumber, bool preventEncore) const;
+  void playMovesTolerant(Board& board, Player& nextPla, BoardHistory& hist, int64_t turnIdx, bool preventEncore) const;
+  void setupBoardAndHistTolerant(const Rules& initialRules, Board& board, Player& nextPla, BoardHistory& hist, int64_t turnIdx, bool preventEncore) const;
 };
 
 namespace WriteSgf {
@@ -151,15 +199,29 @@ namespace WriteSgf {
   //If startTurnIdx >= 0, write a comment in the SGF root node indicating startTurnIdx, so as to
   //indicate the index of the first turn that should be used for training data. (0 means the whole SGF, 1 means skipping black's first move, etc).
   //If valueTargets is not NULL, also write down after each move the MCTS values following that search move.
+  //If overideFinishedScore is not NAN and the game is finished and the result is a score (rather than noresult or resign), set this score instead, from white's perspective.
   void writeSgf(
     std::ostream& out, const std::string& bName, const std::string& wName,
     const BoardHistory& endHist,
     const FinishedGameData* gameData,
-    bool tryNicerRulesString
+    bool tryNicerRulesString,
+    bool omitResignPlayerMove
+  );
+  void writeSgf(
+    std::ostream& out, const std::string& bName, const std::string& wName,
+    const BoardHistory& endHist,
+    const FinishedGameData* gameData,
+    bool tryNicerRulesString,
+    bool omitResignPlayerMove,
+    double overrideFinishedWhiteScore
   );
 
-  //If hist is a finished game, print the result to out, else do nothing
+  //If hist is a finished game, print the result to out along with SGF tag, else do nothing
   void printGameResult(std::ostream& out, const BoardHistory& hist);
+  void printGameResult(std::ostream& out, const BoardHistory& hist, double overrideFinishedWhiteScore);
+  //Get the game result without a surrounding sgf tag
+  std::string gameResultNoSgfTag(const BoardHistory& hist);
+  std::string gameResultNoSgfTag(const BoardHistory& hist, double overrideFinishedWhiteScore);
 }
 
 #endif  // DATAIO_SGF_H_

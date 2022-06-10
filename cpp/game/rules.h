@@ -4,6 +4,8 @@
 #include "../core/global.h"
 #include "../core/hash.h"
 
+#include "../external/nlohmann_json/json.hpp"
+
 struct Rules {
 
   static const int KO_SIMPLE = 0;
@@ -29,13 +31,27 @@ struct Rules {
   static const int WHB_N_MINUS_ONE = 2;
   int whiteHandicapBonusRule;
 
+  //Mostly an informational value - doesn't affect the actual implemented rules, but GTP or Analysis may, at a
+  //high level, use this info to adjust passing behavior - whether it's okay to pass without capturing dead stones.
+  //Only relevant for area scoring.
+  bool friendlyPassOk;
+
   float komi;
   //Min and max acceptable komi in various places involving user input validation
   static constexpr float MIN_USER_KOMI = -150.0f;
   static constexpr float MAX_USER_KOMI = 150.0f;
 
   Rules();
-  Rules(int koRule, int scoringRule, int taxRule, bool multiStoneSuicideLegal, bool hasButton, int whiteHandicapBonusRule, float komi);
+  Rules(
+    int koRule,
+    int scoringRule,
+    int taxRule,
+    bool multiStoneSuicideLegal,
+    bool hasButton,
+    int whiteHandicapBonusRule,
+    bool friendlyPassOk,
+    float komi
+  );
   ~Rules();
 
   bool operator==(const Rules& other) const;
@@ -75,12 +91,19 @@ struct Rules {
   std::string toStringNoKomiMaybeNice() const;
   std::string toJsonString() const;
   std::string toJsonStringNoKomi() const;
+  std::string toJsonStringNoKomiMaybeOmitStuff() const;
+  nlohmann::json toJson() const;
+  nlohmann::json toJsonNoKomi() const;
+  nlohmann::json toJsonNoKomiMaybeOmitStuff() const;
 
   static const Hash128 ZOBRIST_KO_RULE_HASH[4];
   static const Hash128 ZOBRIST_SCORING_RULE_HASH[2];
   static const Hash128 ZOBRIST_TAX_RULE_HASH[3];
   static const Hash128 ZOBRIST_MULTI_STONE_SUICIDE_HASH;
   static const Hash128 ZOBRIST_BUTTON_HASH;
+
+private:
+  nlohmann::json toJsonHelper(bool omitKomi, bool omitDefaults) const;
 };
 
 #endif  // GAME_RULES_H_

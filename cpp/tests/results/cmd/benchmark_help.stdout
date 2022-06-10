@@ -6,16 +6,16 @@ DESCRIPTION:
 
 USAGE: 
 
-   benchmark  [-config <FILE>] [-model <FILE>] [-v <VISITS>] [-t <THREADS>]
-              [-n <NUM>] [...other flags...]
+   benchmark  [-config <FILE>] ...  [-model <FILE>] [-v <VISITS>] [-t
+              <THREADS>] [-n <NUM>] [...other flags...]
 
 
 Where: 
 
-   -config <FILE>
-     Config file to use (see gtp_example.cfg or configs/gtp_example.cfg).
-     Defaults to: (dir containing katago.exe, or else
-     ~/.katago)/default_gtp.cfg
+   -config <FILE>  (accepted multiple times)
+     Config file(s) to use, can be one or multiple files (see
+     gtp_example.cfg or configs/gtp_example.cfg). Defaults to: (dir
+     containing katago.exe, or else ~/.katago)/default_gtp.cfg
 
    -model <FILE>
      Neural net model file. Defaults to: (dir containing katago.exe, or
@@ -25,12 +25,12 @@ Where:
      How many visits to use per search (default 800)
 
    -t <THREADS>,  -threads <THREADS>
-     Test these many threads, comma-separated (default 1,2,4,6,8,12,16,24)
+     Test these many threads, comma-separated, e.g. '4,8,12,16' 
 
    -n <NUM>,  -numpositions <NUM>
      How many positions to sample from a game (default 10)
 
-   -override-config <KEYVALUEPAIRS>
+   -override-config <KEYVALUEPAIRS>  (accepted multiple times)
      Override config parameters. Format: "key=value, key=value,..."
 
    -sgf <FILE>
@@ -38,10 +38,11 @@ Where:
      of positions)
 
    -boardsize <SIZE>
-     Size of board to benchmark on (9-19), default 19
+     Size of board to benchmark on (7-19), default 19
 
    -s,  -tune
-     Automatically search for the optimal number of threads
+     Automatically search for the optimal number of threads (default if not
+     specifying specific numbers of threads)
 
    -i <SECONDS>,  -time <SECONDS>
      Typical amount of time per move spent while playing, in seconds

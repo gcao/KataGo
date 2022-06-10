@@ -5,6 +5,7 @@
 #include "../core/global.h"
 #include "../core/multithread.h"
 #include "../core/rand.h"
+#include "../core/threadsafecounter.h"
 #include "../core/threadsafequeue.h"
 #include "../dataio/trainingwrite.h"
 #include "../dataio/sgf.h"
@@ -18,9 +19,12 @@ struct InitialPosition {
   Board board;
   BoardHistory hist;
   Player pla;
+  bool isPlainFork;
+  bool isSekiFork;
+  bool isHintFork;
 
   InitialPosition();
-  InitialPosition(const Board& board, const BoardHistory& hist, Player pla);
+  InitialPosition(const Board& board, const BoardHistory& hist, Player pla, bool isPlainFork, bool isSekiFork, bool isHintFork);
   ~InitialPosition();
 };
 
@@ -40,8 +44,8 @@ struct ForkData {
 
 struct ExtraBlackAndKomi {
   int extraBlack = 0;
-  float komi = 7.5;
-  float komiBase = 7.5;
+  float komiMean = 7.5f;
+  float komiStdev = 7.5f;
   bool makeGameFair = false;
   bool makeGameFairForEmptyBoard = false;
   bool allowInteger = true;
@@ -52,6 +56,7 @@ struct OtherGameProperties {
   bool isHintPos = false;
   bool allowPolicyInit = true;
   bool isFork = false;
+  bool isHintFork = false;
 
   int hintTurn = -1;
   Hash128 hintPosHash;
@@ -84,7 +89,8 @@ class GameInitializer {
     SearchParams& params,
     const InitialPosition* initialPosition,
     const PlaySettings& playSettings,
-    OtherGameProperties& otherGameProps
+    OtherGameProperties& otherGameProps,
+    const Sgf::PositionSample* startPosSample
   );
 
   //A version that doesn't randomize params
@@ -93,7 +99,8 @@ class GameInitializer {
     ExtraBlackAndKomi& extraBlackAndKomi,
     const InitialPosition* initialPosition,
     const PlaySettings& playSettings,
-    OtherGameProperties& otherGameProps
+    OtherGameProperties& otherGameProps,
+    const Sgf::PositionSample* startPosSample
   );
 
   Rules randomizeScoringAndTaxRules(Rules rules, Rand& randToUse) const;
@@ -102,6 +109,12 @@ class GameInitializer {
   Rules createRules();
   bool isAllowedBSize(int xSize, int ySize);
 
+  std::vector<int> getAllowedBSizes() const;
+  int getMinBoardXSize() const;
+  int getMinBoardYSize() const;
+  int getMaxBoardXSize() const;
+  int getMaxBoardYSize() const;
+
  private:
   void initShared(ConfigParser& cfg, Logger& logger);
   void createGameSharedUnsynchronized(
@@ -109,7 +122,8 @@ class GameInitializer {
     ExtraBlackAndKomi& extraBlackAndKomi,
     const InitialPosition* initialPosition,
     const PlaySettings& playSettings,
-    OtherGameProperties& otherGameProps
+    OtherGameProperties& otherGameProps,
+    const Sgf::PositionSample* startPosSample
   );
   Rules createRulesUnsynchronized();
 
@@ -153,6 +167,11 @@ class GameInitializer {
   std::vector<Sgf::PositionSample> hintPoses;
   std::vector<double> hintPosCumProbs;
   double hintPosesProb;
+
+  int minBoardXSize;
+  int minBoardYSize;
+  int maxBoardXSize;
+  int maxBoardYSize;
 };
 
 
@@ -236,10 +255,12 @@ namespace Play {
     const std::string& searchRandSeed,
     bool doEndGameIfAllPassAlive, bool clearBotBeforeSearch,
     Logger& logger, bool logSearchInfo, bool logMoves,
-    int maxMovesPerGame, std::vector<std::atomic<bool>*>& stopConditions,
+    int maxMovesPerGame, const std::function<bool()>& shouldStop,
+    const WaitableFlag* shouldPause,
     const PlaySettings& playSettings, const OtherGameProperties& otherGameProps,
     Rand& gameRand,
-    std::function<NNEvaluator*()>* checkForNewNNEval
+    std::function<NNEvaluator*()> checkForNewNNEval,
+    std::function<void(const Board&, const BoardHistory&, Player, Loc, const std::vector<double>&, const std::vector<double>&, const std::vector<double>&, const Search*)> onEachMove
   );
 
   //In the case where checkForNewNNEval is provided, will MODIFY the provided botSpecs with any new nneval!
@@ -249,10 +270,12 @@ namespace Play {
     Search* botB, Search* botW,
     bool doEndGameIfAllPassAlive, bool clearBotBeforeSearch,
     Logger& logger, bool logSearchInfo, bool logMoves,
-    int maxMovesPerGame, std::vector<std::atomic<bool>*>& stopConditions,
+    int maxMovesPerGame, const std::function<bool()>& shouldStop,
+    const WaitableFlag* shouldPause,
     const PlaySettings& playSettings, const OtherGameProperties& otherGameProps,
     Rand& gameRand,
-    std::function<NNEvaluator*()>* checkForNewNNEval
+    std::function<NNEvaluator*()> checkForNewNNEval,
+    std::function<void(const Board&, const BoardHistory&, Player, Loc, const std::vector<double>&, const std::vector<double>&, const std::vector<double>&, const Search*)> onEachMove
   );
 
   void maybeForkGame(
@@ -297,15 +320,22 @@ public:
 
   //Will return NULL if stopped before the game completes. The caller is responsible for freeing the data
   //if it isn't NULL.
+  //afterInitialization can be used to run any post-initialization configuration on the search
   FinishedGameData* runGame(
     const std::string& seed,
     const MatchPairer::BotSpec& botSpecB,
     const MatchPairer::BotSpec& botSpecW,
     ForkData* forkData,
+    const Sgf::PositionSample* startPosSample,
     Logger& logger,
-    std::vector<std::atomic<bool>*>& stopConditions,
-    std::function<NNEvaluator*()>* checkForNewNNEval
+    const std::function<bool()>& shouldStop,
+    const WaitableFlag* shouldPause,
+    std::function<NNEvaluator*()> checkForNewNNEval,
+    std::function<void(const MatchPairer::BotSpec&, Search*)> afterInitialization,
+    std::function<void(const Board&, const BoardHistory&, Player, Loc, const std::vector<double>&, const std::vector<double>&, const std::vector<double>&, const Search*)> onEachMove
   );
+
+  const GameInitializer* getGameInitializer() const;
 
 };
 

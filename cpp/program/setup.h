@@ -22,36 +22,48 @@ namespace Setup {
   NNEvaluator* initializeNNEvaluator(
     const std::string& nnModelNames,
     const std::string& nnModelFiles,
+    const std::string& expectedSha256,
     ConfigParser& cfg,
     Logger& logger,
     Rand& seedRand,
     int maxConcurrentEvals,
+    int expectedConcurrentEvals,
     int defaultNNXLen,
     int defaultNNYLen,
     int defaultMaxBatchSize,
+    bool defaultRequireExactNNLen,
     setup_for_t setupFor
   );
 
   std::vector<NNEvaluator*> initializeNNEvaluators(
     const std::vector<std::string>& nnModelNames,
     const std::vector<std::string>& nnModelFiles,
+    const std::vector<std::string>& expectedSha256s,
     ConfigParser& cfg,
     Logger& logger,
     Rand& seedRand,
     int maxConcurrentEvals,
+    int expectedConcurrentEvals,
     int defaultNNXLen,
     int defaultNNYLen,
     int defaultMaxBatchSize,
+    bool defaultRequireExactNNLen,
     setup_for_t setupFor
   );
+
+  constexpr int MAX_BOT_PARAMS_FROM_CFG = 4096;
+
+  constexpr double DEFAULT_ANALYSIS_WIDE_ROOT_NOISE = 0.04;
 
   //Loads search parameters for bot from config, by bot idx.
   //Fails if no parameters are found.
   std::vector<SearchParams> loadParams(
-    ConfigParser& cfg
+    ConfigParser& cfg,
+    setup_for_t setupFor
   );
   SearchParams loadSingleParams(
-    ConfigParser& cfg
+    ConfigParser& cfg,
+    setup_for_t setupFor
   );
 
   Player parseReportAnalysisWinrates(
@@ -59,12 +71,28 @@ namespace Setup {
   );
 
   //Komi is just set to 7.5 and is not read in from cfg
-  Rules loadSingleRulesExceptForKomi(
+  Rules loadSingleRules(
+    ConfigParser& cfg,
+    bool loadKomi
+  );
+
+  //Returns true if the user's config specified the size, false if it did not. If false, does not set defaultBoardXSizeRet or defaultBoardYSizeRet.
+  bool loadDefaultBoardXYSize(
+    ConfigParser& cfg,
+    Logger& logger,
+    int& defaultBoardXSizeRet,
+    int& defaultBoardYSizeRet
+  );
+
+  std::string loadHomeDataDirOverride(
     ConfigParser& cfg
   );
 
   //Get sets of options that are mutually exclusive. Intended for use in configParser
   std::vector<std::pair<std::set<std::string>,std::set<std::string>>> getMutexKeySets();
+
+  //Load pattern bonus tables that avoid repeating moves that the user supplied in external sgfs
+  std::vector<std::unique_ptr<PatternBonusTable>> loadAvoidSgfPatternBonusTables(ConfigParser& cfg, Logger& logger);
 }
 
 #endif  // PROGRAM_SETUP_H_

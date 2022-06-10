@@ -18,9 +18,10 @@ baz = yay
 
 class ConfigParser {
  public:
-  ConfigParser();
-  ConfigParser(const std::string& file);
-  ConfigParser(std::istream& in);
+  ConfigParser(bool keysOverride = false, bool keysOverrideFromIncludes = true);
+  ConfigParser(const std::string& file, bool keysOverride = false, bool keysOverrideFromIncludes = true);
+  ConfigParser(const char *file, bool keysOverride = false, bool keysOverrideFromIncludes = true);
+  ConfigParser(std::istream& in, bool keysOverride = false, bool keysOverrideFromIncludes = true);
   ConfigParser(const std::map<std::string, std::string>& kvs);
   ConfigParser(const ConfigParser& source);
   ~ConfigParser();
@@ -33,6 +34,8 @@ class ConfigParser {
   void initialize(std::istream& in);
   void initialize(const std::map<std::string, std::string>& kvs);
 
+  void overrideKey(const std::string& key, const std::string& value);
+  void overrideKeys(const std::string& fname);
   void overrideKeys(const std::map<std::string, std::string>& newkvs);
   //mutexKeySets: For each pair of sets (A,B), if newkvs contains anything in A, erase every existing key that overlaps with B, and vice versa.
   void overrideKeys(const std::map<std::string, std::string>& newkvs, const std::vector<std::pair<std::set<std::string>,std::set<std::string>>>& mutexKeySets);
@@ -40,12 +43,18 @@ class ConfigParser {
 
   void warnUnusedKeys(std::ostream& out, Logger* logger) const;
   void markAllKeysUsedWithPrefix(const std::string& prefix);
+  void unsetUsedKey(const std::string& key);
+  void applyAlias(const std::string& mapThisKey, const std::string& toThisKey);
 
   std::vector<std::string> unusedKeys() const;
   std::string getFileName() const;
   std::string getContents() const;
+  std::string getAllKeyVals() const;
 
   bool contains(const std::string& key) const;
+  bool containsAny(const std::vector<std::string>& possibleKeys) const;
+  std::string firstFoundOrFail(const std::vector<std::string>& possibleKeys) const;
+  std::string firstFoundOrEmpty(const std::vector<std::string>& possibleKeys) const;
 
   std::string getString(const std::string& key);
   bool getBool(const std::string& key);
@@ -64,6 +73,7 @@ class ConfigParser {
   double getDouble(const std::string& key, double min, double max);
 
   std::vector<std::string> getStrings(const std::string& key);
+  std::vector<std::string> getStringsNonEmptyTrim(const std::string& key);
   std::vector<bool> getBools(const std::string& key);
   std::vector<int> getInts(const std::string& key);
   std::vector<int64_t> getInt64s(const std::string& key);
@@ -84,10 +94,31 @@ class ConfigParser {
   std::string contents;
   std::map<std::string, std::string> keyValues;
 
+  // If true, overriding keys within the same file is possible
+  bool keysOverrideEnabled;
+  // If true (default), overriding keys from included files is possible
+  bool keysOverrideFromIncludes;
+
+  // Current reading state variables
+  // Current filename being processed (can differ from fileName in case of using @include directive)
+  int curLineNum = 0;
+  std::string curFilename;
+  std::vector<std::string> includedFiles;
+
+  // Internal stack for tracking the file path as we process recursive includes.
+  std::vector<std::string> baseDirs;
+
+  // Currently unused. Messages tracking what overrides occurred.
+  std::vector<std::string> logMessages;
+
   mutable std::mutex usedKeysMutex;
   std::set<std::string> usedKeys;
 
   void initializeInternal(std::istream& in);
+  void processIncludedFile(const std::string& fname);
+  void readStreamContent(std::istream& in);
+  std::string lineAndFileInfo() const;
+  std::string extractBaseDir(const std::string &fname);
 };
 
 

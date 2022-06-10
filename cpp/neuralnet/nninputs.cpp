@@ -78,6 +78,17 @@ double ScoreValue::whiteScoreValueOfScoreSmoothNoDrawAdjust(double finalWhiteMin
     return atan(adjustedScore / (scale*sqrt(b.x_size*b.y_size))) * twoOverPi;
 }
 
+double ScoreValue::whiteDScoreValueDScoreSmoothNoDrawAdjust(double finalWhiteMinusBlackScore, double center, double scale, const Board& b) {
+  double adjustedScore = finalWhiteMinusBlackScore - center;
+  double scaleFactor;
+  if(b.x_size == b.y_size)
+    scaleFactor = scale*b.x_size;
+  else
+    scaleFactor = scale*sqrt(b.x_size*b.y_size);
+
+  return scaleFactor / (scaleFactor * scaleFactor + adjustedScore * adjustedScore) * twoOverPi;
+}
+
 static double inverse_atan(double x) {
   if(x >= piOverTwo - 1e-6) return 1e6;
   if(x <= -piOverTwo + 1e-6) return -1e6;
@@ -209,6 +220,13 @@ double ScoreValue::expectedWhiteScoreValue(double whiteScoreMean, double whiteSc
   return b0 + lambdaMean*(b1-b0);
 }
 
+double ScoreValue::getScoreStdev(double scoreMean, double scoreMeanSq) {
+  double variance = scoreMeanSq - scoreMean * scoreMean;
+  if(variance <= 0.0)
+    return 0.0;
+  return sqrt(variance);
+}
+
 //-----------------------------------------------------------------------------------------------------------
 //-----------------------------------------------------------------------------------------------------------
 
@@ -310,6 +328,8 @@ NNOutput::NNOutput(const NNOutput& other) {
   whiteScoreMeanSq = other.whiteScoreMeanSq;
   whiteLead = other.whiteLead;
   varTimeLeft = other.varTimeLeft;
+  shorttermWinlossError = other.shorttermWinlossError;
+  shorttermScoreError = other.shorttermScoreError;
 
   nnXLen = other.nnXLen;
   nnYLen = other.nnYLen;
@@ -331,7 +351,8 @@ NNOutput::NNOutput(const NNOutput& other) {
 }
 
 NNOutput::NNOutput(const vector<shared_ptr<NNOutput>>& others) {
-  int len = others.size();
+  assert(others.size() < 1000000);
+  int len = (int)others.size();
   float floatLen = (float)len;
   assert(len > 0);
   for(int i = 1; i<len; i++) {
@@ -346,6 +367,8 @@ NNOutput::NNOutput(const vector<shared_ptr<NNOutput>>& others) {
   whiteScoreMeanSq = 0.0f;
   whiteLead = 0.0f;
   varTimeLeft = 0.0f;
+  shorttermWinlossError = 0.0f;
+  shorttermScoreError = 0.0f;
   for(int i = 0; i<len; i++) {
     const NNOutput& other = *(others[i]);
     whiteWinProb += other.whiteWinProb;
@@ -355,6 +378,8 @@ NNOutput::NNOutput(const vector<shared_ptr<NNOutput>>& others) {
     whiteScoreMeanSq += other.whiteScoreMeanSq;
     whiteLead += other.whiteLead;
     varTimeLeft += other.varTimeLeft;
+    shorttermWinlossError += other.shorttermWinlossError;
+    shorttermScoreError += other.shorttermScoreError;
   }
   whiteWinProb /= floatLen;
   whiteLossProb /= floatLen;
@@ -363,6 +388,8 @@ NNOutput::NNOutput(const vector<shared_ptr<NNOutput>>& others) {
   whiteScoreMeanSq /= floatLen;
   whiteLead /= floatLen;
   varTimeLeft /= floatLen;
+  shorttermWinlossError /= floatLen;
+  shorttermScoreError /= floatLen;
 
   nnXLen = others[0]->nnXLen;
   nnYLen = others[0]->nnYLen;
@@ -429,6 +456,8 @@ NNOutput& NNOutput::operator=(const NNOutput& other) {
   whiteScoreMeanSq = other.whiteScoreMeanSq;
   whiteLead = other.whiteLead;
   varTimeLeft = other.varTimeLeft;
+  shorttermWinlossError = other.shorttermWinlossError;
+  shorttermScoreError = other.shorttermScoreError;
 
   nnXLen = other.nnXLen;
   nnYLen = other.nnYLen;
@@ -475,6 +504,8 @@ void NNOutput::debugPrint(ostream& out, const Board& board) {
   out << "ScoreMeanSq " << Global::strprintf("%.1f",whiteScoreMeanSq) << endl;
   out << "Lead " << Global::strprintf("%.1f",whiteLead) << endl;
   out << "VarTimeLeft " << Global::strprintf("%.1f",varTimeLeft) << endl;
+  out << "STWinlossError " << Global::strprintf("%.1f",shorttermWinlossError) << endl;
+  out << "STScoreError " << Global::strprintf("%.1f",shorttermScoreError) << endl;
 
   out << "Policy" << endl;
   for(int y = 0; y<board.y_size; y++) {
@@ -502,6 +533,239 @@ void NNOutput::debugPrint(ostream& out, const Board& board) {
   }
 }
 
+//-------------------------------------------------------------------------------------------------------------
+
+static void copyWithSymmetry(const float* src, float* dst, int nSize, int hSize, int wSize, int cSize, bool useNHWC, int symmetry, bool reverse) {
+  bool transpose = (symmetry & 0x4) != 0 && hSize == wSize;
+  bool flipX = (symmetry & 0x2) != 0;
+  bool flipY = (symmetry & 0x1) != 0;
+  if(transpose && !reverse)
+    std::swap(flipX,flipY);
+  if(useNHWC) {
+    int nStride = hSize * wSize * cSize;
+    int hStride = wSize * cSize;
+    int wStride = cSize;
+    int hBaseNew = 0; int hStrideNew = hStride;
+    int wBaseNew = 0; int wStrideNew = wStride;
+
+    if(flipY) { hBaseNew = (hSize-1) * hStrideNew; hStrideNew = -hStrideNew; }
+    if(flipX) { wBaseNew = (wSize-1) * wStrideNew; wStrideNew = -wStrideNew; }
+
+    if(transpose)
+      std::swap(hStrideNew,wStrideNew);
+
+    for(int n = 0; n<nSize; n++) {
+      for(int h = 0; h<hSize; h++) {
+        int nhOld = n * nStride + h*hStride;
+        int nhNew = n * nStride + hBaseNew + h*hStrideNew;
+        for(int w = 0; w<wSize; w++) {
+          int nhwOld = nhOld + w*wStride;
+          int nhwNew = nhNew + wBaseNew + w*wStrideNew;
+          for(int c = 0; c<cSize; c++) {
+            dst[nhwNew + c] = src[nhwOld + c];
+          }
+        }
+      }
+    }
+  }
+  else {
+    int ncSize = nSize * cSize;
+    int ncStride = hSize * wSize;
+    int hStride = wSize;
+    int wStride = 1;
+    int hBaseNew = 0; int hStrideNew = hStride;
+    int wBaseNew = 0; int wStrideNew = wStride;
+
+    if(flipY) { hBaseNew = (hSize-1) * hStrideNew; hStrideNew = -hStrideNew; }
+    if(flipX) { wBaseNew = (wSize-1) * wStrideNew; wStrideNew = -wStrideNew; }
+
+    if(transpose)
+      std::swap(hStrideNew,wStrideNew);
+
+    for(int nc = 0; nc<ncSize; nc++) {
+      for(int h = 0; h<hSize; h++) {
+        int nchOld = nc * ncStride + h*hStride;
+        int nchNew = nc * ncStride + hBaseNew + h*hStrideNew;
+        for(int w = 0; w<wSize; w++) {
+          int nchwOld = nchOld + w*wStride;
+          int nchwNew = nchNew + wBaseNew + w*wStrideNew;
+          dst[nchwNew] = src[nchwOld];
+        }
+      }
+    }
+  }
+}
+
+
+void SymmetryHelpers::copyInputsWithSymmetry(const float* src, float* dst, int nSize, int hSize, int wSize, int cSize, bool useNHWC, int symmetry) {
+  copyWithSymmetry(src, dst, nSize, hSize, wSize, cSize, useNHWC, symmetry, false);
+}
+
+void SymmetryHelpers::copyOutputsWithSymmetry(const float* src, float* dst, int nSize, int hSize, int wSize, int symmetry) {
+  copyWithSymmetry(src, dst, nSize, hSize, wSize, 1, false, symmetry, true);
+}
+
+int SymmetryHelpers::invert(int symmetry) {
+  if(symmetry == 5)
+    return 6;
+  if(symmetry == 6)
+    return 5;
+  return symmetry;
+}
+
+int SymmetryHelpers::compose(int firstSymmetry, int nextSymmetry) {
+  if(isTranspose(firstSymmetry))
+    nextSymmetry = (nextSymmetry & 0x4) | ((nextSymmetry & 0x2) >> 1) | ((nextSymmetry & 0x1) << 1);
+  return firstSymmetry ^ nextSymmetry;
+}
+
+int SymmetryHelpers::compose(int firstSymmetry, int nextSymmetry, int nextNextSymmetry) {
+  return compose(compose(firstSymmetry,nextSymmetry),nextNextSymmetry);
+}
+
+Loc SymmetryHelpers::getSymLoc(int x, int y, int xSize, int ySize, int symmetry) {
+  bool transpose = (symmetry & 0x4) != 0;
+  bool flipX = (symmetry & 0x2) != 0;
+  bool flipY = (symmetry & 0x1) != 0;
+  if(flipX) { x = xSize - x - 1; }
+  if(flipY) { y = ySize - y - 1; }
+
+  if(transpose)
+    std::swap(x,y);
+  return Location::getLoc(x,y,transpose ? ySize : xSize);
+}
+
+Loc SymmetryHelpers::getSymLoc(int x, int y, const Board& board, int symmetry) {
+  return getSymLoc(x,y,board.x_size,board.y_size,symmetry);
+}
+
+Loc SymmetryHelpers::getSymLoc(Loc loc, const Board& board, int symmetry) {
+  if(loc == Board::NULL_LOC || loc == Board::PASS_LOC)
+    return loc;
+  return getSymLoc(Location::getX(loc,board.x_size), Location::getY(loc,board.x_size), board, symmetry);
+}
+
+Loc SymmetryHelpers::getSymLoc(Loc loc, int xSize, int ySize, int symmetry) {
+  if(loc == Board::NULL_LOC || loc == Board::PASS_LOC)
+    return loc;
+  return getSymLoc(Location::getX(loc,xSize), Location::getY(loc,xSize), xSize, ySize, symmetry);
+}
+
+
+Board SymmetryHelpers::getSymBoard(const Board& board, int symmetry) {
+  bool transpose = (symmetry & 0x4) != 0;
+  bool flipX = (symmetry & 0x2) != 0;
+  bool flipY = (symmetry & 0x1) != 0;
+  Board symBoard(
+    transpose ? board.y_size : board.x_size,
+    transpose ? board.x_size : board.y_size
+  );
+  Loc symKoLoc = Board::NULL_LOC;
+  for(int y = 0; y<board.y_size; y++) {
+    for(int x = 0; x<board.x_size; x++) {
+      Loc loc = Location::getLoc(x,y,board.x_size);
+      int symX = flipX ? board.x_size - x - 1 : x;
+      int symY = flipY ? board.y_size - y - 1 : y;
+      if(transpose)
+        std::swap(symX,symY);
+      Loc symLoc = Location::getLoc(symX,symY,symBoard.x_size);
+      symBoard.setStone(symLoc,board.colors[loc]);
+      if(loc == board.ko_loc)
+        symKoLoc = symLoc;
+    }
+  }
+  //Set only at the end because otherwise setStone clears it.
+  if(symKoLoc != Board::NULL_LOC)
+    symBoard.setSimpleKoLoc(symKoLoc);
+  return symBoard;
+}
+
+void SymmetryHelpers::markDuplicateMoveLocs(
+  const Board& board,
+  const BoardHistory& hist,
+  const std::vector<int>* onlySymmetries,
+  const std::vector<int>& avoidMoves,
+  bool* isSymDupLoc,
+  std::vector<int>& validSymmetries
+) {
+  std::fill(isSymDupLoc, isSymDupLoc + Board::MAX_ARR_SIZE, false);
+  validSymmetries.clear();
+  validSymmetries.reserve(SymmetryHelpers::NUM_SYMMETRIES);
+  validSymmetries.push_back(0);
+
+  //The board should never be considered symmetric if any moves are banned by ko or superko
+  if(board.ko_loc != Board::NULL_LOC)
+    return;
+  for(int y = 0; y < board.y_size; y++) {
+    for(int x = 0; x < board.x_size; x++) {
+      if(hist.superKoBanned[Location::getLoc(x, y, board.x_size)])
+        return;
+    }
+  }
+
+  //If board has different sizes of x and y, we will not search symmetries involved with transpose.
+  int symmetrySearchUpperBound = board.x_size == board.y_size ? SymmetryHelpers::NUM_SYMMETRIES : SymmetryHelpers::NUM_SYMMETRIES_WITHOUT_TRANSPOSE;
+
+  for(int symmetry = 1; symmetry < symmetrySearchUpperBound; symmetry++) {
+    if(onlySymmetries != NULL && !contains(*onlySymmetries,symmetry))
+      continue;
+
+    bool isBoardSym = true;
+    for(int y = 0; y < board.y_size; y++) {
+      for(int x = 0; x < board.x_size; x++) {
+        Loc loc = Location::getLoc(x, y, board.x_size);
+        Loc symLoc = getSymLoc(x, y, board,symmetry);
+        bool isStoneSym = (board.colors[loc] == board.colors[symLoc]);
+        bool isKoRecapBlockedSym = hist.encorePhase > 0 ? hist.koRecapBlocked[loc] == hist.koRecapBlocked[symLoc] : true;
+        bool isSecondEncoreStartColorsSym = hist.encorePhase == 2 ? hist.secondEncoreStartColors[loc] == hist.secondEncoreStartColors[symLoc] : true;
+        if(!isStoneSym || !isKoRecapBlockedSym || !isSecondEncoreStartColorsSym) {
+          isBoardSym = false;
+          break;
+        }
+      }
+      if(!isBoardSym)
+        break;
+    }
+    if(isBoardSym)
+      validSymmetries.push_back(symmetry);
+  }
+
+  //The way we iterate is to achieve https://senseis.xmp.net/?PlayingTheFirstMoveInTheUpperRightCorner%2FDiscussion
+  //Reverse the iteration order for white, so that natural openings result in white on the left and black on the right
+  //as is common now in SGFs
+  if(hist.presumedNextMovePla == P_BLACK) {
+    for(int x = board.x_size-1; x >= 0; x--) {
+      for(int y = 0; y < board.y_size; y++) {
+        Loc loc = Location::getLoc(x, y, board.x_size);
+        if(avoidMoves.size() > 0 && avoidMoves[loc] > 0)
+          continue;
+        for(int symmetry: validSymmetries) {
+          if(symmetry == 0)
+            continue;
+          Loc symLoc = getSymLoc(x, y, board, symmetry);
+          if(!isSymDupLoc[loc] && loc != symLoc)
+            isSymDupLoc[symLoc] = true;
+        }
+      }
+    }
+  }
+  else {
+    for(int x = 0; x < board.x_size; x++) {
+      for(int y = board.y_size-1; y >= 0; y--) {
+        Loc loc = Location::getLoc(x, y, board.x_size);
+        if(avoidMoves.size() > 0 && avoidMoves[loc] > 0)
+          continue;
+        for(int symmetry: validSymmetries) {
+          if(symmetry == 0)
+            continue;
+          Loc symLoc = getSymLoc(x, y, board, symmetry);
+          if(!isSymDupLoc[loc] && loc != symLoc)
+            isSymDupLoc[symLoc] = true;
+        }
+      }
+    }
+  }
+}
 
 //-------------------------------------------------------------------------------------------------------------
 
@@ -568,65 +832,7 @@ Hash128 NNInputs::getHash(
   const Board& board, const BoardHistory& hist, Player nextPlayer,
   const MiscNNInputParams& nnInputParams
 ) {
-  int xSize = board.x_size;
-  int ySize = board.y_size;
-
-  //Note that board.pos_hash also incorporates the size of the board.
-  Hash128 hash = board.pos_hash;
-  hash ^= Board::ZOBRIST_PLAYER_HASH[nextPlayer];
-
-  assert(hist.encorePhase >= 0 && hist.encorePhase <= 2);
-  hash ^= Board::ZOBRIST_ENCORE_HASH[hist.encorePhase];
-
-  if(hist.encorePhase == 0) {
-    if(board.ko_loc != Board::NULL_LOC)
-      hash ^= Board::ZOBRIST_KO_LOC_HASH[board.ko_loc];
-    for(int y = 0; y<ySize; y++) {
-      for(int x = 0; x<xSize; x++) {
-        Loc loc = Location::getLoc(x,y,xSize);
-        if(hist.superKoBanned[loc] && loc != board.ko_loc)
-          hash ^= Board::ZOBRIST_KO_LOC_HASH[loc];
-      }
-    }
-  }
-  else {
-    for(int y = 0; y<ySize; y++) {
-      for(int x = 0; x<xSize; x++) {
-        Loc loc = Location::getLoc(x,y,xSize);
-        if(hist.superKoBanned[loc])
-          hash ^= Board::ZOBRIST_KO_LOC_HASH[loc];
-        if(hist.koRecapBlocked[loc])
-          hash ^= Board::ZOBRIST_KO_MARK_HASH[loc][P_BLACK] ^ Board::ZOBRIST_KO_MARK_HASH[loc][P_WHITE];
-      }
-    }
-    if(hist.encorePhase == 2) {
-      for(int y = 0; y<ySize; y++) {
-        for(int x = 0; x<xSize; x++) {
-          Loc loc = Location::getLoc(x,y,xSize);
-          Color c = hist.secondEncoreStartColors[loc];
-          if(c != C_EMPTY)
-            hash ^= Board::ZOBRIST_SECOND_ENCORE_START_HASH[loc][c];
-        }
-      }
-    }
-  }
-
-  float selfKomi = hist.currentSelfKomi(nextPlayer,nnInputParams.drawEquivalentWinsForWhite);
-
-  //Discretize the komi for the purpose of matching hash, so that extremely close effective komi we just reuse nn cache hits
-  int64_t komiDiscretized = (int64_t)(selfKomi*256.0f);
-  uint64_t komiHash = Hash::murmurMix((uint64_t)komiDiscretized);
-  hash.hash0 ^= komiHash;
-  hash.hash1 ^= Hash::basicLCong(komiHash);
-
-  //Fold in the ko, scoring, and suicide rules
-  hash ^= Rules::ZOBRIST_KO_RULE_HASH[hist.rules.koRule];
-  hash ^= Rules::ZOBRIST_SCORING_RULE_HASH[hist.rules.scoringRule];
-  hash ^= Rules::ZOBRIST_TAX_RULE_HASH[hist.rules.taxRule];
-  if(hist.rules.multiStoneSuicideLegal)
-    hash ^= Rules::ZOBRIST_MULTI_STONE_SUICIDE_HASH;
-  if(hist.hasButton)
-    hash ^= Rules::ZOBRIST_BUTTON_HASH;
+  Hash128 hash = BoardHistory::getSituationRulesAndKoHash(board, hist, nextPlayer, nnInputParams.drawEquivalentWinsForWhite);
 
   //Fold in whether a pass ends this phase
   bool passEndsPhase = hist.passWouldEndPhase(board,nextPlayer);
@@ -897,7 +1103,7 @@ void NNInputs::fillRowV3(
 
   //Komi and any score adjustments
   float selfKomi = hist.currentSelfKomi(nextPlayer,nnInputParams.drawEquivalentWinsForWhite);
-  float bArea = xSize * ySize;
+  float bArea = (float)(xSize * ySize);
   //Bound komi just in case
   if(selfKomi > bArea+1.0f)
     selfKomi = bArea+1.0f;
@@ -1227,7 +1433,7 @@ void NNInputs::fillRowV4(
 
   //Komi and any score adjustments
   float selfKomi = hist.currentSelfKomi(nextPlayer,nnInputParams.drawEquivalentWinsForWhite);
-  float bArea = xSize * ySize;
+  float bArea = (float)(xSize * ySize);
   //Bound komi just in case
   if(selfKomi > bArea+1.0f)
     selfKomi = bArea+1.0f;
@@ -1495,7 +1701,7 @@ void NNInputs::fillRowV5(
 
   //Komi and any score adjustments
   float selfKomi = hist.currentSelfKomi(nextPlayer,nnInputParams.drawEquivalentWinsForWhite);
-  float bArea = xSize * ySize;
+  float bArea = (float)(xSize * ySize);
   //Bound komi just in case
   if(selfKomi > bArea+1.0f)
     selfKomi = bArea+1.0f;
@@ -1812,7 +2018,7 @@ void NNInputs::fillRowV6(
 
   //Komi and any score adjustments
   float selfKomi = hist.currentSelfKomi(nextPlayer,nnInputParams.drawEquivalentWinsForWhite);
-  float bArea = xSize * ySize;
+  float bArea = (float)(xSize * ySize);
   //Bound komi just in case
   if(selfKomi > bArea+1.0f)
     selfKomi = bArea+1.0f;
@@ -2207,7 +2413,7 @@ void NNInputs::fillRowV7(
 
   //Komi and any score adjustments
   float selfKomi = hist.currentSelfKomi(nextPlayer,nnInputParams.drawEquivalentWinsForWhite);
-  float bArea = xSize * ySize;
+  float bArea = (float)(xSize * ySize);
   //Bound komi just in case
   if(selfKomi > bArea+1.0f)
     selfKomi = bArea+1.0f;

@@ -18,6 +18,8 @@ struct TimeControls {
   */
   double originalMainTime;
   double increment;
+  double mainTimeLimit;
+  double maxTimePerMove;
   int originalNumPeriods;
   int numStonesPerPeriod;
   double perPeriodTime;
@@ -32,7 +34,18 @@ struct TimeControls {
   TimeControls();
   ~TimeControls();
 
+  //The threshold at which we consider time allowed to be unlimited
+  static constexpr double UNLIMITED_TIME_THRESHOLD = 1e20;
+  //The max time we tolerate a user inputting
+  static constexpr double MAX_USER_INPUT_TIME = 1e25;
+  //The value that fields default to when unset and need to be unlimited by default
+  static constexpr double UNLIMITED_TIME_DEFAULT = 1e30;
+  //The value that fields default to when unset and need to be unlimited by default and larger than other things
+  static constexpr double UNLIMITED_TIME_DEFAULT_LARGE = 1e40;
+
   static TimeControls absoluteTime(double mainTime);
+  static TimeControls fischerTime(double mainTime, double increment);
+  static TimeControls fischerCappedTime(double mainTime, double increment, double mainTimeLimit, double maxTimePerMove);
   static TimeControls canadianOrByoYomiTime(
     double mainTime,
     double perPeriodTime,
@@ -40,10 +53,16 @@ struct TimeControls {
     int numStonesPerPeriod
   );
 
+  bool isEffectivelyUnlimitedTime() const;
+
   //minTime - if you use less than this, you are wasting time that will not be reclaimed
   //recommendedTime - recommended mean time to search
   //maxTime - very bad to go over this time, possibly immediately losing
   void getTime(const Board& board, const BoardHistory& hist, double lagBuffer, double& minTime, double& recommendedTime, double& maxTime) const;
+
+  //If we'd think for a given time limit and actually it would lose time to stop at this limit, then bump the limit up
+  //This is used for not partial-wasting byo yomi periods.
+  double roundUpTimeLimitIfNeeded(double lagBuffer, double timeUsed, double timeLimit) const;
 
   std::string toDebugString() const;
   std::string toDebugString(const Board& board, const BoardHistory& hist, double lagBuffer) const;

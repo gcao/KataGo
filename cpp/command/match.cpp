@@ -1,9 +1,11 @@
 #include "../core/global.h"
+#include "../core/fileutils.h"
 #include "../core/makedir.h"
 #include "../core/config_parser.h"
 #include "../core/timer.h"
 #include "../dataio/sgf.h"
 #include "../search/asyncbot.h"
+#include "../search/patternbonustable.h"
 #include "../program/setup.h"
 #include "../program/play.h"
 #include "../command/commandline.h"
@@ -15,13 +17,16 @@ using namespace std;
 
 
 static std::atomic<bool> sigReceived(false);
+static std::atomic<bool> shouldStop(false);
 static void signalHandler(int signal)
 {
-  if(signal == SIGINT || signal == SIGTERM)
+  if(signal == SIGINT || signal == SIGTERM) {
     sigReceived.store(true);
+    shouldStop.store(true);
+  }
 }
 
-int MainCmds::match(int argc, const char* const* argv) {
+int MainCmds::match(const vector<string>& args) {
   Board::initHash();
   ScoreValue::initTables();
   Rand seedRand;
@@ -33,7 +38,7 @@ int MainCmds::match(int argc, const char* const* argv) {
     KataGoCommandLine cmd("Play different nets against each other with different search settings in a match or tournament.");
     cmd.addConfigFileArg("","match_example.cfg");
 
-    TCLAP::ValueArg<string> logFileArg("","log-file","Log file to output to",true,string(),"FILE");
+    TCLAP::ValueArg<string> logFileArg("","log-file","Log file to output to",false,string(),"FILE");
     TCLAP::ValueArg<string> sgfOutputDirArg("","sgf-output-dir","Dir to output sgf files",false,string(),"DIR");
 
     cmd.add(logFileArg);
@@ -42,7 +47,7 @@ int MainCmds::match(int argc, const char* const* argv) {
     cmd.setShortUsageArgLimit();
     cmd.addOverrideConfigArg();
 
-    cmd.parse(argc,argv);
+    cmd.parseArgs(args);
 
     logFile = logFileArg.getValue();
     sgfOutputDir = sgfOutputDirArg.getValue();
@@ -54,23 +59,21 @@ int MainCmds::match(int argc, const char* const* argv) {
     return 1;
   }
 
-  Logger logger;
+  Logger logger(&cfg);
   logger.addFile(logFile);
-  bool logToStdout = cfg.getBool("logToStdout");
-  logger.setLogToStdout(logToStdout);
 
   logger.write("Match Engine starting...");
   logger.write(string("Git revision: ") + Version::getGitRevision());
 
   //Load per-bot search config, first, which also tells us how many bots we're running
-  vector<SearchParams> paramss = Setup::loadParams(cfg);
+  vector<SearchParams> paramss = Setup::loadParams(cfg,Setup::SETUP_FOR_MATCH);
   assert(paramss.size() > 0);
-  int numBots = paramss.size();
+  int numBots = (int)paramss.size();
 
   //Load a filter on what bots we actually want to run
   vector<bool> excludeBot(numBots);
   if(cfg.contains("includeBots")) {
-    vector<int> includeBots = cfg.getInts("includeBots",0,4096);
+    vector<int> includeBots = cfg.getInts("includeBots",0,Setup::MAX_BOT_PARAMS_FROM_CFG);
     for(int i = 0; i<numBots; i++) {
       if(!contains(includeBots,i))
         excludeBot[i] = true;
@@ -114,7 +117,7 @@ int MainCmds::match(int argc, const char* const* argv) {
     if(alreadyFoundIdx != -1)
       whichNNModel[i] = alreadyFoundIdx;
     else {
-      whichNNModel[i] = nnModelFiles.size();
+      whichNNModel[i] = (int)nnModelFiles.size();
       nnModelFiles.push_back(desiredFile);
     }
   }
@@ -125,6 +128,7 @@ int MainCmds::match(int argc, const char* const* argv) {
 
   //Work out an upper bound on how many concurrent nneval requests we could end up making.
   int maxConcurrentEvals;
+  int expectedConcurrentEvals;
   {
     //Work out the max threads any one bot uses
     int maxBotThreads = 0;
@@ -132,18 +136,28 @@ int MainCmds::match(int argc, const char* const* argv) {
       if(paramss[i].numThreads > maxBotThreads)
         maxBotThreads = paramss[i].numThreads;
     //Mutiply by the number of concurrent games we could have
-    maxConcurrentEvals = maxBotThreads * numGameThreads;
+    expectedConcurrentEvals = maxBotThreads * numGameThreads;
     //Multiply by 2 and add some buffer, just so we have plenty of headroom.
-    maxConcurrentEvals = maxConcurrentEvals * 2 + 16;
+    maxConcurrentEvals = expectedConcurrentEvals * 2 + 16;
   }
+
+  //Initialize object for randomizing game settings and running games
+  PlaySettings playSettings = PlaySettings::loadForMatch(cfg);
+  GameRunner* gameRunner = new GameRunner(cfg, playSettings, logger);
+  const int minBoardXSizeUsed = gameRunner->getGameInitializer()->getMinBoardXSize();
+  const int minBoardYSizeUsed = gameRunner->getGameInitializer()->getMinBoardYSize();
+  const int maxBoardXSizeUsed = gameRunner->getGameInitializer()->getMaxBoardXSize();
+  const int maxBoardYSizeUsed = gameRunner->getGameInitializer()->getMaxBoardYSize();
 
   //Initialize neural net inference engine globals, and load models
   Setup::initializeSession(cfg);
   const vector<string>& nnModelNames = nnModelFiles;
-  int defaultMaxBatchSize = -1;
+  const int defaultMaxBatchSize = -1;
+  const bool defaultRequireExactNNLen = minBoardXSizeUsed == maxBoardXSizeUsed && minBoardYSizeUsed == maxBoardYSizeUsed;
+  const vector<string> expectedSha256s;
   vector<NNEvaluator*> nnEvals = Setup::initializeNNEvaluators(
-    nnModelNames,nnModelFiles,cfg,logger,seedRand,maxConcurrentEvals,
-    NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,
+    nnModelNames,nnModelFiles,expectedSha256s,cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,
+    maxBoardXSizeUsed,maxBoardYSizeUsed,defaultMaxBatchSize,defaultRequireExactNNLen,
     Setup::SETUP_FOR_MATCH
   );
   logger.write("Loaded neural net");
@@ -155,14 +169,13 @@ int MainCmds::match(int argc, const char* const* argv) {
     nnEvalsByBot[i] = nnEvals[whichNNModel[i]];
   }
 
+  std::vector<std::unique_ptr<PatternBonusTable>> patternBonusTables = Setup::loadAvoidSgfPatternBonusTables(cfg,logger);
+  assert(patternBonusTables.size() == numBots);
+
   //Initialize object for randomly pairing bots
   bool forSelfPlay = false;
   bool forGateKeeper = false;
   MatchPairer* matchPairer = new MatchPairer(cfg,numBots,botNames,nnEvalsByBot,paramss,forSelfPlay,forGateKeeper,excludeBot);
-
-  //Initialize object for randomizing game settings and running games
-  PlaySettings playSettings = PlaySettings::loadForMatch(cfg);
-  GameRunner* gameRunner = new GameRunner(cfg, playSettings, logger);
 
   //Check for unused config keys
   cfg.warnUnusedKeys(cerr,&logger);
@@ -170,28 +183,42 @@ int MainCmds::match(int argc, const char* const* argv) {
   //Done loading!
   //------------------------------------------------------------------------------------
   logger.write("Loaded all config stuff, starting matches");
-  if(!logToStdout)
+  if(!logger.isLoggingToStdout())
     cout << "Loaded all config stuff, starting matches" << endl;
 
   if(sgfOutputDir != string())
     MakeDir::make(sgfOutputDir);
 
-  if(!std::atomic_is_lock_free(&sigReceived))
-    throw StringError("sigReceived is not lock free, signal-quitting mechanism for terminating matches will NOT work!");
+  if(!std::atomic_is_lock_free(&shouldStop))
+    throw StringError("shouldStop is not lock free, signal-quitting mechanism for terminating matches will NOT work!");
   std::signal(SIGINT, signalHandler);
   std::signal(SIGTERM, signalHandler);
 
+
+  std::mutex statsMutex;
+  int64_t gameCount = 0;
+  std::map<string,double> timeUsedByBotMap;
+  std::map<string,double> movesByBotMap;
+
   auto runMatchLoop = [
-    &gameRunner,&matchPairer,&sgfOutputDir,&logger,&gameSeedBase
+    &gameRunner,&matchPairer,&sgfOutputDir,&logger,&gameSeedBase,&patternBonusTables,
+    &statsMutex, &gameCount, &timeUsedByBotMap, &movesByBotMap
   ](
     uint64_t threadHash
   ) {
-    ofstream* sgfOut = sgfOutputDir.length() > 0 ? (new ofstream(sgfOutputDir + "/" + Global::uint64ToHexString(threadHash) + ".sgfs")) : NULL;
-    vector<std::atomic<bool>*> stopConditions = {&sigReceived};
+    ofstream* sgfOut = NULL;
+    if(sgfOutputDir.length() > 0) {
+      sgfOut = new ofstream();
+      FileUtils::open(*sgfOut, sgfOutputDir + "/" + Global::uint64ToHexString(threadHash) + ".sgfs");
+    }
+    auto shouldStopFunc = []() {
+      return shouldStop.load();
+    };
+    WaitableFlag* shouldPause = nullptr;
 
     Rand thisLoopSeedRand;
     while(true) {
-      if(sigReceived.load())
+      if(shouldStop.load())
         break;
 
       FinishedGameData* gameData = NULL;
@@ -200,22 +227,48 @@ int MainCmds::match(int argc, const char* const* argv) {
       MatchPairer::BotSpec botSpecW;
       if(matchPairer->getMatchup(botSpecB, botSpecW, logger)) {
         string seed = gameSeedBase + ":" + Global::uint64ToHexString(thisLoopSeedRand.nextUInt64());
+        std::function<void(const MatchPairer::BotSpec&, Search*)> afterInitialization = [&patternBonusTables](const MatchPairer::BotSpec& spec, Search* search) {
+          assert(spec.botIdx < patternBonusTables.size());
+          search->setCopyOfExternalPatternBonusTable(patternBonusTables[spec.botIdx]);
+        };
         gameData = gameRunner->runGame(
-          seed, botSpecB, botSpecW, NULL, logger,
-          stopConditions, NULL
+          seed, botSpecB, botSpecW, NULL, NULL, logger,
+          shouldStopFunc, shouldPause, nullptr, afterInitialization, nullptr
         );
       }
 
       bool shouldContinue = gameData != NULL;
       if(gameData != NULL) {
         if(sgfOut != NULL) {
-          WriteSgf::writeSgf(*sgfOut,gameData->bName,gameData->wName,gameData->endHist,gameData,false);
+          WriteSgf::writeSgf(*sgfOut,gameData->bName,gameData->wName,gameData->endHist,gameData,false,true);
           (*sgfOut) << endl;
         }
+
+        {
+          std::lock_guard<std::mutex> lock(statsMutex);
+          gameCount += 1;
+          timeUsedByBotMap[gameData->bName] += gameData->bTimeUsed;
+          timeUsedByBotMap[gameData->wName] += gameData->wTimeUsed;
+          movesByBotMap[gameData->bName] += (double)gameData->bMoveCount;
+          movesByBotMap[gameData->wName] += (double)gameData->wMoveCount;
+
+          int64_t x = gameCount;
+          while(x % 2 == 0 && x > 1) x /= 2;
+          if(x == 1 || x == 3 || x == 5) {
+            for(auto& pair : timeUsedByBotMap) {
+              logger.write(
+                "Avg move time used by " + pair.first + " " +
+                Global::doubleToString(pair.second / movesByBotMap[pair.first]) + " " +
+                Global::doubleToString(movesByBotMap[pair.first]) + " moves"
+              );
+            }
+          }
+        }
+
         delete gameData;
       }
 
-      if(sigReceived.load())
+      if(shouldStop.load())
         break;
       if(!shouldContinue)
         break;
@@ -226,11 +279,15 @@ int MainCmds::match(int argc, const char* const* argv) {
     }
     logger.write("Match loop thread terminating");
   };
+  auto runMatchLoopProtected = [&logger,&runMatchLoop](uint64_t threadHash) {
+    Logger::logThreadUncaught("match loop", &logger, [&](){ runMatchLoop(threadHash); });
+  };
+
 
   Rand hashRand;
   vector<std::thread> threads;
   for(int i = 0; i<numGameThreads; i++) {
-    threads.push_back(std::thread(runMatchLoop, hashRand.nextUInt64()));
+    threads.push_back(std::thread(runMatchLoopProtected, hashRand.nextUInt64()));
   }
   for(int i = 0; i<threads.size(); i++)
     threads[i].join();
