@@ -72,8 +72,6 @@ time python3 "$GITROOTDIR"/python/train.py \
      -exportprefix "$TRAININGNAME" \
      -pos-len 19 \
      -batch-size "$BATCHSIZE" \
-     -max-epochs-this-instance 3 \
-     -samples-per-epoch 10000 \
      -gpu-memory-frac 0.6 \
      -model-kind "$MODELKIND" \
      -sub-epochs 4 \

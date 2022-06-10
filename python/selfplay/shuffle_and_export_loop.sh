@@ -42,22 +42,20 @@ cp "$GITROOTDIR"/python/*.py "$GITROOTDIR"/python/selfplay/*.sh "$DATED_ARCHIVE"
 
 (
     cd "$basedir"/scripts
-    # while true
-    # do
+    while true
+    do
         ./shuffle.sh "$basedir" "$tmpdir" "$NTHREADS" "$BATCHSIZE" "$@"
-    #     sleep 20
-    # done
-# ) >> outshuffle.txt 2>&1 & disown
-) >> "$basedir"/logs/outshuffle.txt 2>&1
+        sleep 20
+    done
+) >> "$basedir"/logs/outshuffle.txt 2>&1 & disown
 
 (
     cd "$basedir"/scripts
-    # while true
-    # do
+    while true
+    do
         ./export_model_for_selfplay.sh "$NAMEPREFIX" "$basedir" "$USEGATING"
-    #     sleep 10
-    # done
-# ) >> outexport.txt 2>&1 & disown
+        sleep 10
+    done
 ) >> "$basedir"/logs/outexport.txt 2>&1 & disown
 
 exit 0
