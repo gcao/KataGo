@@ -53,6 +53,7 @@ Hash128 LocalPatternHasher::getHash(const Board& board, Loc loc, Player pla) con
   Hash128 hash = zobristPla[pla];
 
   if(loc != Board::PASS_LOC && loc != Board::NULL_LOC) {
+    // TODO: do we need to modify this to support Daoqi?
     const int dxi = board.adj_offsets[2];
     const int dyi = board.adj_offsets[3];
     assert(dxi == 1);
@@ -89,6 +90,7 @@ Hash128 LocalPatternHasher::getHashWithSym(const Board& board, Loc loc, Player p
   Hash128 hash = zobristPla[symPla];
 
   if(loc != Board::PASS_LOC && loc != Board::NULL_LOC) {
+    // TODO: do we need to modify this to support Daoqi?
     const int dxi = board.adj_offsets[2];
     const int dyi = board.adj_offsets[3];
     assert(dxi == 1);
