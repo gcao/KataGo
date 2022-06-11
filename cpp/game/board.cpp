@@ -347,9 +347,9 @@ void Board::getBoundNumLibertiesAfterPlay(Loc loc, Player pla, int& lowerBound, 
   int numConnectionLibs = 0; //Sum over friendly groups connected to of their libs-1
   int maxConnectionLibs = 0; //Max over friendly groups connected to of their libs-1
 
-  for(int i = 0; i < 4; i++) {
-    Loc adj = loc + adj_offsets[i];
-    if(colors[adj] == C_WALL) adj = loc + adj_offsets[i + 4];
+  FOREACHADJ(
+    Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
     if(colors[adj] == C_EMPTY) {
       numImmediateLibs++;
     }
@@ -367,7 +367,7 @@ void Board::getBoundNumLibertiesAfterPlay(Loc loc, Player pla, int& lowerBound, 
       if(connLibs > maxConnectionLibs)
         maxConnectionLibs = connLibs;
     }
-  }
+  );
 
   lowerBound = numCaps + (maxConnectionLibs > numImmediateLibs ? maxConnectionLibs : numImmediateLibs);
   upperBound = numImmediateLibs + potentialLibsFromCaps + numConnectionLibs;
@@ -385,9 +385,9 @@ int Board::getNumLibertiesAfterPlay(Loc loc, Player pla, int max) const
   Loc capturedGroupHeads[4];
 
   //First, count immediate liberties and groups that would be captured
-  for(int i = 0; i < 4; i++) {
-    Loc adj = loc + adj_offsets[i];
-    if(colors[adj] == C_WALL) adj = loc + adj_offsets[i + 4];
+  FOREACHADJ(
+    Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
     if(colors[adj] == C_EMPTY) {
       libs[numLibs++] = adj;
       if(numLibs >= max)
@@ -407,7 +407,7 @@ int Board::getNumLibertiesAfterPlay(Loc loc, Player pla, int max) const
       if(!alreadyFound)
         capturedGroupHeads[numCapturedGroups++] = head;
     }
-  }
+  );
 
   auto wouldBeEmpty = [numCapturedGroups,&capturedGroupHeads,this,opp](Loc lc) {
     if(this->colors[lc] == C_EMPTY)
@@ -423,9 +423,9 @@ int Board::getNumLibertiesAfterPlay(Loc loc, Player pla, int max) const
   //Next, walk through all stones of all surrounding groups we would connect with and count liberties, avoiding overlap.
   int numConnectingGroups = 0;
   Loc connectingGroupHeads[4];
-  for(int i = 0; i<4; i++) {
-    Loc adj = loc + adj_offsets[i];
-    if(colors[adj] == C_WALL) adj = loc + adj_offsets[i + 4];
+  FOREACHADJ(
+    Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
     if(colors[adj] == pla) {
       Loc head = chain_head[adj];
       bool alreadyFound = false;
@@ -460,7 +460,7 @@ int Board::getNumLibertiesAfterPlay(Loc loc, Player pla, int max) const
         } while (cur != adj);
       }
     }
-  }
+  );
   return numLibs;
 }
 
@@ -507,18 +507,13 @@ bool Board::isSimpleEye(Loc loc, Player pla) const
   if(colors[loc] != C_EMPTY)
     return false;
 
-  bool against_wall = false;
-
   //Check that surounding points are owned
-  for(int i = 0; i < 4; i++)
-  {
-    Loc adj = loc + adj_offsets[i];
-    if(colors[adj] == C_WALL) adj = loc + adj_offsets[i + 4];
-    if(colors[adj] == C_WALL)
-      against_wall = true;
-    else if(colors[adj] != pla)
+  FOREACHADJ(
+    Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
+    if(colors[adj] != pla)
       return false;
-  }
+  );
 
   //Check that opponent does not own too many diagonal points
   Player opp = getOpp(pla);
@@ -531,7 +526,7 @@ bool Board::isSimpleEye(Loc loc, Player pla) const
       num_opp_corners++;
   }
 
-  if(num_opp_corners >= 2 || (against_wall && num_opp_corners >= 1))
+  if(num_opp_corners >= 2 || num_opp_corners >= 1)
     return false;
 
   return true;
@@ -543,6 +538,7 @@ bool Board::wouldBeCapture(Loc loc, Player pla) const {
   Player opp = getOpp(pla);
   FOREACHADJ(
     Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
     if(colors[adj] == opp)
     {
       if(getNumLiberties(adj) == 1)
@@ -560,18 +556,17 @@ bool Board::wouldBeKoCapture(Loc loc, Player pla) const {
   //Check that surounding points are are all opponent owned and exactly one of them is capturable
   Player opp = getOpp(pla);
   Loc oppCapturableLoc = NULL_LOC;
-  for(int i = 0; i < 4; i++)
-  {
-    Loc adj = loc + adj_offsets[i];
-    if(colors[adj] == C_WALL) adj = loc + adj_offsets[i + 4];
-    if(colors[adj] != C_WALL && colors[adj] != opp)
+  FOREACHADJ(
+    Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
+    if(colors[adj] != opp)
       return false;
     if(colors[adj] == opp && getNumLiberties(adj) == 1) {
       if(oppCapturableLoc != NULL_LOC)
         return false;
       oppCapturableLoc = adj;
     }
-  }
+  );
   if(oppCapturableLoc == NULL_LOC)
     return false;
 
@@ -587,18 +582,17 @@ Loc Board::getKoCaptureLoc(Loc loc, Player pla) const {
   //Check that surounding points are are all opponent owned and exactly one of them is capturable
   Player opp = getOpp(pla);
   Loc oppCapturableLoc = NULL_LOC;
-  for(int i = 0; i < 4; i++)
-  {
-    Loc adj = loc + adj_offsets[i];
-    if(colors[adj] == C_WALL) adj = loc + adj_offsets[i + 4];
-    if(colors[adj] != C_WALL && colors[adj] != opp)
+  FOREACHADJ(
+    Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
+    if(colors[adj] != opp)
       return NULL_LOC;
     if(colors[adj] == opp && getNumLiberties(adj) == 1) {
       if(oppCapturableLoc != NULL_LOC)
         return NULL_LOC;
       oppCapturableLoc = adj;
     }
-  }
+  );
   if(oppCapturableLoc == NULL_LOC)
     return NULL_LOC;
 
@@ -619,9 +613,16 @@ bool Board::isAdjacentToPla(Loc loc, Player pla) const {
 }
 
 bool Board::isAdjacentOrDiagonalToPla(Loc loc, Player pla) const {
-  for(int i = 0; i<8; i++) {
-    Loc adj = loc + adj_offsets[i];
+  FOREACHADJ(
+    Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
     if(colors[adj] == pla)
+      return true;
+  );
+  for(int i = 0; i<4; i++) {
+    Loc diag = loc + diag_offsets[i];
+    if(colors[diag] == C_WALL) diag = loc + diag_offsets[i + 4];
+    if(colors[diag] == pla)
       return true;
   }
   return false;
@@ -632,6 +633,7 @@ bool Board::isAdjacentToChain(Loc loc, Loc chain) const {
     return false;
   FOREACHADJ(
     Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
     if(colors[adj] == colors[chain] && chain_head[adj] == chain_head[chain])
       return true;
   );
@@ -645,26 +647,24 @@ bool Board::isNonPassAliveSelfConnection(Loc loc, Player pla, Color* passAliveAr
     return false;
 
   Loc nonPassAliveAdjHead = NULL_LOC;
-  for(int i = 0; i < 4; i++)
-  {
-    Loc adj = loc + adj_offsets[i];
-    if(colors[adj] == C_WALL) adj = loc + adj_offsets[i + 4];
+  FOREACHADJ(
+    Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
     if(colors[adj] == pla && passAliveArea[adj] == C_EMPTY) {
       nonPassAliveAdjHead = chain_head[adj];
       break;
     }
-  }
+  );
 
   if(nonPassAliveAdjHead == NULL_LOC)
     return false;
 
-  for(int i = 0; i < 4; i++)
-  {
-    Loc adj = loc + adj_offsets[i];
-    if(colors[adj] == C_WALL) adj = loc + adj_offsets[i + 4];
+  FOREACHADJ(
+    Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
     if(colors[adj] == pla && chain_head[adj] != nonPassAliveAdjHead)
       return true;
-  }
+  );
 
   return false;
 }
@@ -917,9 +917,9 @@ Hash128 Board::getPosHashAfterMove(Loc loc, Player pla) const {
   bool wouldBeSuicide = true;
   int numCapturedGroups = 0;
   Loc capturedGroupHeads[4];
-  for(int i = 0; i < 4; i++) {
-    Loc adj = loc + adj_offsets[i];
-    if(colors[adj] == C_WALL) adj = loc + adj_offsets[i + 4];
+  FOREACHADJ(
+    Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
     if(colors[adj] == C_EMPTY)
       wouldBeSuicide = false;
     else if(colors[adj] == pla && getNumLiberties(adj) > 1)
@@ -947,15 +947,15 @@ Hash128 Board::getPosHashAfterMove(Loc loc, Player pla) const {
         }
       }
     }
-  }
+  );
 
   //Update hash for suicidal moves
   if(wouldBeSuicide) {
     assert(numCapturedGroups == 0);
 
-    for(int i = 0; i < 4; i++) {
-      Loc adj = loc + adj_offsets[i];
-      if(colors[adj] == C_WALL) adj = loc + adj_offsets[i + 4];
+    FOREACHADJ(
+      int adj = loc + ADJOFFSET;
+      if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
       //Suicide capture!
       if(colors[adj] == pla && getNumLiberties(adj) == 1) {
         //Make sure we haven't already counted it
@@ -976,7 +976,7 @@ Hash128 Board::getPosHashAfterMove(Loc loc, Player pla) const {
           } while (cur != adj);
         }
       }
-    }
+    );
 
     //Don't forget the stone we'd place would also die
     hash ^= ZOBRIST_BOARD_HASH[loc][pla];
@@ -1099,15 +1099,15 @@ int Board::getNumImmediateLiberties(Loc loc) const
 int Board::countHeuristicConnectionLibertiesX2(Loc loc, Player pla) const
 {
   int num_libsX2 = 0;
-  for(int i = 0; i < 4; i++) {
-    Loc adj = loc + adj_offsets[i];
-    if(colors[adj] == C_WALL) adj = loc + adj_offsets[i + 4];
+  FOREACHADJ(
+    Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
     if(colors[adj] == pla) {
       int libs = chain_data[chain_head[adj]].num_liberties;
       if(libs > 1)
         num_libsX2 += libs * 2 - 3;
     }
-  }
+  );
   return num_libsX2;
 }
 
@@ -1275,13 +1275,12 @@ Loc Board::addChainHelper(Loc head, Loc tailTarget, Loc loc, Player pla)
 
   //Recursively add stones around us.
   Loc nextTailTarget = loc;
-  for(int i = 0; i<4; i++)
-  {
-    Loc adj = loc + adj_offsets[i];
-    if(colors[adj] == C_WALL) adj = loc + adj_offsets[i + 4];
+  FOREACHADJ(
+    Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
     if(colors[adj] == C_EMPTY)
       nextTailTarget = addChainHelper(head,nextTailTarget,adj,pla);
-  }
+  );
   return nextTailTarget;
 }
 
@@ -1501,9 +1500,9 @@ int Board::findLibertyGainingCaptures(Loc loc, vector<Loc>& buf, int bufStart, i
   Loc cur = loc;
   do
   {
-    for(int i = 0; i < 4; i++) {
-      Loc adj = cur + adj_offsets[i];
-      if(colors[adj] == C_WALL) adj = cur + adj_offsets[i + 4];
+    FOREACHADJ(
+      Loc adj = loc + ADJOFFSET;
+      if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
       if(colors[adj] == opp) {
         Loc head = chain_head[adj];
         if(chain_data[head].num_liberties == 1) {
@@ -1521,7 +1520,7 @@ int Board::findLibertyGainingCaptures(Loc loc, vector<Loc>& buf, int bufStart, i
           }
         }
       }
-    }
+    );
 
     cur = next_in_chain[cur];
   } while (cur != loc);
@@ -2056,9 +2055,9 @@ void Board::calculateAreaForPla(
         uint16_t vStart = vitalStart[regionIdx];
         assert(vStart + 4 <= vitalForPlaHeadsListsMaxLen);
         uint16_t initialVLen = 0;
-        for(int i = 0; i<4; i++) {
-          Loc adj = loc + adj_offsets[i];
-          if(colors[adj] == C_WALL) adj = loc + adj_offsets[i + 4];
+        FOREACHADJ(
+          Loc adj = loc + ADJOFFSET;
+          if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
           if(colors[adj] == pla) {
             Loc plaHead = chain_head[adj];
             bool alreadyPresent = false;
@@ -2073,7 +2072,7 @@ void Board::calculateAreaForPla(
               initialVLen += 1;
             }
           }
-        }
+        );
         vitalLen[regionIdx] = initialVLen;
       }
       Loc tailTarget = buildRegion(loc,regionIdx); //buildRegion uses loc itself as the head
@@ -2797,6 +2796,7 @@ Board Board::ofJson(const nlohmann::json& data) {
 bool Board::isAdjacentToPlaHead(Player pla, Loc loc, Loc plaHead) const {
   FOREACHADJ(
     Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
     if(colors[adj] == pla && chain_head[adj] == plaHead)
       return true;
   );
@@ -2822,6 +2822,7 @@ bool Board::countEmptyHelper(bool* emptyCounted, Loc initialLoc, int& count, int
     Loc loc = toExpand[numExpanded++];
     FOREACHADJ(
       Loc adj = loc + ADJOFFSET;
+      if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
       if(colors[adj] == C_EMPTY && !emptyCounted[adj]) {
         count += 1;
         emptyCounted[adj] = true;

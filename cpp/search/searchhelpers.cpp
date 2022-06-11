@@ -434,6 +434,7 @@ bool Search::shouldSuppressPass(const SearchNode* n) const {
     bool adjToPlaOwned = false;
     for(int j = 0; j<4; j++) {
       Loc adj = moveLoc + rootBoard.adj_offsets[j];
+      if(rootBoard.colors[adj] == C_WALL) adj = moveLoc + rootBoard.adj_offsets[j + 4];
       int adjPos = NNPos::locToPos(adj,rootBoard.x_size,nnXLen,nnYLen);
       double adjPlaOwnership = rootPla == P_WHITE ? whiteOwnerMap[adjPos] : -whiteOwnerMap[adjPos];
       if(adjPlaOwnership > extreme) {
