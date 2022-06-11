@@ -893,13 +893,12 @@ void Board::undo(Board::MoveRecord record)
       } while (cur != loc);
 
       //Rebuild each chain adjacent now
-      for(int i = 0; i<4; i++)
-      {
-        int adj = loc + adj_offsets[i];
-        if(colors[adj] == C_WALL) adj = loc + adj_offsets[i + 4];
+      FOREACHADJ(
+        int adj = loc + ADJOFFSET;
+        if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
         if(colors[adj] == record.pla && chain_head[adj] == NULL_LOC)
           rebuildChain(adj, record.pla);
-      }
+      );
     }
   }
 }
@@ -1445,9 +1444,9 @@ int Board::findLiberties(Loc loc, vector<Loc>& buf, int bufStart, int bufIdx) co
   Loc cur = loc;
   do
   {
-    for(int i = 0; i < 4; i++) {
-      Loc lib = cur + adj_offsets[i];
-      if(colors[lib] == C_WALL) lib = cur + adj_offsets[i + 4];
+    FOREACHADJ(
+      int lib = loc + ADJOFFSET;
+      if(colors[lib] == C_WALL) lib = loc + ADJOFFSET2;
       if(colors[lib] == C_EMPTY) {
         //Check for dups
         bool foundDup = false;
@@ -1464,7 +1463,7 @@ int Board::findLiberties(Loc loc, vector<Loc>& buf, int bufStart, int bufIdx) co
           numFound++;
         }
       }
-    }
+    );
 
     cur = next_in_chain[cur];
   } while (cur != loc);
@@ -2844,13 +2843,14 @@ bool Board::simpleRepetitionBoundGt(Loc loc, int bound) const {
   else {
     Loc cur = loc;
     do {
-      for(int i = 0; i < 4; i++) {
-        Loc lib = cur + adj_offsets[i];
+      FOREACHADJ(
+        int lib = cur + ADJOFFSET;
+        if(colors[lib] == C_WALL) lib = cur + ADJOFFSET2;
         if(colors[lib] == C_EMPTY) {
           if(countEmptyHelper(emptyCounted, lib, count, bound))
             return true;
         }
-      }
+      );
       cur = next_in_chain[cur];
     } while (cur != loc);
   }
