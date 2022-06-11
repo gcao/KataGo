@@ -647,14 +647,15 @@ bool Board::isNonPassAliveSelfConnection(Loc loc, Player pla, Color* passAliveAr
     return false;
 
   Loc nonPassAliveAdjHead = NULL_LOC;
-  FOREACHADJ(
-    Loc adj = loc + ADJOFFSET;
-    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
+  for(int i = 0; i < 4; i++)
+  {
+    Loc adj = loc + adj_offsets[i];
+    if(colors[adj] == C_WALL) adj = loc + adj_offsets[i + 4];
     if(colors[adj] == pla && passAliveArea[adj] == C_EMPTY) {
       nonPassAliveAdjHead = chain_head[adj];
       break;
     }
-  );
+  }
 
   if(nonPassAliveAdjHead == NULL_LOC)
     return false;
