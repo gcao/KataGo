@@ -1084,14 +1084,10 @@ void Board::playMoveAssumeLegal(Loc loc, Player pla)
 int Board::getNumImmediateLiberties(Loc loc) const
 {
   int num_libs = 0;
-  if(colors[loc + ADJ0] == C_EMPTY) num_libs++;
-  else if(colors[loc + ADJ0] == C_WALL && colors[loc + ADJ0B] == C_EMPTY) num_libs++;
-  if(colors[loc + ADJ1] == C_EMPTY) num_libs++;
-  else if(colors[loc + ADJ1] == C_WALL && colors[loc + ADJ1B] == C_EMPTY) num_libs++;
-  if(colors[loc + ADJ2] == C_EMPTY) num_libs++;
-  else if(colors[loc + ADJ2] == C_WALL && colors[loc + ADJ2B] == C_EMPTY) num_libs++;
-  if(colors[loc + ADJ3] == C_EMPTY) num_libs++;
-  else if(colors[loc + ADJ3] == C_WALL && colors[loc + ADJ3B] == C_EMPTY) num_libs++;
+  if(colors[loc + ADJ0] == C_EMPTY || (colors[loc + ADJ0] == C_WALL && colors[loc + ADJ0B] == C_EMPTY)) num_libs++;
+  if(colors[loc + ADJ1] == C_EMPTY || (colors[loc + ADJ1] == C_WALL && colors[loc + ADJ1B] == C_EMPTY)) num_libs++;
+  if(colors[loc + ADJ2] == C_EMPTY || (colors[loc + ADJ2] == C_WALL && colors[loc + ADJ2B] == C_EMPTY)) num_libs++;
+  if(colors[loc + ADJ3] == C_EMPTY || (colors[loc + ADJ3] == C_WALL && colors[loc + ADJ3B] == C_EMPTY)) num_libs++;
 
   return num_libs;
 }
@@ -1115,23 +1111,12 @@ int Board::countHeuristicConnectionLibertiesX2(Loc loc, Player pla) const
 //Assumes loc is empty
 bool Board::isLibertyOf(Loc loc, Loc head) const
 {
-  Loc adj;
-  adj = loc + ADJ0;
-  if(colors[adj] == C_WALL) adj = loc + ADJ0B;
-  if(colors[adj] == colors[head] && chain_head[adj] == head)
-    return true;
-  adj = loc + ADJ1;
-  if(colors[adj] == C_WALL) adj = loc + ADJ1B;
-  if(colors[adj] == colors[head] && chain_head[adj] == head)
-    return true;
-  adj = loc + ADJ2;
-  if(colors[adj] == C_WALL) adj = loc + ADJ2B;
-  if(colors[adj] == colors[head] && chain_head[adj] == head)
-    return true;
-  adj = loc + ADJ3;
-  if(colors[adj] == C_WALL) adj = loc + ADJ3B;
-  if(colors[adj] == colors[head] && chain_head[adj] == head)
-    return true;
+  FOREACHADJ(
+    Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
+    if(colors[adj] == colors[head] && chain_head[adj] == head)
+      return true;
+  );
 
   return false;
 }
