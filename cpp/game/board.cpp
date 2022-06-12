@@ -120,14 +120,10 @@ bool Location::isNearCentral(Loc loc, int x_size, int y_size) {
 #define ADJ2 (1)
 #define ADJ3 (x_size+1)
 
-// (x_size-1)*(x_size+1)
-#define ADJ0B (x_size*x_size-1)
-// x_size-1
-#define ADJ1B (x_size-1)
-// -(x_size-1)
-#define ADJ2B (-x_size+1)
-// -(x_size-1)*(x_size+1)
-#define ADJ3B (-x_size*x_size+1)
+#define ADJ0B (x_size*x_size-1)  // (x_size-1)*(x_size+1)
+#define ADJ1B (x_size-1)         // (x_size-1)
+#define ADJ2B (-x_size+1)        // -(x_size-1)
+#define ADJ3B (-x_size*x_size+1) // -(x_size-1)*(x_size+1)
 
 //CONSTRUCTORS AND INITIALIZATION----------------------------------------------------------
 
@@ -1420,7 +1416,7 @@ void Board::changeSurroundingLiberties(Loc loc, Player pla, int delta)
 
 int Location::distance(Loc loc0, Loc loc1, int x_size) {
   int dx = getX(loc1,x_size) - getX(loc0,x_size);
-  int dy = (loc1-loc0+dx) / (x_size+1);
+  int dy = (loc1-loc0-dx) / (x_size+1);
   // return (dx >= 0 ? dx : -dx) + (dy >= 0 ? dy : -dy);
   if(dx < 0) dx = -dx;
   if(dx > x_size-dx) dx = x_size-dx;
@@ -1431,7 +1427,7 @@ int Location::distance(Loc loc0, Loc loc1, int x_size) {
 
 int Location::euclideanDistanceSquared(Loc loc0, Loc loc1, int x_size) {
   int dx = getX(loc1,x_size) - getX(loc0,x_size);
-  int dy = (loc1-loc0+dx) / (x_size+1);
+  int dy = (loc1-loc0-dx) / (x_size+1);
   if(dx < 0) dx = -dx;
   if(dx > x_size-dx) dx = x_size-dx;
   if(dy < 0) dy = -dy;
@@ -1490,8 +1486,8 @@ int Board::findLibertyGainingCaptures(Loc loc, vector<Loc>& buf, int bufStart, i
   do
   {
     FOREACHADJ(
-      Loc adj = loc + ADJOFFSET;
-      if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
+      Loc adj = cur + ADJOFFSET;
+      if(colors[adj] == C_WALL) adj = cur + ADJOFFSET2;
       if(colors[adj] == opp) {
         Loc head = chain_head[adj];
         if(chain_data[head].num_liberties == 1) {
