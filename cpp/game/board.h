@@ -54,6 +54,7 @@ namespace Location
   int getY(Loc loc, int x_size);
 
   void getAdjacentOffsets(short adj_offsets[8], int x_size);
+  void getDiagonalOffsets(short diag_offsets[8], int x_size);
   bool isAdjacent(Loc loc0, Loc loc1, int x_size);
   Loc getMirrorLoc(Loc loc, int x_size, int y_size);
   Loc getCenterLoc(int x_size, int y_size);

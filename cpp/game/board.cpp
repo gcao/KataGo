@@ -49,17 +49,26 @@ void Location::getAdjacentOffsets(short adj_offsets[8], int x_size)
 {
   adj_offsets[0] = -(x_size+1);
   adj_offsets[1] = -1;
-  adj_offsets[2] = 1;
-  adj_offsets[3] = (x_size+1);
+  adj_offsets[2] =  1;
+  adj_offsets[3] =  (x_size+1);
 
-  // (x_size-1)*(x_size+1)
-  adj_offsets[4] = x_size*x_size-1;
-  // x_size-1
-  adj_offsets[5] = x_size-1;
-  // -(x_size-1)
-  adj_offsets[6] = -x_size+1;
-  // -(x_size-1)*(x_size+1)
-  adj_offsets[7] = -x_size*x_size+1;
+  adj_offsets[4] = x_size*x_size-1;  // (x_size-1)*(x_size+1)
+  adj_offsets[5] = x_size-1;         // (x_size-1)
+  adj_offsets[6] = -x_size+1;        // -(x_size-1)
+  adj_offsets[7] = -x_size*x_size+1; // -(x_size-1)*(x_size+1)
+}
+
+void Location::getDiagonalOffsets(short diag_offsets[8], int x_size)
+{
+  diag_offsets[0] = -x_size-2; // -(x_size+1) - 1
+  diag_offsets[1] = -x_size;   // -(x_size+1) + 1
+  diag_offsets[2] =  x_size;   //  (x_size+1) - 1
+  diag_offsets[3] =  x_size+2; //  (x_size+1) + 1
+
+  diag_offsets[4] = -x_size*x_size;   // -(x_size-1)*(x_size+1) - 1
+  diag_offsets[5] = -x_size*x_size+2; // -(x_size-1)*(x_size+1) + 1
+  diag_offsets[6] =  x_size*x_size-2; //  (x_size-1)*(x_size+1) - 1
+  diag_offsets[7] =  x_size*x_size;   //  (x_size-1)*(x_size+1) + 1
 }
 
 bool Location::isAdjacent(Loc loc0, Loc loc1, int x_size)
@@ -177,15 +186,6 @@ void Board::init(int xS, int yS)
   numWhiteCaptures = 0;
 
   Location::getAdjacentOffsets(adj_offsets,x_size);
-
-  diag_offsets[0] = -x_size-2; // -(x_size+1) - 1
-  diag_offsets[1] = -x_size;   // -(x_size+1) + 1
-  diag_offsets[2] =  x_size;   //  (x_size+1) - 1
-  diag_offsets[3] =  x_size+2; //  (x_size+1) + 1
-  diag_offsets[4] = -x_size*x_size;   // -(x_size-1)*(x_size+1) - 1
-  diag_offsets[5] = -x_size*x_size+2; // -(x_size-1)*(x_size+1) + 1
-  diag_offsets[6] =  x_size*x_size-2; //  (x_size-1)*(x_size+1) - 1
-  diag_offsets[7] =  x_size*x_size;   //  (x_size-1)*(x_size+1) + 1
 }
 
 void Board::initHash()
