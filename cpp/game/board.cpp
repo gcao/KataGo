@@ -76,8 +76,12 @@ bool Location::isAdjacent(Loc loc0, Loc loc1, int x_size)
   // return loc0 == loc1 - (x_size+1) || loc0 == loc1 - 1 || loc0 == loc1 + 1 || loc0 == loc1 + (x_size+1);
   int x0 = Location::getX(loc0, x_size), y0 = Location::getY(loc0, x_size);
   int x1 = Location::getX(loc1, x_size), y1 = Location::getY(loc1, x_size);
-  return (x0 == x1 && (y0 == y1 - 1 || y0 == y1 + 1 || y0 == x_size - y1 - 1)) ||
-         (y0 == y1 && (x0 == x1 - 1 || x0 == x1 + 1 || x0 == x_size - x1 - 1));
+  if(x0 == x1)
+    return y0 == y1-1 || y0 == y1+1 || (y0 == 1 && y1 == x_size) || (y0 == x_size && y1 == 1);
+  else if(y0 == y1)
+    return x0 == x1-1 || x0 == x1+1 || (x0 == 1 && x1 == x_size) || (x0 == x_size && x1 == 1);
+  else
+    return false;
 }
 
 Loc Location::getMirrorLoc(Loc loc, int x_size, int y_size) {
