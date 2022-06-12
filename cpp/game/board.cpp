@@ -1449,8 +1449,8 @@ int Board::findLiberties(Loc loc, vector<Loc>& buf, int bufStart, int bufIdx) co
   do
   {
     FOREACHADJ(
-      Loc lib = loc + ADJOFFSET;
-      if(colors[lib] == C_WALL) lib = loc + ADJOFFSET2;
+      Loc lib = cur + ADJOFFSET;
+      if(colors[lib] == C_WALL) lib = cur + ADJOFFSET2;
       if(colors[lib] == C_EMPTY) {
         //Check for dups
         bool foundDup = false;
