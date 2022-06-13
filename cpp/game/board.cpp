@@ -186,6 +186,7 @@ void Board::init(int xS, int yS)
   numWhiteCaptures = 0;
 
   Location::getAdjacentOffsets(adj_offsets,x_size);
+  Location::getDiagonalOffsets(diag_offsets,x_size);
 }
 
 void Board::initHash()
