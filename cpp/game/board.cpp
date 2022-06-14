@@ -113,17 +113,17 @@ bool Location::isNearCentral(Loc loc, int x_size, int y_size) {
 }
 
 
-#define FOREACHADJ(BLOCK) {int ADJOFFSET = -(x_size+1), ADJOFFSET2 = x_size*x_size-1; {BLOCK}; ADJOFFSET = -1; ADJOFFSET2 = x_size-1; {BLOCK}; ADJOFFSET = 1; ADJOFFSET2 = -x_size+1; {BLOCK}; ADJOFFSET = x_size+1; ADJOFFSET2 = -x_size*x_size+1; {BLOCK}};
+#define FOREACHADJ(BLOCK) {int ADJOFFSET = _adj0, ADJOFFSET2 = _adj0b; {BLOCK}; ADJOFFSET = -1; ADJOFFSET2 = _adj1b; {BLOCK}; ADJOFFSET = 1; ADJOFFSET2 = _adj2b; {BLOCK}; ADJOFFSET = _adj3; ADJOFFSET2 = _adj3b; {BLOCK}};
 
-#define ADJ0 (-(x_size+1))
+#define ADJ0 _adj0
 #define ADJ1 (-1)
 #define ADJ2 (1)
-#define ADJ3 (x_size+1)
+#define ADJ3 _adj3
 
-#define ADJ0B (x_size*x_size-1)  // (x_size-1)*(x_size+1)
-#define ADJ1B (x_size-1)         // (x_size-1)
-#define ADJ2B (-x_size+1)        // -(x_size-1)
-#define ADJ3B (-x_size*x_size+1) // -(x_size-1)*(x_size+1)
+#define ADJ0B _adj0b // (x_size-1)*(x_size+1)
+#define ADJ1B _adj1b // (x_size-1)
+#define ADJ2B _adj2b // -(x_size-1)
+#define ADJ3B _adj3b // -(x_size-1)*(x_size+1)
 
 //CONSTRUCTORS AND INITIALIZATION----------------------------------------------------------
 
@@ -187,6 +187,24 @@ void Board::init(int xS, int yS)
 
   Location::getAdjacentOffsets(adj_offsets,x_size);
   Location::getDiagonalOffsets(diag_offsets,x_size);
+
+  _adj0  = adj_offsets[0];
+  _adj1  = adj_offsets[1];
+  _adj2  = adj_offsets[2];
+  _adj3  = adj_offsets[3];
+  _adj0b = adj_offsets[4];
+  _adj1b = adj_offsets[5];
+  _adj2b = adj_offsets[6];
+  _adj3b = adj_offsets[7];
+
+  _diag0  = diag_offsets[0];
+  _diag1  = diag_offsets[1];
+  _diag2  = diag_offsets[2];
+  _diag3  = diag_offsets[3];
+  _diag0b = diag_offsets[4];
+  _diag1b = diag_offsets[5];
+  _diag2b = diag_offsets[6];
+  _diag3b = diag_offsets[7];
 }
 
 void Board::initHash()

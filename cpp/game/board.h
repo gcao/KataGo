@@ -316,6 +316,24 @@ struct Board
   short adj_offsets[8]; //Indices 0-3: Offsets to add for regular adjacent points. Indices 4-7: Offsets for border adjacent points.
   short diag_offsets[8]; //Offsets to add for diagonal points.
 
+  short _adj0;
+  short _adj1;
+  short _adj2;
+  short _adj3;
+  short _adj0b;
+  short _adj1b;
+  short _adj2b;
+  short _adj3b;
+
+  short _diag0;
+  short _diag1;
+  short _diag2;
+  short _diag3;
+  short _diag0b;
+  short _diag1b;
+  short _diag2b;
+  short _diag3b;
+
   private:
   void init(int xS, int yS);
   int countHeuristicConnectionLibertiesX2(Loc loc, Player pla) const;
