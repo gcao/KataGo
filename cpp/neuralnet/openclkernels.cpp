@@ -771,29 +771,29 @@ __kernel void untransform(
   for(int subY = 0; subY < OUTTILE_YSIZE; subY++) {
     int y = tileY * OUTTILE_YSIZE + subY;
     // For Daoqi
-    if(y < 0) {
-      y += ySize;
-    } else if (y >= ySize) {
-      y -= ySize;
-    }
+    // if(y < 0) {
+    //   y += ySize;
+    // } else if (y >= ySize) {
+    //   y -= ySize;
+    // }
     for(int subX = 0; subX < OUTTILE_XSIZE; subX++) {
       int x = tileX * OUTTILE_XSIZE + subX;
       // For Weiqi/Go
-      // if(y >= 0 && y < ySize && x >= 0 && x < xSize && tileX < numTilesX && tileY < numTilesY && n < nSize) {
-      //   real result = WTILE(subY,subX);
-      //   WRITEOUTPUT(noc,y,x,result);
-      // }
-
-      // For Daoqi
-      if(tileX < numTilesX && tileY < numTilesY && n < nSize) {
-        if (x < 0) {
-          x += xSize;
-        } else if (x >= xSize) {
-          x -= xSize;
-        }
+      if(y >= 0 && y < ySize && x >= 0 && x < xSize && tileX < numTilesX && tileY < numTilesY && n < nSize) {
         real result = WTILE(subY,subX);
         WRITEOUTPUT(noc,y,x,result);
       }
+
+      // For Daoqi
+      // if(tileX < numTilesX && tileY < numTilesY && n < nSize) {
+      //   if (x < 0) {
+      //     x += xSize;
+      //   } else if (x >= xSize) {
+      //     x -= xSize;
+      //   }
+      //   real result = WTILE(subY,subX);
+      //   WRITEOUTPUT(noc,y,x,result);
+      // }
     }
   }
 
