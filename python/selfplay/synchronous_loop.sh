@@ -47,9 +47,9 @@ mkdir -p "$BASEDIR"/gatekeepersgf
 # NOTE: You may want to adjust these numbers.
 NUM_GAMES_PER_CYCLE=1000
 NUM_THREADS_FOR_SHUFFLING=8
-NUM_TRAIN_SAMPLES_PER_CYCLE=500000
+NUM_TRAIN_SAMPLES_PER_CYCLE=600000
 BATCHSIZE=128 # KataGo normally uses batch size 256, and you can do that too, but for lower-end GPUs 64 or 128 may be needed to avoid running out of memory.
-SHUFFLE_MINROWS=80000
+SHUFFLE_MINROWS=10000
 SHUFFLE_KEEPROWS=600000 # A little larger than NUM_TRAIN_SAMPLES_PER_CYCLE
 
 # For archival and logging purposes - you can look back and see exactly the python code on a particular date
