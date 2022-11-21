@@ -45,12 +45,13 @@ mkdir -p "$BASEDIR"/gatekeepersgf
 
 # NOTE: You probably want to edit settings in the cpp/configs/selfplay1.cfg - what board sizes and rules, you want to learn, number of visits to use, etc.
 # NOTE: You may want to adjust these numbers.
-NUM_GAMES_PER_CYCLE=1000
+# NUM_GAMES_PER_CYCLE is set below so that we don't have to restart the training in order to adjust this.
+# NUM_GAMES_PER_CYCLE=1000
 NUM_THREADS_FOR_SHUFFLING=8
 NUM_TRAIN_SAMPLES_PER_CYCLE=600000
 BATCHSIZE=128 # KataGo normally uses batch size 256, and you can do that too, but for lower-end GPUs 64 or 128 may be needed to avoid running out of memory.
 SHUFFLE_MINROWS=10000
-SHUFFLE_KEEPROWS=600000 # A little larger than NUM_TRAIN_SAMPLES_PER_CYCLE
+SHUFFLE_KEEPROWS=650000 # A little larger than NUM_TRAIN_SAMPLES_PER_CYCLE
 
 # For archival and logging purposes - you can look back and see exactly the python code on a particular date
 DATE_FOR_FILENAME=$(date "+%Y%m%d-%H%M%S")
@@ -67,6 +68,8 @@ do
     echo
 
     echo "Selfplay"
+    NUM_GAMES_PER_CYCLE=$(awk '/numGamesPerCycle/{print $NF}' "$GITROOTDIR"/cpp/configs/selfplay1.cfg)
+    echo NUM_GAMES_PER_CYCLE=$NUM_GAMES_PER_CYCLE
     time "$GITROOTDIR"/cpp/katago selfplay -max-games-total "$NUM_GAMES_PER_CYCLE" -output-dir "$BASEDIR"/selfplay -models-dir "$BASEDIR"/models -config "$GITROOTDIR"/cpp/configs/selfplay1.cfg | tee -a "$BASEDIR"/selfplay/stdout.txt
 
     echo "Sleep 10 minutes to cool down CPU & GPU etc"
