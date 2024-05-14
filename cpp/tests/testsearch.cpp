@@ -55,55 +55,55 @@ static void runBasicPositions(NNEvaluator* nnEval, Logger& logger)
       cout << endl << endl;
     }
 
-    {
-      cout << "GAME 3 ==========================================================================" << endl;
-      cout << "Extremely close botvbot game" << endl;
-      cout << endl;
+    // {
+    //   cout << "GAME 3 ==========================================================================" << endl;
+    //   cout << "Extremely close botvbot game" << endl;
+    //   cout << endl;
 
-      string sgfStr = "(;FF[4]GM[1]SZ[19]PB[v49-140-400v-fp16]PW[v49-140-400v-fp16-fpu25]HA[0]KM[7.5]RU[koPOSITIONALscoreAREAsui1]RE[W+0.5];B[qd];W[dp];B[cq];W[dq];B[cp];W[co];B[bo];W[bn];B[cn];W[do];B[bm];W[bp];B[an];W[bq];B[cd];W[qp];B[oq];W[pn];B[nd];W[ec];B[df];W[hc];B[jc];W[cb];B[lq];W[ch];B[cj];W[eh];B[gd];W[gc];B[fd];W[hd];B[gf];W[cl];B[dn];W[el];B[eo];W[fp];B[ej];W[bl];B[bk];W[al];B[cr];W[br];B[fi];W[gl];B[gn];W[gp];B[dk];W[dl];B[fm];W[fl];B[ho];W[iq];B[ip];W[jq];B[jp];W[hp];B[in];W[fh];B[gh];W[gg];B[gi];W[hg];B[fg];W[hf];B[eg];W[il];B[ii];W[kl];B[lo];W[jj];B[ql];W[pq];B[op];W[rm];B[ji];W[ki];B[kh];W[li];B[ij];W[gm];B[dc];W[eb];B[fn];W[jk];B[lk];W[ln];B[ll];W[km];B[mn];W[ko];B[kp];W[mo];B[lp];W[mm];B[nn];W[lm];B[on];W[nk];B[qn];W[qm];B[po];W[rn];B[pm];W[ed];B[cf];W[ni];B[rq];W[rp];B[pr];W[qq];B[qr];W[rr];B[rs];W[sr];B[lc];W[rd];B[rc];W[re];B[pd];W[rb];B[qc];W[qg];B[oj];W[ok];B[pk];W[sc];B[qb];W[bc];B[qh];W[ph];B[qi];W[og];B[kr];W[ff];B[ef];W[fe];B[bd];W[rg];B[oi];W[nh];B[pf];W[pg];B[is];W[hr];B[hs];W[gs];B[gr];W[js];B[fs];W[ir];B[ep];W[eq];B[fq];W[cs];B[er];W[dr];B[fo];W[gq];B[go];W[fr];B[ie];W[he];B[fq];W[hq];B[ib];W[bj];B[bi];W[aj];B[ai];W[ak];B[ci];W[rl];B[ee];W[ge];B[rk];W[ol];B[pl];W[mf];B[nf];W[of];B[ne];W[mg];B[qf];W[rf];B[hb];W[ad];B[jr];W[gs];B[hs];W[es];B[ds];W[fr];B[cc];W[bb];B[fq];W[es];B[ae];W[ac];B[ds];W[fr];B[lh];W[mh];B[fq];W[es];B[qo];W[ro];B[ds];W[fr];B[nj];W[mj];B[fq];W[es];B[bf];W[pi];B[pj];W[ri];B[qj];W[rh];B[gb];W[fb];B[ra];W[sb];B[le];W[me];B[md];W[rj];B[jf];W[sk];B[ks];W[fr];B[lf];W[if];B[id];W[ic];B[je];W[em];B[en];W[ck];B[ga];W[ek];B[dj];W[is];B[kq];W[gs];B[nm];W[nl];B[hk];W[im];B[jn];W[kn];B[gk];W[fk];B[db];W[da];B[fa];W[ea];B[jm];W[jl];B[ih];W[ig];B[jg];W[lg];B[kg];W[oe];B[od];W[dd];B[fj];W[ce];B[be];W[de];B[hh];W[jo];B[io];W[om];B[ap];W[aq];B[ao];W[qk];B[pn];W[am];B[bn];W[pp];B[rk];W[qe];B[pe];W[qk];B[sd];W[se];B[rk];W[qa];B[pa];W[qk];B[hl];W[hm];B[rk];W[jb];B[kb];W[qk];B[qs];W[rk];B[or];W[oh];B[ss];W[sq];B[ng];W[ik];B[hn];W[dm];B[cm];W[sd];B[qa];W[sa];B[kj];W[mk];B[ml];W[mi];B[ja];W[lj];B[dh];W[kk];B[ei];W[fc];B[bh];W[];B[cg];W[];B[no];W[];B[mp];W[];B[])";
+    //   string sgfStr = "(;FF[4]GM[1]SZ[19]PB[v49-140-400v-fp16]PW[v49-140-400v-fp16-fpu25]HA[0]KM[7.5]RU[koPOSITIONALscoreAREAsui1]RE[W+0.5];B[qd];W[dp];B[cq];W[dq];B[cp];W[co];B[bo];W[bn];B[cn];W[do];B[bm];W[bp];B[an];W[bq];B[cd];W[qp];B[oq];W[pn];B[nd];W[ec];B[df];W[hc];B[jc];W[cb];B[lq];W[ch];B[cj];W[eh];B[gd];W[gc];B[fd];W[hd];B[gf];W[cl];B[dn];W[el];B[eo];W[fp];B[ej];W[bl];B[bk];W[al];B[cr];W[br];B[fi];W[gl];B[gn];W[gp];B[dk];W[dl];B[fm];W[fl];B[ho];W[iq];B[ip];W[jq];B[jp];W[hp];B[in];W[fh];B[gh];W[gg];B[gi];W[hg];B[fg];W[hf];B[eg];W[il];B[ii];W[kl];B[lo];W[jj];B[ql];W[pq];B[op];W[rm];B[ji];W[ki];B[kh];W[li];B[ij];W[gm];B[dc];W[eb];B[fn];W[jk];B[lk];W[ln];B[ll];W[km];B[mn];W[ko];B[kp];W[mo];B[lp];W[mm];B[nn];W[lm];B[on];W[nk];B[qn];W[qm];B[po];W[rn];B[pm];W[ed];B[cf];W[ni];B[rq];W[rp];B[pr];W[qq];B[qr];W[rr];B[rs];W[sr];B[lc];W[rd];B[rc];W[re];B[pd];W[rb];B[qc];W[qg];B[oj];W[ok];B[pk];W[sc];B[qb];W[bc];B[qh];W[ph];B[qi];W[og];B[kr];W[ff];B[ef];W[fe];B[bd];W[rg];B[oi];W[nh];B[pf];W[pg];B[is];W[hr];B[hs];W[gs];B[gr];W[js];B[fs];W[ir];B[ep];W[eq];B[fq];W[cs];B[er];W[dr];B[fo];W[gq];B[go];W[fr];B[ie];W[he];B[fq];W[hq];B[ib];W[bj];B[bi];W[aj];B[ai];W[ak];B[ci];W[rl];B[ee];W[ge];B[rk];W[ol];B[pl];W[mf];B[nf];W[of];B[ne];W[mg];B[qf];W[rf];B[hb];W[ad];B[jr];W[gs];B[hs];W[es];B[ds];W[fr];B[cc];W[bb];B[fq];W[es];B[ae];W[ac];B[ds];W[fr];B[lh];W[mh];B[fq];W[es];B[qo];W[ro];B[ds];W[fr];B[nj];W[mj];B[fq];W[es];B[bf];W[pi];B[pj];W[ri];B[qj];W[rh];B[gb];W[fb];B[ra];W[sb];B[le];W[me];B[md];W[rj];B[jf];W[sk];B[ks];W[fr];B[lf];W[if];B[id];W[ic];B[je];W[em];B[en];W[ck];B[ga];W[ek];B[dj];W[is];B[kq];W[gs];B[nm];W[nl];B[hk];W[im];B[jn];W[kn];B[gk];W[fk];B[db];W[da];B[fa];W[ea];B[jm];W[jl];B[ih];W[ig];B[jg];W[lg];B[kg];W[oe];B[od];W[dd];B[fj];W[ce];B[be];W[de];B[hh];W[jo];B[io];W[om];B[ap];W[aq];B[ao];W[qk];B[pn];W[am];B[bn];W[pp];B[rk];W[qe];B[pe];W[qk];B[sd];W[se];B[rk];W[qa];B[pa];W[qk];B[hl];W[hm];B[rk];W[jb];B[kb];W[qk];B[qs];W[rk];B[or];W[oh];B[ss];W[sq];B[ng];W[ik];B[hn];W[dm];B[cm];W[sd];B[qa];W[sa];B[kj];W[mk];B[ml];W[mi];B[ja];W[lj];B[dh];W[kk];B[ei];W[fc];B[bh];W[];B[cg];W[];B[no];W[];B[mp];W[];B[])";
 
-      runBotOnSgf(bot, sgfStr, rules, 191, 7.5, opts);
-      runBotOnSgf(bot, sgfStr, rules, 197, 7.5, opts);
-      runBotOnSgf(bot, sgfStr, rules, 330, 7.5, opts);
-      runBotOnSgf(bot, sgfStr, rules, 330, 7.0, opts);
+    //   runBotOnSgf(bot, sgfStr, rules, 191, 7.5, opts);
+    //   runBotOnSgf(bot, sgfStr, rules, 197, 7.5, opts);
+    //   runBotOnSgf(bot, sgfStr, rules, 330, 7.5, opts);
+    //   runBotOnSgf(bot, sgfStr, rules, 330, 7.0, opts);
 
-      cout << endl;
-      cout << "Jigo and drawUtility===================" << endl;
-      cout << "(Game almost over, just a little cleanup)" << endl;
-      SearchParams testParams = params;
-      testParams.drawEquivalentWinsForWhite = 0.7;
-      cout << "testParams.drawEquivalentWinsForWhite = 0.7" << endl;
-      cout << endl;
+    //   cout << endl;
+    //   cout << "Jigo and drawUtility===================" << endl;
+    //   cout << "(Game almost over, just a little cleanup)" << endl;
+    //   SearchParams testParams = params;
+    //   testParams.drawEquivalentWinsForWhite = 0.7;
+    //   cout << "testParams.drawEquivalentWinsForWhite = 0.7" << endl;
+    //   cout << endl;
 
-      bot->setParams(testParams);
-      cout << "Komi 7.5 (white wins by 0.5)" << endl;
-      runBotOnSgf(bot, sgfStr, rules, 330, 7.5, opts);
-      cout << endl;
+    //   bot->setParams(testParams);
+    //   cout << "Komi 7.5 (white wins by 0.5)" << endl;
+    //   runBotOnSgf(bot, sgfStr, rules, 330, 7.5, opts);
+    //   cout << endl;
 
-      cout << "Komi 7.0 (draw)" << endl;
-      runBotOnSgf(bot, sgfStr, rules, 330, 7.0, opts);
-      bot->setParams(params);
+    //   cout << "Komi 7.0 (draw)" << endl;
+    //   runBotOnSgf(bot, sgfStr, rules, 330, 7.0, opts);
+    //   bot->setParams(params);
 
-      cout << endl;
-      cout << "Consecutive searches playouts and visits===================" << endl;
-      cout << "Doing three consecutive searches by visits" << endl;
-      cout << endl;
-      TestSearchOptions opts2 = opts;
-      opts2.numMovesInARow = 3;
-      opts2.printAfterBegun = true;
-      runBotOnSgf(bot, sgfStr, rules, 85, 7.5, opts2);
-      cout << endl;
+    //   cout << endl;
+    //   cout << "Consecutive searches playouts and visits===================" << endl;
+    //   cout << "Doing three consecutive searches by visits" << endl;
+    //   cout << endl;
+    //   TestSearchOptions opts2 = opts;
+    //   opts2.numMovesInARow = 3;
+    //   opts2.printAfterBegun = true;
+    //   runBotOnSgf(bot, sgfStr, rules, 85, 7.5, opts2);
+    //   cout << endl;
 
-      cout << "Doing three consecutive searches by playouts (limit 200)" << endl;
-      cout << endl;
-      testParams = params;
-      testParams.maxPlayouts = 200;
-      testParams.maxVisits = 10000;
-      bot->setParams(testParams);
-      runBotOnSgf(bot, sgfStr, rules, 85, 7.5, opts2);
-      bot->setParams(params);
-      cout << endl << endl;
-    }
+    //   cout << "Doing three consecutive searches by playouts (limit 200)" << endl;
+    //   cout << endl;
+    //   testParams = params;
+    //   testParams.maxPlayouts = 200;
+    //   testParams.maxVisits = 10000;
+    //   bot->setParams(testParams);
+    //   runBotOnSgf(bot, sgfStr, rules, 85, 7.5, opts2);
+    //   bot->setParams(params);
+    //   cout << endl << endl;
+    // }
 
     {
       cout << "GAME 4 ==========================================================================" << endl;

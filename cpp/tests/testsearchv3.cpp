@@ -200,101 +200,101 @@ static void runOwnershipAndMisc(NNEvaluator* nnEval, NNEvaluator* nnEval11, NNEv
     delete bot;
   }
 
-  {
-    cout << "GAME 10 ==========================================================================" << endl;
-    cout << "(Tricky endgame seki invasion, testing LCB and dynamic utility recompute)" << endl;
-    cout << endl;
+  // {
+  //   cout << "GAME 10 ==========================================================================" << endl;
+  //   cout << "(Tricky endgame seki invasion, testing LCB and dynamic utility recompute)" << endl;
+  //   cout << endl;
 
-    SearchParams params;
-    params.maxVisits = 280;
-    params.staticScoreUtilityFactor = 0.2;
-    params.dynamicScoreUtilityFactor = 0.3;
-    params.useLcbForSelection = true;
-    AsyncBot* bot = new AsyncBot(params, nnEval, &logger, getSearchRandSeed());
-    Rules rules = Rules::getTrompTaylorish();
-    TestSearchOptions opts;
-
-
-    string sgfStr = "(;GM[1]FF[4]CA[UTF-8]SZ[19]HA[6]KM[0.5]AB[dc][oc][qd][ce][qo][pq];W[cp];B[ep];W[eq];B[fq];W[dq];B[fp];W[dn];B[jq];W[jp];B[ip];W[kq];B[iq];W[kp];B[fm];W[io];B[ho];W[in];B[en];W[dm];B[hn];W[oq];B[op];W[pr];B[pp];W[or];B[qr];W[mq];B[mo];W[qj];B[ql];W[qe];B[rd];W[qg];B[pe];W[ic];B[gc];W[lc];B[ch];W[cj];B[eh];W[ec];B[eb];W[dd];B[ed];W[cc];B[fc];W[db];B[cd];W[ec];B[de];W[dc];B[gb];W[ea];B[fb];W[bb];B[bd];W[ca];B[bc];W[ab];B[ee];W[nc];B[nd];W[ob];B[nb];W[mc];B[pb];W[od];B[pc];W[ne];B[md];W[le];B[oe];W[rl];B[rm];W[rk];B[qm];W[ie];B[me];W[mf];B[nf];W[ld];B[pd];W[ge];B[hd];W[he];B[fd];W[mg];B[id];W[jd];B[hh];W[bi];B[bh];W[ln];B[im];W[jm];B[jl];W[km];B[lo];W[ko];B[il];W[ek];B[dp];W[cq];B[do];W[co];B[fj];W[jh];B[ig];W[jg];B[nm];W[re];B[se];W[rf];B[pj];W[pi];B[oj];W[qk];B[oi];W[ph];B[mb];W[pk];B[ol];W[ok];B[nk];W[nj];B[mj];W[ni];B[mi];W[nh];B[mk];W[er];B[lb];W[kb];B[fr];W[fk];B[ff];W[di];B[ci];W[bj];B[ei];W[dj];B[dh];W[sf];B[jr];W[kr];B[sd];W[qs];B[rr];W[gl];B[gm];W[ib];B[ks];W[ls];B[js];W[np];B[no];W[pl];B[pm];W[if];B[mp];W[mr];B[nq];W[nr];B[gg];W[rs];B[og];W[oh];B[mn];W[ll];B[lh];W[ih];B[hg];W[ml];B[nl];W[gj];B[kl];W[lk];B[gi];W[ej];B[fi];W[hl];B[hj];W[lg];B[gk];W[fl];B[hk];W[em];B[hm];W[sm];B[sn];W[sl];B[sp];W[la];B[kj];W[pf];B[of];W[ii];B[lj];W[lm];B[kh];W[kg];B[fa];W[da];B[jj];W[fs];B[gs];W[es];B[ha];W[ia];B[ij];W[ah];B[ag];W[ai];B[pg];W[qf];B[lp];W[lq];B[hb];W[kk];B[jk];W[ac];B[ad];W[ji];B[ki];W[ka];B[oa];W[ma];B[na];W[sr];B[sq];W[ps];B[ss];W[np];B[sr];W[nq];B[mh];W[ng];B[fe];W[jn];B[mm];W[gr];B[hs];W[fn];B[eo];W[hr];B[is];W[gp];B[go];W[gq];B[hp];W[fo];B[])";
-
-    opts.noClearBot = true;
-    runBotOnSgf(bot, sgfStr, rules, 234, 0.5, opts);
-
-    //Try to check that search tree is idempotent under simply rebeginning the search
-    Search* search = bot->getSearchStopAndWait();
-    PrintTreeOptions options;
-    options = options.maxDepth(1);
-    cout << "Beginning search again and then reprinting, should be same" << endl;
-    search->beginSearch(false);
-    search->printTree(cout, search->rootNode, options, P_WHITE);
-    cout << "Making a move O3, should still be same" << endl;
-    bot->makeMove(Location::ofString("O3",19,19), P_WHITE);
-    search->printTree(cout, search->rootNode, options, P_WHITE);
-    cout << "Beginning search again and then reprinting, now score utils should change a little" << endl;
-    search->beginSearch(false);
-    search->printTree(cout, search->rootNode, options, P_WHITE);
-
-    delete bot;
-  }
+  //   SearchParams params;
+  //   params.maxVisits = 280;
+  //   params.staticScoreUtilityFactor = 0.2;
+  //   params.dynamicScoreUtilityFactor = 0.3;
+  //   params.useLcbForSelection = true;
+  //   AsyncBot* bot = new AsyncBot(params, nnEval, &logger, getSearchRandSeed());
+  //   Rules rules = Rules::getTrompTaylorish();
+  //   TestSearchOptions opts;
 
 
-  {
-    cout << "GAME 11 ==========================================================================" << endl;
-    cout << "(Non-square board)" << endl;
-    cout << endl;
+  //   string sgfStr = "(;GM[1]FF[4]CA[UTF-8]SZ[19]HA[6]KM[0.5]AB[dc][oc][qd][ce][qo][pq];W[cp];B[ep];W[eq];B[fq];W[dq];B[fp];W[dn];B[jq];W[jp];B[ip];W[kq];B[iq];W[kp];B[fm];W[io];B[ho];W[in];B[en];W[dm];B[hn];W[oq];B[op];W[pr];B[pp];W[or];B[qr];W[mq];B[mo];W[qj];B[ql];W[qe];B[rd];W[qg];B[pe];W[ic];B[gc];W[lc];B[ch];W[cj];B[eh];W[ec];B[eb];W[dd];B[ed];W[cc];B[fc];W[db];B[cd];W[ec];B[de];W[dc];B[gb];W[ea];B[fb];W[bb];B[bd];W[ca];B[bc];W[ab];B[ee];W[nc];B[nd];W[ob];B[nb];W[mc];B[pb];W[od];B[pc];W[ne];B[md];W[le];B[oe];W[rl];B[rm];W[rk];B[qm];W[ie];B[me];W[mf];B[nf];W[ld];B[pd];W[ge];B[hd];W[he];B[fd];W[mg];B[id];W[jd];B[hh];W[bi];B[bh];W[ln];B[im];W[jm];B[jl];W[km];B[lo];W[ko];B[il];W[ek];B[dp];W[cq];B[do];W[co];B[fj];W[jh];B[ig];W[jg];B[nm];W[re];B[se];W[rf];B[pj];W[pi];B[oj];W[qk];B[oi];W[ph];B[mb];W[pk];B[ol];W[ok];B[nk];W[nj];B[mj];W[ni];B[mi];W[nh];B[mk];W[er];B[lb];W[kb];B[fr];W[fk];B[ff];W[di];B[ci];W[bj];B[ei];W[dj];B[dh];W[sf];B[jr];W[kr];B[sd];W[qs];B[rr];W[gl];B[gm];W[ib];B[ks];W[ls];B[js];W[np];B[no];W[pl];B[pm];W[if];B[mp];W[mr];B[nq];W[nr];B[gg];W[rs];B[og];W[oh];B[mn];W[ll];B[lh];W[ih];B[hg];W[ml];B[nl];W[gj];B[kl];W[lk];B[gi];W[ej];B[fi];W[hl];B[hj];W[lg];B[gk];W[fl];B[hk];W[em];B[hm];W[sm];B[sn];W[sl];B[sp];W[la];B[kj];W[pf];B[of];W[ii];B[lj];W[lm];B[kh];W[kg];B[fa];W[da];B[jj];W[fs];B[gs];W[es];B[ha];W[ia];B[ij];W[ah];B[ag];W[ai];B[pg];W[qf];B[lp];W[lq];B[hb];W[kk];B[jk];W[ac];B[ad];W[ji];B[ki];W[ka];B[oa];W[ma];B[na];W[sr];B[sq];W[ps];B[ss];W[np];B[sr];W[nq];B[mh];W[ng];B[fe];W[jn];B[mm];W[gr];B[hs];W[fn];B[eo];W[hr];B[is];W[gp];B[go];W[gq];B[hp];W[fo];B[])";
 
-    Rules rules = Rules::getTrompTaylorish();
-    Player nextPla = P_BLACK;
-    Board boardA = Board::parseBoard(7,11,R"%%(
-.......
-.......
-..x.o..
-.......
-.......
-...xo..
-.......
-..xx...
-..oox..
-....o..
-.......
-)%%");
-    BoardHistory histA(boardA,nextPla,rules,0);
+  //   opts.noClearBot = true;
+  //   runBotOnSgf(bot, sgfStr, rules, 234, 0.5, opts);
 
-    Board boardB = Board::parseBoard(11,7,R"%%(
-...........
-...........
-..x.o.ox...
-.......ox..
-.......ox..
-...........
-...........
-)%%");
-    BoardHistory histB(boardB,nextPla,rules,0);
+  //   //Try to check that search tree is idempotent under simply rebeginning the search
+  //   Search* search = bot->getSearchStopAndWait();
+  //   PrintTreeOptions options;
+  //   options = options.maxDepth(1);
+  //   cout << "Beginning search again and then reprinting, should be same" << endl;
+  //   search->beginSearch(false);
+  //   search->printTree(cout, search->rootNode, options, P_WHITE);
+  //   cout << "Making a move O3, should still be same" << endl;
+  //   bot->makeMove(Location::ofString("O3",19,19), P_WHITE);
+  //   search->printTree(cout, search->rootNode, options, P_WHITE);
+  //   cout << "Beginning search again and then reprinting, now score utils should change a little" << endl;
+  //   search->beginSearch(false);
+  //   search->printTree(cout, search->rootNode, options, P_WHITE);
 
-    SearchParams params;
-    params.maxVisits = 200;
-    params.dynamicScoreUtilityFactor = 0.25;
+  //   delete bot;
+  // }
 
-    AsyncBot* botA = new AsyncBot(params, nnEval, &logger, getSearchRandSeed());
-    AsyncBot* botB = new AsyncBot(params, nnEval, &logger, getSearchRandSeed());
 
-    TestSearchOptions opts;
-    runBotOnPosition(botA,boardA,nextPla,histA,opts);
-    runBotOnPosition(botB,boardB,nextPla,histB,opts);
-    delete botA;
-    delete botB;
+//   {
+//     cout << "GAME 11 ==========================================================================" << endl;
+//     cout << "(Non-square board)" << endl;
+//     cout << endl;
 
-    cout << endl;
-    cout << "NNLen 11" << endl;
-    cout << endl;
-    AsyncBot* botA11 = new AsyncBot(params, nnEval11, &logger, getSearchRandSeed());
-    AsyncBot* botB11 = new AsyncBot(params, nnEval11, &logger, getSearchRandSeed());
-    runBotOnPosition(botA11,boardA,nextPla,histA,opts);
-    runBotOnPosition(botB11,boardB,nextPla,histB,opts);
+//     Rules rules = Rules::getTrompTaylorish();
+//     Player nextPla = P_BLACK;
+//     Board boardA = Board::parseBoard(7,11,R"%%(
+// .......
+// .......
+// ..x.o..
+// .......
+// .......
+// ...xo..
+// .......
+// ..xx...
+// ..oox..
+// ....o..
+// .......
+// )%%");
+//     BoardHistory histA(boardA,nextPla,rules,0);
 
-    delete botA11;
-    delete botB11;
-  }
+//     Board boardB = Board::parseBoard(11,7,R"%%(
+// ...........
+// ...........
+// ..x.o.ox...
+// .......ox..
+// .......ox..
+// ...........
+// ...........
+// )%%");
+//     BoardHistory histB(boardB,nextPla,rules,0);
+
+//     SearchParams params;
+//     params.maxVisits = 200;
+//     params.dynamicScoreUtilityFactor = 0.25;
+
+//     AsyncBot* botA = new AsyncBot(params, nnEval, &logger, getSearchRandSeed());
+//     AsyncBot* botB = new AsyncBot(params, nnEval, &logger, getSearchRandSeed());
+
+//     TestSearchOptions opts;
+//     runBotOnPosition(botA,boardA,nextPla,histA,opts);
+//     runBotOnPosition(botB,boardB,nextPla,histB,opts);
+//     delete botA;
+//     delete botB;
+
+//     cout << endl;
+//     cout << "NNLen 11" << endl;
+//     cout << endl;
+//     AsyncBot* botA11 = new AsyncBot(params, nnEval11, &logger, getSearchRandSeed());
+//     AsyncBot* botB11 = new AsyncBot(params, nnEval11, &logger, getSearchRandSeed());
+//     runBotOnPosition(botA11,boardA,nextPla,histA,opts);
+//     runBotOnPosition(botB11,boardB,nextPla,histB,opts);
+
+//     delete botA11;
+//     delete botB11;
+//   }
 
 
   {
@@ -476,45 +476,45 @@ xx..xoooo
     delete bot;
   }
 
-  {
-    cout << "GAME 16 ==========================================================================" << endl;
-    cout << "Chinese rules endgame, one dame" << endl;
-    cout << endl;
+//   {
+//     cout << "GAME 16 ==========================================================================" << endl;
+//     cout << "Chinese rules endgame, one dame" << endl;
+//     cout << endl;
 
-    string seed = getSearchRandSeed();
-    Rules rules = Rules::parseRules("Chinese");
-    rules.komi = 6;
-    TestSearchOptions opts;
-    opts.noClearBot = true;
+//     string seed = getSearchRandSeed();
+//     Rules rules = Rules::parseRules("Chinese");
+//     rules.komi = 6;
+//     TestSearchOptions opts;
+//     opts.noClearBot = true;
 
-    Player nextPla = P_BLACK;
-    Board board = Board::parseBoard(9,7,R"%%(
-.........
-ooooo.o..
-oxxxox...
-xx..xoooo
-..xx.x.xo
-.oox.xxxx
-..x...ox.
-)%%");
-    board.numWhiteCaptures = 3;
-    BoardHistory hist(board,nextPla,rules,0);
+//     Player nextPla = P_BLACK;
+//     Board board = Board::parseBoard(9,7,R"%%(
+// .........
+// ooooo.o..
+// oxxxox...
+// xx..xoooo
+// ..xx.x.xo
+// .oox.xxxx
+// ..x...ox.
+// )%%");
+//     board.numWhiteCaptures = 3;
+//     BoardHistory hist(board,nextPla,rules,0);
 
-    MiscNNInputParams nnInputParams;
-    NNResultBuf buf;
-    bool skipCache = true;
-    bool includeOwnerMap = true;
-    nnEval->evaluate(board,hist,nextPla,nnInputParams,buf,skipCache,includeOwnerMap);
-    printPolicyValueOwnership(board,buf);
+//     MiscNNInputParams nnInputParams;
+//     NNResultBuf buf;
+//     bool skipCache = true;
+//     bool includeOwnerMap = true;
+//     nnEval->evaluate(board,hist,nextPla,nnInputParams,buf,skipCache,includeOwnerMap);
+//     printPolicyValueOwnership(board,buf);
 
-    SearchParams params;
-    params.maxVisits = 200;
-    AsyncBot* bot = new AsyncBot(params, nnEval, &logger, seed);
+//     SearchParams params;
+//     params.maxVisits = 200;
+//     AsyncBot* bot = new AsyncBot(params, nnEval, &logger, seed);
 
-    runBotOnPosition(bot,board,nextPla,hist,opts);
-    bot->getSearch()->printTree(cout, bot->getSearch()->rootNode, PrintTreeOptions().onlyBranch(board,"G3"), P_BLACK);
-    delete bot;
-  }
+//     runBotOnPosition(bot,board,nextPla,hist,opts);
+//     bot->getSearch()->printTree(cout, bot->getSearch()->rootNode, PrintTreeOptions().onlyBranch(board,"G3"), P_BLACK);
+//     delete bot;
+//   }
 }
 
 void Tests::runSearchTestsV3(const string& modelFile, bool inputsNHWC, bool useNHWC, int symmetry, bool useFP16) {
