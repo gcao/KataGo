@@ -74,7 +74,7 @@ time python3 "$GITROOTDIR"/python/train.py \
      -batch-size "$BATCHSIZE" \
      -gpu-memory-frac 0.6 \
      -model-kind "$MODELKIND" \
-     -sub-epochs 4 \
+     -sub-epochs 3 \
      -swa-sub-epoch-scale 4 \
      $EXTRAFLAG \
      "$@" \

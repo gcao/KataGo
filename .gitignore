@@ -8,6 +8,8 @@ __pycache__
 
 tmp*.txt
 
+build/
+
 cpp/write
 cpp/runtests
 cpp/example
@@ -49,6 +51,7 @@ tmp.txt
 test.txt
 cpp/tmp
 out.txt
+nohup.out*
 
 # For clion IDE
 .idea
