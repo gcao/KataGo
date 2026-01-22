@@ -1145,10 +1145,10 @@ void Board::playMoveAssumeLegal(Loc loc, Player pla)
 int Board::getNumImmediateLiberties(Loc loc) const
 {
   int num_libs = 0;
-  if(colors[loc + ADJ0] == C_EMPTY) num_libs++;
-  if(colors[loc + ADJ1] == C_EMPTY) num_libs++;
-  if(colors[loc + ADJ2] == C_EMPTY) num_libs++;
-  if(colors[loc + ADJ3] == C_EMPTY) num_libs++;
+  if(colors[loc + ADJ0] == C_EMPTY || (colors[loc + ADJ0] == C_WALL && colors[loc + ADJ0B] == C_EMPTY)) num_libs++;
+  if(colors[loc + ADJ1] == C_EMPTY || (colors[loc + ADJ1] == C_WALL && colors[loc + ADJ1B] == C_EMPTY)) num_libs++;
+  if(colors[loc + ADJ2] == C_EMPTY || (colors[loc + ADJ2] == C_WALL && colors[loc + ADJ2B] == C_EMPTY)) num_libs++;
+  if(colors[loc + ADJ3] == C_EMPTY || (colors[loc + ADJ3] == C_WALL && colors[loc + ADJ3B] == C_EMPTY)) num_libs++;
 
   return num_libs;
 }
@@ -1366,6 +1366,11 @@ Loc Board::rebuildChainHelper(Loc head, Loc tailTarget, Loc loc, Player pla)
   Loc adj2 = loc + ADJ2;
   Loc adj3 = loc + ADJ3;
 
+  if(colors[adj0] == C_WALL) adj0 = loc + ADJ0B;
+  if(colors[adj1] == C_WALL) adj1 = loc + ADJ1B;
+  if(colors[adj2] == C_WALL) adj2 = loc + ADJ2B;
+  if(colors[adj3] == C_WALL) adj3 = loc + ADJ3B;
+
   //Count new liberties
   int numHeadLibertiesToAdd = 0;
   if(colors[adj0] == C_EMPTY && !isLibertyOf(adj0,head)) numHeadLibertiesToAdd++;
@@ -1395,6 +1400,11 @@ void Board::changeSurroundingLiberties(Loc loc, Player pla, int delta)
   Loc adj1 = loc + ADJ1;
   Loc adj2 = loc + ADJ2;
   Loc adj3 = loc + ADJ3;
+
+  if(colors[adj0] == C_WALL) adj0 = loc + ADJ0B;
+  if(colors[adj1] == C_WALL) adj1 = loc + ADJ1B;
+  if(colors[adj2] == C_WALL) adj2 = loc + ADJ2B;
+  if(colors[adj3] == C_WALL) adj3 = loc + ADJ3B;
 
   if(colors[adj0] == pla)
     chain_data[chain_head[adj0]].num_liberties += delta;
@@ -1504,6 +1514,7 @@ int Board::findLiberties(Loc loc, vector<Loc>& buf, int bufStart, int bufIdx) co
   {
     for(int i = 0; i < 4; i++) {
       Loc lib = cur + adj_offsets[i];
+      if(colors[lib] == C_WALL) lib = cur + adj_offsets[i + 4];
       if(colors[lib] == C_EMPTY) {
         //Check for dups
         bool foundDup = false;
@@ -2896,6 +2907,7 @@ bool Board::simpleRepetitionBoundGt(Loc loc, int bound) const {
     do {
       for(int i = 0; i < 4; i++) {
         Loc lib = cur + adj_offsets[i];
+      if(colors[lib] == C_WALL) lib = cur + adj_offsets[i + 4];
         if(colors[lib] == C_EMPTY) {
           if(countEmptyHelper(emptyCounted, lib, count, bound))
             return true;
