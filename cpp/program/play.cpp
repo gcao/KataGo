@@ -142,7 +142,8 @@ void GameInitializer::initShared(ConfigParser& cfg, Logger& logger) {
       relProbSum += p;
     if(relProbSum <= 1e-100)
       throw IOError("bSizeRelProbs must sum to a positive value");
-    double allowRectangleProb = cfg.contains("allowRectangleProb") ? cfg.getDouble("allowRectangleProb",0.0,1.0) : 0.0;
+    // double allowRectangleProb = cfg.contains("allowRectangleProb") ? cfg.getDouble("allowRectangleProb",0.0,1.0) : 0.0;
+    double allowRectangleProb = 0.0;
 
     if(allowedBEdges.size() <= 0)
       throw IOError("bSizes must have at least one value in " + cfg.getFileName());
