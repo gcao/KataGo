@@ -818,16 +818,16 @@ Board::MoveRecord Board::playMoveRecorded(Loc loc, Player pla)
   if(loc != PASS_LOC) {
     Player opp = getOpp(pla);
 
-    { int adj = loc + ADJ0;
+    { int adj = loc + ADJ0; if(colors[adj] == C_WALL) adj = loc + ADJ0B;
       if(colors[adj] == opp && getNumLiberties(adj) == 1)
         record.capDirs |= (((uint8_t)1) << 0); }
-    { int adj = loc + ADJ1;
+    { int adj = loc + ADJ1; if(colors[adj] == C_WALL) adj = loc + ADJ1B;
       if(colors[adj] == opp && getNumLiberties(adj) == 1)
         record.capDirs |= (((uint8_t)1) << 1); }
-    { int adj = loc + ADJ2;
+    { int adj = loc + ADJ2; if(colors[adj] == C_WALL) adj = loc + ADJ2B;
       if(colors[adj] == opp && getNumLiberties(adj) == 1)
         record.capDirs |= (((uint8_t)1) << 2); }
-    { int adj = loc + ADJ3;
+    { int adj = loc + ADJ3; if(colors[adj] == C_WALL) adj = loc + ADJ3B;
       if(colors[adj] == opp && getNumLiberties(adj) == 1)
         record.capDirs |= (((uint8_t)1) << 3); }
 
@@ -892,7 +892,7 @@ void Board::undo(Board::MoveRecord record)
   {
     int numNeighbors = 0;
     FOREACHADJ(
-      int adj = loc + ADJOFFSET;
+      int adj = loc + ADJOFFSET; if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
       if(colors[adj] == record.pla)
         numNeighbors++;
     );
@@ -932,7 +932,7 @@ void Board::undo(Board::MoveRecord record)
       //that weren't already liberties of the group.
       int libertyDelta = 0;
       FOREACHADJ(
-        int adj = loc + ADJOFFSET;
+        int adj = loc + ADJOFFSET; if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
         if(colors[adj] == C_EMPTY && !isLibertyOf(adj,head)) libertyDelta--;
       );
       //Removing this stone itself added a liberty to the group though.
@@ -1172,19 +1172,12 @@ int Board::countHeuristicConnectionLibertiesX2(Loc loc, Player pla) const
 //Assumes loc is empty
 bool Board::isLibertyOf(Loc loc, Loc head) const
 {
-  Loc adj;
-  adj = loc + ADJ0;
-  if(colors[adj] == colors[head] && chain_head[adj] == head)
-    return true;
-  adj = loc + ADJ1;
-  if(colors[adj] == colors[head] && chain_head[adj] == head)
-    return true;
-  adj = loc + ADJ2;
-  if(colors[adj] == colors[head] && chain_head[adj] == head)
-    return true;
-  adj = loc + ADJ3;
-  if(colors[adj] == colors[head] && chain_head[adj] == head)
-    return true;
+  FOREACHADJ(
+    Loc adj = loc + ADJOFFSET;
+    if(colors[adj] == C_WALL) adj = loc + ADJOFFSET2;
+    if(colors[adj] == colors[head] && chain_head[adj] == head)
+      return true;
+  );
 
   return false;
 }
@@ -2181,7 +2174,7 @@ void Board::calculateAreaForPla(
         Loc cur = plaHead;
         do {
           for(int j = 0; j<4; j++) {
-            Loc adj = cur + adj_offsets[j];
+            Loc adj = cur + adj_offsets[j]; if(colors[adj] == C_WALL) adj = cur + adj_offsets[j + 4];
             int16_t regionIdx = regionIdxByLoc[adj];
             //Mark regions as no longer vital
             if(regionIdx >= 0 && !bordersNonPassAlivePlaByHead[regionHeads[regionIdx]] && (colors[adj] == C_EMPTY || colors[adj] == opp)) {
@@ -2292,7 +2285,7 @@ void Board::calculateIndependentLifeAreaHelper(
 
             //Look all around it, floodfill
             FOREACHADJ(
-              Loc adj = nextLoc + ADJOFFSET;
+              Loc adj = nextLoc + ADJOFFSET; if(colors[adj] == C_WALL) adj = nextLoc + ADJOFFSET2;
               if(basicArea[adj] == pla && !isSeki[adj]) {
                 isSeki[adj] = true;
                 queue[queueTail++] = adj;
@@ -2323,7 +2316,7 @@ void Board::calculateIndependentLifeAreaHelper(
 
           //Look all around it, floodfill
           FOREACHADJ(
-            Loc adj = nextLoc + ADJOFFSET;
+            Loc adj = nextLoc + ADJOFFSET; if(colors[adj] == C_WALL) adj = nextLoc + ADJOFFSET2;
             if(basicArea[adj] == pla && result[adj] != basicArea[adj]) {
               result[adj] = basicArea[adj];
               queue[queueTail++] = adj;
