@@ -53,21 +53,9 @@ void NeuralNet::freeLoadedModel(LoadedModel* loadedModel) {
   throw StringError("Dummy neural net backend: NeuralNet::freeLoadedModel unimplemented");
 }
 
-string NeuralNet::getModelName(const LoadedModel* loadedModel) {
+const ModelDesc& NeuralNet::getModelDesc(const LoadedModel* loadedModel) {
   (void)loadedModel;
-  throw StringError("Dummy neural net backend: NeuralNet::getModelName unimplemented");
-}
-
-int NeuralNet::getModelVersion(const LoadedModel* loadedModel) {
-  (void)loadedModel;
-  throw StringError("Dummy neural net backend: NeuralNet::getModelVersion unimplemented");
-}
-
-Rules NeuralNet::getSupportedRules(const LoadedModel* loadedModel, const Rules& desiredRules, bool& supported) {
-  (void)loadedModel;
-  (void)desiredRules;
-  (void)supported;
-  throw StringError("Dummy neural net backend: NeuralNet::getSupportedRules unimplemented");
+  throw StringError("Dummy neural net backend: NeuralNet::getModelDesc unimplemented");
 }
 
 ComputeHandle* NeuralNet::createComputeHandle(
@@ -94,6 +82,11 @@ ComputeHandle* NeuralNet::createComputeHandle(
 void NeuralNet::freeComputeHandle(ComputeHandle* gpuHandle) {
   if(gpuHandle != NULL)
     throw StringError("Dummy neural net backend: NeuralNet::freeLocalGpuHandle unimplemented");
+}
+
+bool NeuralNet::isUsingFP16(const ComputeHandle* handle) {
+  (void)handle;
+  return false;
 }
 
 void NeuralNet::printDevices() {

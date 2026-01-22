@@ -146,12 +146,14 @@ ooooooo
       search->setPosition(nextPla,board,hist);
       search->runWholeSearch(nextPla);
 
-      //In theory nothing requires this, but it would be kind of crazy if this were false
-      testAssert(search->rootNode->iterateAndCountChildren() > 1);
-      int childrenCapacity;
-      const SearchChildPointer* children = search->rootNode->getChildren(childrenCapacity);
+      ConstSearchNodeChildrenReference children = search->rootNode->getChildren();
+      int childrenCapacity = children.getCapacity();
       testAssert(childrenCapacity > 1);
+
+      //In theory nothing requires this, but it would be kind of crazy if this were false
+      testAssert(children.iterateAndCountChildren() > 1);
       testAssert(children[1].getIfAllocated() != NULL);
+
       Loc locToDescend = children[1].getMoveLoc();
 
       PrintTreeOptions options;
@@ -222,8 +224,8 @@ o..oo.x
     nextPla = getOpp(nextPla);
 
     auto hasSuicideRootMoves = [](const Search* search) {
-      int childrenCapacity;
-      const SearchChildPointer* children = search->rootNode->getChildren(childrenCapacity);
+      ConstSearchNodeChildrenReference children = search->rootNode->getChildren();
+      int childrenCapacity = children.getCapacity();
       for(int i = 0; i<childrenCapacity; i++) {
         const SearchNode* child = children[i].getIfAllocated();
         if(child == NULL)
@@ -234,8 +236,8 @@ o..oo.x
       return false;
     };
     auto hasPassAliveRootMoves = [](const Search* search) {
-      int childrenCapacity;
-      const SearchChildPointer* children = search->rootNode->getChildren(childrenCapacity);
+      ConstSearchNodeChildrenReference children = search->rootNode->getChildren();
+      int childrenCapacity = children.getCapacity();
       for(int i = 0; i<childrenCapacity; i++) {
         const SearchNode* child = children[i].getIfAllocated();
         if(child == NULL)
@@ -672,9 +674,11 @@ xx......x
     bool includeMovesOwnership = false;
     bool includeMovesOwnershipStdev = false;
     bool includePVVisits = false;
+    bool includeNoResultValue = false;
     bool suc = search->getAnalysisJson(
       perspective, analysisPVLen, preventEncore,
       includePolicy, includeOwnership, includeOwnershipStdev, includeMovesOwnership, includeMovesOwnershipStdev, includePVVisits,
+      includeNoResultValue,
       json
     );
     testAssert(suc);
@@ -748,9 +752,11 @@ xx......x
     bool includeMovesOwnership = false;
     bool includeMovesOwnershipStdev = false;
     bool includePVVisits = false;
+    bool includeNoResultValue = false;
     bool suc = search->getAnalysisJson(
       perspective, analysisPVLen, preventEncore,
       includePolicy, includeOwnership, includeOwnershipStdev, includeMovesOwnership, includeMovesOwnershipStdev, includePVVisits,
+      includeNoResultValue,
       json
     );
     testAssert(suc);
@@ -824,9 +830,11 @@ xx......x
     bool includeMovesOwnership = false;
     bool includeMovesOwnershipStdev = false;
     bool includePVVisits = false;
+    bool includeNoResultValue = false;
     bool suc = search->getAnalysisJson(
       perspective, analysisPVLen, preventEncore,
       includePolicy, includeOwnership, includeOwnershipStdev, includeMovesOwnership, includeMovesOwnershipStdev, includePVVisits,
+      includeNoResultValue,
       json
     );
     testAssert(suc);
@@ -998,7 +1006,7 @@ xxxxooo
     nextPla = getOpp(nextPla);
     search3->setPosition(nextPla,board,hist);
 
-    assert(hist.isGameFinished);
+    testAssert(hist.isGameFinished);
 
     search->runWholeSearch(nextPla);
     search2->runWholeSearch(nextPla);
@@ -1214,9 +1222,11 @@ ooooo.oooooooo
     bool includeMovesOwnership = false;
     bool includeMovesOwnershipStdev = false;
     bool includePVVisits = true;
+    bool includeNoResultValue = false;
     bool suc = search->getAnalysisJson(
       perspective, analysisPVLen, preventEncore,
       includePolicy, includeOwnership, includeOwnershipStdev, includeMovesOwnership, includeMovesOwnershipStdev, includePVVisits,
+      includeNoResultValue,
       json
     );
     testAssert(suc);
@@ -1267,9 +1277,11 @@ ooooo.oooooooo
     bool includeMovesOwnership = true;
     bool includeMovesOwnershipStdev = true;
     bool includePVVisits = false;
+    bool includeNoResultValue = false;
     bool suc = search->getAnalysisJson(
       perspective, analysisPVLen, preventEncore,
       includePolicy, includeOwnership, includeOwnershipStdev, includeMovesOwnership, includeMovesOwnershipStdev, includePVVisits,
+      includeNoResultValue,
       json
     );
     testAssert(suc);
@@ -1321,9 +1333,11 @@ ooooo.oooooooo
     bool includeMovesOwnership = true;
     bool includeMovesOwnershipStdev = true;
     bool includePVVisits = false;
+    bool includeNoResultValue = false;
     bool suc = search->getAnalysisJson(
       perspective, analysisPVLen, preventEncore,
       includePolicy, includeOwnership, includeOwnershipStdev, includeMovesOwnership, includeMovesOwnershipStdev, includePVVisits,
+      includeNoResultValue,
       json
     );
     testAssert(suc);
@@ -1373,9 +1387,11 @@ xxxxxxxxx
     bool includeMovesOwnership = false;
     bool includeMovesOwnershipStdev = false;
     bool includePVVisits = false;
+    bool includeNoResultValue = false;
     bool suc = search->getAnalysisJson(
       perspective, analysisPVLen, preventEncore,
       includePolicy, includeOwnership, includeOwnershipStdev, includeMovesOwnership, includeMovesOwnershipStdev, includePVVisits,
+      includeNoResultValue,
       json
     );
     testAssert(suc);
@@ -1444,9 +1460,11 @@ xxxxxxxxx
       bool includeMovesOwnership = false;
       bool includeMovesOwnershipStdev = false;
       bool includePVVisits = true;
+      bool includeNoResultValue = false;
       suc = search->getAnalysisJson(
         perspective, analysisPVLen, preventEncore,
         includePolicy, includeOwnership, includeOwnershipStdev, includeMovesOwnership, includeMovesOwnershipStdev, includePVVisits,
+        includeNoResultValue,
         json
       );
       cout << "getAnalysisJson success: " << suc << endl;
@@ -1626,12 +1644,14 @@ ooooooo
       search->setPosition(nextPla,board,hist);
       search->runWholeSearch(nextPla);
 
-      //In theory nothing requires this, but it would be kind of crazy if this were false
-      testAssert(search->rootNode->iterateAndCountChildren() > 1);
-      int childrenCapacity;
-      const SearchChildPointer* children = search->rootNode->getChildren(childrenCapacity);
+      ConstSearchNodeChildrenReference children = search->rootNode->getChildren();
+      int childrenCapacity = children.getCapacity();
       testAssert(childrenCapacity > 1);
+
+      //In theory nothing requires this, but it would be kind of crazy if this were false
+      testAssert(children.iterateAndCountChildren() > 1);
       testAssert(children[1].getIfAllocated() != NULL);
+
       Loc locToDescend = children[1].getMoveLoc();
 
       PrintTreeOptions options;
@@ -1679,10 +1699,8 @@ ooooooo
     cout << "Testing avoiding of all or almost all moves" << endl;
     cout << "===================================================================" << endl;
 
-    NNEvaluator* nnEval = startNNEval(modelFile,logger,"",9,5,0,true,false,false,true,false);
     SearchParams params;
     params.maxVisits = 100;
-    Search* search = new Search(params, nnEval, &logger, "autoSearchRandSeed1234");
     Rules rules = Rules::getTrompTaylorish();
     TestSearchOptions opts;
 
@@ -1695,6 +1713,8 @@ oo..o..oo
 )%%");
 
     {
+      NNEvaluator* nnEval = startNNEval(modelFile,logger,"",9,5,0,true,false,false,true,false);
+      Search* search = new Search(params, nnEval, &logger, "autoSearchRandSeed1234");
       cout << "Avoid all but 2 moves for both players, including passing" << endl;
       vector<int> avoidMoveUntilByLoc(Board::MAX_ARR_SIZE);
       for(int y = 0; y < board.y_size; y++) {
@@ -1732,9 +1752,11 @@ oo..o..oo
       bool includeMovesOwnership = false;
       bool includeMovesOwnershipStdev = false;
       bool includePVVisits = false;
+      bool includeNoResultValue = false;
       bool suc = search->getAnalysisJson(
         perspective, analysisPVLen, preventEncore,
         includePolicy, includeOwnership, includeOwnershipStdev, includeMovesOwnership, includeMovesOwnershipStdev, includePVVisits,
+        includeNoResultValue,
         json
       );
       testAssert(suc);
@@ -1759,9 +1781,13 @@ oo..o..oo
       options = options.maxDepth(1);
       search->printTree(cout, search->rootNode, options, P_WHITE);
       cout << endl;
+      delete search;
+      delete nnEval;
     }
 
     {
+      NNEvaluator* nnEval = startNNEval(modelFile,logger,"",9,5,0,true,false,false,true,false);
+      Search* search = new Search(params, nnEval, &logger, "autoSearchRandSeed1235");
       cout << "Avoid all moves for both players, including passing" << endl;
       vector<int> avoidMoveUntilByLoc(Board::MAX_ARR_SIZE);
       for(int y = 0; y < board.y_size; y++) {
@@ -1794,16 +1820,22 @@ oo..o..oo
       bool includeMovesOwnership = false;
       bool includeMovesOwnershipStdev = false;
       bool includePVVisits = false;
+      bool includeNoResultValue = false;
       bool suc = search->getAnalysisJson(
         perspective, analysisPVLen, preventEncore,
         includePolicy, includeOwnership, includeOwnershipStdev, includeMovesOwnership, includeMovesOwnershipStdev, includePVVisits,
+        includeNoResultValue,
         json
       );
       testAssert(suc);
       cout << json << endl;
+      delete search;
+      delete nnEval;
     }
 
     {
+      NNEvaluator* nnEval = startNNEval(modelFile,logger,"",9,5,0,true,false,false,true,false);
+      Search* search = new Search(params, nnEval, &logger, "autoSearchRandSeed1236");
       cout << "Avoid all moves for black, including passing" << endl;
       vector<int> avoidMoveUntilByLoc(Board::MAX_ARR_SIZE);
       for(int y = 0; y < board.y_size; y++) {
@@ -1836,17 +1868,18 @@ oo..o..oo
       bool includeMovesOwnership = false;
       bool includeMovesOwnershipStdev = false;
       bool includePVVisits = false;
+      bool includeNoResultValue = false;
       bool suc = search->getAnalysisJson(
         perspective, analysisPVLen, preventEncore,
         includePolicy, includeOwnership, includeOwnershipStdev, includeMovesOwnership, includeMovesOwnershipStdev, includePVVisits,
+        includeNoResultValue,
         json
       );
       testAssert(suc);
       cout << json << endl;
+      delete search;
+      delete nnEval;
     }
-
-    delete search;
-    delete nnEval;
     cout << endl;
   }
 
@@ -2207,6 +2240,243 @@ oxooox.
     cout << endl;
   }
 
+  {
+    cout << "===================================================================" << endl;
+    cout << "Policy optimism with tree reuse" << endl;
+    cout << "===================================================================" << endl;
+
+    NNEvaluator* nnEval = startNNEval(modelFile,logger,"policyoptimismtreereuse",7,7,0,true,false,false,true,false);
+    SearchParams params = SearchParams::forTestsV2();
+    params.maxVisits = 100;
+    params.rootPolicyOptimism = 0.43;
+    params.policyOptimism = 0.71;
+    SearchParams paramsLowVisits = params;
+    paramsLowVisits.maxVisits = 8;
+
+    Search* search = new Search(params, nnEval, &logger, "autoSearchRandSeeeeeed");
+    Rules rules = Rules::parseRules("japanese");
+    Board board = Board::parseBoard(5,5,R"%%(
+.o.o.
+ooooo
+xxoxx
+.xxx.
+x.x.x
+)%%");
+    Player nextPla = P_BLACK;
+    BoardHistory hist(board,nextPla,rules,0);
+    PrintTreeOptions options;
+    options = options.maxDepth(1);
+
+    search->setPosition(nextPla,board,hist);
+
+    cout << "Root position" << endl;
+    search->runWholeSearch(nextPla);
+    cout << search->rootBoard << endl;
+    search->printTree(cout, search->rootNode, options, P_WHITE);
+    search->rootNode->getNNOutput()->debugPrint(cout,search->rootBoard);
+    testAssert(abs(search->rootNode->getNNOutput()->policyOptimismUsed - 0.43) < 0.00001);
+
+    cout << "Make move and print" << endl;
+    search->makeMove(search->getChosenMoveLoc(),nextPla);
+    nextPla = getOpp(nextPla);
+    search->printTree(cout, search->rootNode, options, P_WHITE);
+    search->rootNode->getNNOutput()->debugPrint(cout,search->rootBoard);
+    testAssert(abs(search->rootNode->getNNOutput()->policyOptimismUsed - 0.71) < 0.00001);
+
+    cout << "Do search again" << endl;
+    search->runWholeSearch(nextPla);
+    cout << search->rootBoard << endl;
+    search->printTree(cout, search->rootNode, options, P_WHITE);
+    search->rootNode->getNNOutput()->debugPrint(cout,search->rootBoard);
+    testAssert(abs(search->rootNode->getNNOutput()->policyOptimismUsed - 0.43) < 0.00001);
+
+    cout << "Make move and print" << endl;
+    search->makeMove(search->getChosenMoveLoc(),nextPla);
+    nextPla = getOpp(nextPla);
+    search->printTree(cout, search->rootNode, options, P_WHITE);
+    search->rootNode->getNNOutput()->debugPrint(cout,search->rootBoard);
+    testAssert(abs(search->rootNode->getNNOutput()->policyOptimismUsed - 0.71) < 0.00001);
+
+    cout << "Do search again but with very low visits so the search already meets max visits" << endl;
+    search->setParamsNoClearing(paramsLowVisits);
+    search->runWholeSearch(nextPla);
+    cout << search->rootBoard << endl;
+    search->printTree(cout, search->rootNode, options, P_WHITE);
+    search->rootNode->getNNOutput()->debugPrint(cout,search->rootBoard);
+    testAssert(abs(search->rootNode->getNNOutput()->policyOptimismUsed - 0.43) < 0.00001);
+
+    delete search;
+    delete nnEval;
+    cout << endl;
+  }
+
+  {
+    cout << "===================================================================" << endl;
+    cout << "Policy optimism with tree reuse, 0 root" << endl;
+    cout << "===================================================================" << endl;
+
+    NNEvaluator* nnEval = startNNEval(modelFile,logger,"policyoptimismtreereuse",7,7,0,true,false,false,true,false);
+    SearchParams params = SearchParams::forTestsV2();
+    params.maxVisits = 100;
+    params.rootPolicyOptimism = 0.0;
+    params.policyOptimism = 1.0;
+    SearchParams paramsLowVisits = params;
+    paramsLowVisits.maxVisits = 8;
+
+    Search* search = new Search(params, nnEval, &logger, "autoSearchRandSeeeeeed");
+    Rules rules = Rules::parseRules("japanese");
+    Board board = Board::parseBoard(5,5,R"%%(
+.o.o.
+ooooo
+xxoxx
+.xxx.
+x.x.x
+)%%");
+    Player nextPla = P_BLACK;
+    BoardHistory hist(board,nextPla,rules,0);
+    PrintTreeOptions options;
+    options = options.maxDepth(1);
+
+    search->setPosition(nextPla,board,hist);
+
+    cout << "Root position" << endl;
+    search->runWholeSearch(nextPla);
+    cout << search->rootBoard << endl;
+    search->printTree(cout, search->rootNode, options, P_WHITE);
+    search->rootNode->getNNOutput()->debugPrint(cout,search->rootBoard);
+    testAssert(abs(search->rootNode->getNNOutput()->policyOptimismUsed - 0.0) < 0.00001);
+
+    cout << "Make move and print" << endl;
+    search->makeMove(search->getChosenMoveLoc(),nextPla);
+    nextPla = getOpp(nextPla);
+    search->printTree(cout, search->rootNode, options, P_WHITE);
+    search->rootNode->getNNOutput()->debugPrint(cout,search->rootBoard);
+    testAssert(abs(search->rootNode->getNNOutput()->policyOptimismUsed - 1.0) < 0.00001);
+
+    cout << "Do search again" << endl;
+    search->runWholeSearch(nextPla);
+    cout << search->rootBoard << endl;
+    search->printTree(cout, search->rootNode, options, P_WHITE);
+    search->rootNode->getNNOutput()->debugPrint(cout,search->rootBoard);
+    testAssert(abs(search->rootNode->getNNOutput()->policyOptimismUsed - 0.0) < 0.00001);
+
+    cout << "Make move and print" << endl;
+    search->makeMove(search->getChosenMoveLoc(),nextPla);
+    nextPla = getOpp(nextPla);
+    search->printTree(cout, search->rootNode, options, P_WHITE);
+    search->rootNode->getNNOutput()->debugPrint(cout,search->rootBoard);
+    testAssert(abs(search->rootNode->getNNOutput()->policyOptimismUsed - 1.0) < 0.00001);
+
+    cout << "Do search again but with very low visits so the search already meets max visits" << endl;
+    search->setParamsNoClearing(paramsLowVisits);
+    search->runWholeSearch(nextPla);
+    cout << search->rootBoard << endl;
+    search->printTree(cout, search->rootNode, options, P_WHITE);
+    search->rootNode->getNNOutput()->debugPrint(cout,search->rootBoard);
+    testAssert(abs(search->rootNode->getNNOutput()->policyOptimismUsed - 0.0) < 0.00001);
+
+    delete search;
+    delete nnEval;
+    cout << endl;
+  }
+
+  {
+    cout << "===================================================================" << endl;
+    cout << "Zero node search" << endl;
+    cout << "===================================================================" << endl;
+
+    NNEvaluator* nnEval = startNNEval(modelFile,logger,"zeronodesearch",13,13,0,true,false,false,true,false);
+    SearchParams params = SearchParams::forTestsV2();
+    Search* search = new Search(params, nnEval, &logger, "autoSearchRandSeeeeeed");
+    Rules rules = Rules::parseRules("japanese");
+    Board board = Board::parseBoard(13,6,R"%%(
+.............
+.............
+.....o.......
+...x.........
+.............
+.............
+)%%");
+    Player nextPla = P_BLACK;
+    BoardHistory hist(board,nextPla,rules,0);
+    PrintTreeOptions options;
+    options = options.maxDepth(1);
+
+    search->setPosition(nextPla,board,hist);
+
+    std::function<bool()> shouldStopEarly = []() noexcept {
+      return true;
+    };
+    search->runWholeSearch(nextPla,&shouldStopEarly);
+    cout << search->rootBoard << endl;
+    search->printTree(cout, search->rootNode, options, P_WHITE);
+    testAssert(search->rootNode->getNNOutput() == nullptr);
+    cout << "Chosen move: " << Location::toString(search->getChosenMoveLoc(),board) << endl;
+
+    delete search;
+    delete nnEval;
+    cout << endl;
+  }
+
+  {
+    cout << "===================================================================" << endl;
+    cout << "Chosen move probs" << endl;
+    cout << "===================================================================" << endl;
+    Rand rand;
+
+    auto testRelativeProbs = [&](const std::vector<double>& relativeProbs, double temperature, double onlyBelowProb) {
+      std::vector<double> processedRelProbsBuf(Board::MAX_ARR_SIZE);
+      Search::chooseIndexWithTemperature(
+        rand, relativeProbs.data(), (int)relativeProbs.size(), temperature, onlyBelowProb, processedRelProbsBuf.data()
+      );
+      cout << "Temperature " << temperature << " onlyBelowProb " << onlyBelowProb << endl;
+      for (size_t i = 0; i < relativeProbs.size(); i++)
+        cout << processedRelProbsBuf[i] << endl;
+    };
+
+    {
+      const std::vector<double> relativeProbs({40,20,160,80,10,10});
+      const double temperature = 1.0;
+      const double onlyBelowProb = 1.0;
+      testRelativeProbs(relativeProbs, temperature, onlyBelowProb);
+    }
+    {
+      const std::vector<double> relativeProbs({40,20,160,80,10,10});
+      const double temperature = 1.0;
+      const double onlyBelowProb = 0.2;
+      testRelativeProbs(relativeProbs, temperature, onlyBelowProb);
+    }
+    {
+      const std::vector<double> relativeProbs({40,20,160,80,10,10});
+      const double temperature = 0.5;
+      const double onlyBelowProb = 1.0;
+      testRelativeProbs(relativeProbs, temperature, onlyBelowProb);
+    }
+    {
+      const std::vector<double> relativeProbs({40,20,160,80,10,10});
+      const double temperature = 0.5;
+      const double onlyBelowProb = 0.2;
+      testRelativeProbs(relativeProbs, temperature, onlyBelowProb);
+    }
+    {
+      const std::vector<double> relativeProbs({40,20,160,80,10,10});
+      const double temperature = 2.0;
+      const double onlyBelowProb = 0.2;
+      testRelativeProbs(relativeProbs, temperature, onlyBelowProb);
+    }
+    {
+      const std::vector<double> relativeProbs({40,20,160,80,10,10});
+      const double temperature = 100000.0;
+      const double onlyBelowProb = 0.2;
+      testRelativeProbs(relativeProbs, temperature, onlyBelowProb);
+    }
+    {
+      const std::vector<double> relativeProbs({40,20,160,80,10,10});
+      const double temperature = 0.00001;
+      const double onlyBelowProb = 0.2;
+      testRelativeProbs(relativeProbs, temperature, onlyBelowProb);
+    }
+  }
 
   {
     cout << "===================================================================" << endl;
@@ -2268,6 +2538,39 @@ oxooox.
     params.printParams(cout);
     cout << endl;
 
+  }
+
+  {
+    cout << "===================================================================" << endl;
+    cout << "Board size distribution" << endl;
+    cout << "===================================================================" << endl;
+    ConfigParser cfg;
+    cfg.overrideKey("koRules","SIMPLE");
+    cfg.overrideKey("scoringRules","AREA");
+    cfg.overrideKey("taxRules","SEKI");
+    cfg.overrideKey("multiStoneSuicideLegals","false");
+    cfg.overrideKey("hasButtons","false");
+    cfg.overrideKey("bSizes","2,4,6,8");
+    cfg.overrideKey("bSizeRelProbs","1,2,3,4");
+    cfg.overrideKey("allowRectangleProb","0.3");
+    cfg.overrideKey("komiAuto","true");
+    GameInitializer gameInit(cfg, logger, "board size distribution random seed");
+
+    std::map<std::pair<int,int>,int> boardSizeDistribution;
+    for(int i = 0; i<100000; i++) {
+      Board board;
+      Player pla;
+      BoardHistory hist;
+      ExtraBlackAndKomi extraBlackAndKomi;
+      OtherGameProperties otherGameProps;
+      gameInit.createGame(board,pla,hist,extraBlackAndKomi,NULL,PlaySettings(),otherGameProps,NULL);
+      boardSizeDistribution[std::make_pair(board.x_size,board.y_size)] += 1;
+    }
+    for(int x = 2; x<=8; x += 2) {
+      for(int y = 2; y<=8; y += 2) {
+        cout << x << "x" << y << " " << boardSizeDistribution[std::make_pair(x,y)] << endl;
+      }
+    }
   }
 
   NeuralNet::globalCleanup();

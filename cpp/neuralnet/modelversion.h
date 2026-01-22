@@ -4,9 +4,9 @@
 // Model versions
 namespace NNModelVersion {
 
-  constexpr int latestModelVersionImplemented = 10;
+  constexpr int latestModelVersionImplemented = 16;
   constexpr int latestInputsVersionImplemented = 7;
-  constexpr int defaultModelVersion = 10;
+  constexpr int defaultModelVersion = 16;
 
   constexpr int oldestModelVersionImplemented = 3;
   constexpr int oldestInputsVersionImplemented = 3;
@@ -18,6 +18,9 @@ namespace NNModelVersion {
   // the row vector that the net takes as input
   int getNumSpatialFeatures(int modelVersion);
   int getNumGlobalFeatures(int modelVersion);
+
+  // SGF metadata encoder input versions
+  int getNumInputMetaChannels(int metaEncoderVersion);
 
 }  // namespace NNModelVersion
 

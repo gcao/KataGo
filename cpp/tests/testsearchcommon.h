@@ -16,6 +16,9 @@ namespace TestSearchCommon {
     bool printOwnership;
     bool printEndingScoreValueBonus;
     bool printPlaySelectionValues;
+    bool printRootValues;
+    bool printPrunedRootValues;
+    bool printSharpScoreAndError;
     bool noClearBot;
     bool noClearCache;
     bool printMore;
@@ -23,6 +26,7 @@ namespace TestSearchCommon {
     bool printAfterBegun;
     bool ignorePosition;
     bool printPostOrderNodeCount;
+    Loc rootHintLoc;
     TestSearchOptions();
   };
 

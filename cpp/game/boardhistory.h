@@ -32,10 +32,11 @@ struct BoardHistory {
   int initialEncorePhase;
   //The "turn number" as of the initial board. Does not affect any rules, but possibly uses may
   //care about this number, for cases where we set up a position from midgame.
-  int initialTurnNumber;
+  int64_t initialTurnNumber;
   //How we count handicap at the start of the game. Set manually by some close-to-user-level apps or subcommands
   bool assumeMultipleStartingBlackMovesAreHandicap;
   bool whiteHasMoved;
+  int overrideNumHandicapStones;
 
   static const int NUM_RECENT_BOARDS = 6;
   Board recentBoards[NUM_RECENT_BOARDS];
@@ -58,6 +59,13 @@ struct BoardHistory {
   int encorePhase;
   //How many turns of history do we have in the current main or encore phase?
   int numTurnsThisPhase;
+  //What's the longest suffix of the history we can include that still probably obey the rules
+  //for this phase? Checks for if the game continued past passes that should have ended the game
+  //but does not check self-capture rules or ko/superko violations
+  //that were tolerated in a game record.
+  int numApproxValidTurnsThisPhase;
+  //Similar to numApproxValidTurnsThisPhase but resets to 0 upon a rules violation rather than game phase change.
+  int numConsecValidTurnsThisGame;
 
   //Ko-recapture-block locations for territory scoring in encore
   bool koRecapBlocked[Board::MAX_ARR_SIZE];
@@ -109,9 +117,11 @@ struct BoardHistory {
   //Set only the komi field of the rules, does not clear history, does recompute game score if game is over.
   void setKomi(float newKomi);
   //Set the initial turn number. Affects nothing else.
-  void setInitialTurnNumber(int n);
+  void setInitialTurnNumber(int64_t n);
   //Set assumeMultipleStartingBlackMovesAreHandicap and update bonus points accordingly
   void setAssumeMultipleStartingBlackMovesAreHandicap(bool b);
+  //Set overrideNumHandicapStones and update bonus points accordingly
+  void setOverrideNumHandicapStones(int n);
 
   //Returns a copy of this board history rewound to the initial board, pla, etc, with other fields
   //(such as setInitialTurnNumber, setAssumeMultipleStartingBlackMovesAreHandicap) set identically.
@@ -129,10 +139,19 @@ struct BoardHistory {
   //Check if passing right now would end the current phase of play, or the entire game
   bool passWouldEndPhase(const Board& board, Player movePla) const;
   bool passWouldEndGame(const Board& board, Player movePla) const;
+
+  //If friendly pass is okay in area scoring rules, we require a "third" pass to end the game during search, unless it ends
+  //via spightlike rule. This function returns true when passing would end the game, but we shouldn't accept it because it's
+  //a second pass and not a third pass.
+  bool shouldSuppressEndGameFromFriendlyPass(const Board& board, Player movePla) const;
+
   //Check if this is the final phase of the game, such that ending it moves to scoring.
   bool isFinalPhase() const;
   //Check if the specified move is a pass-for-ko encore move.
   bool isPassForKo(const Board& board, Loc moveLoc, Player movePla) const;
+
+  //Current turn number, based on initial turn number
+  int64_t getCurrentTurnNumber() const;
 
   //For all of the below, rootKoHashTable is optional and if provided will slightly speedup superko searches
   //This function should behave gracefully so long as it is pseudolegal (board.isLegal, but also still ok if the move is on board.ko_loc)
@@ -163,7 +182,7 @@ struct BoardHistory {
 
   //Does not do anything like assumeMultipleStartingBlackMovesAreHandicap, computes based on board alone
   static int numHandicapStonesOnBoard(const Board& b);
-  //Takes into account assumeMultipleStartingBlackMovesAreHandicap
+  //Takes into account assumeMultipleStartingBlackMovesAreHandicap and/or overrideNumHandicapStones
   int computeNumHandicapStones() const;
   int computeWhiteHandicapBonus() const;
 
@@ -171,6 +190,10 @@ struct BoardHistory {
   //turn into white, or similar.
   bool hasBlackPassOrWhiteFirst() const;
 
+  //Compute a hash that takes into account the full situation and simple ko prohibition. Does NOT include rules or history.
+  static Hash128 getSituationAndSimpleKoHash(const Board& board, Player nextPlayer);
+  //Compute a hash that takes into account the full situation, simple ko prohibition, and the previous turn's position. (Does NOT include rules).
+  static Hash128 getSituationAndSimpleKoAndPrevPosHash(const Board& board, const BoardHistory& hist, Player nextPlayer);
   //Compute a hash that takes into account the full situation, the rules, discretized komi, and any immediate ko prohibitions.
   static Hash128 getSituationRulesAndKoHash(const Board& board, const BoardHistory& hist, Player nextPlayer, double drawEquivalentWinsForWhite);
 

@@ -4,20 +4,27 @@
 #include "../core/fileutils.h"
 #include "../core/timer.h"
 #include "../core/threadsafequeue.h"
+#include "../core/parallel.h"
+#include "../dataio/poswriter.h"
 #include "../dataio/sgf.h"
 #include "../dataio/files.h"
 #include "../book/book.h"
+#include "../search/searchnode.h"
 #include "../search/asyncbot.h"
 #include "../program/setup.h"
 #include "../program/playutils.h"
 #include "../program/play.h"
 #include "../command/commandline.h"
+#include "../core/test.h"
 #include "../main.h"
+#include "../external/nlohmann_json/json.hpp"
 
 #include <chrono>
 #include <csignal>
 
-using namespace std;
+//------------------------
+#include "../core/using.h"
+//------------------------
 
 static std::atomic<bool> sigReceived(false);
 static std::atomic<bool> shouldStop(false);
@@ -37,6 +44,266 @@ static double getMaxPolicy(float policyProbs[NNPos::MAX_NN_POLICY_SIZE]) {
   return maxPolicy;
 }
 
+static void optimizeSymmetriesInplace(std::vector<SymBookNode>& nodes, Rand* rand, Logger& logger) {
+  std::vector<std::unique_ptr<Board>> boards;
+  {
+    BoardHistory histBuf;
+    std::vector<Loc> moveHistoryBuf;
+    for(SymBookNode& node: nodes) {
+      if(node.getBoardHistoryReachingHere(histBuf,moveHistoryBuf)) {
+        boards.push_back(std::make_unique<Board>(histBuf.getRecentBoard(0)));
+      }
+      else {
+        logger.write("WARNING: Failed to get board history reaching node, probably there is some bug");
+        logger.write("BookHash of node optimizing symmetries: " + node.hash().toString());
+        throw StringError("Terminating");
+      }
+    }
+  }
+
+  assert(nodes.size() < 0x7FFFFFFFU);
+  std::vector<uint32_t> perm(nodes.size());
+  if(rand != nullptr)
+    rand->fillShuffledUIntRange(perm.size(), perm.data());
+  else {
+    for(size_t i = 0; i<perm.size(); i++)
+      perm[i] = (uint32_t)i;
+  }
+
+  double diffBuf[SymmetryHelpers::NUM_SYMMETRIES];
+  double similaritySumBuf[SymmetryHelpers::NUM_SYMMETRIES];
+  const double maxDifferenceToReport = 12;
+
+  // Iterate through all nodes in random order and for each one find its best symmetry
+  std::vector<int> bestSymmetries(nodes.size());
+  for(size_t i = 0; i<perm.size(); i++) {
+    const Board& nodeBoard = *(boards[perm[i]]);
+
+    std::fill(similaritySumBuf, similaritySumBuf+SymmetryHelpers::NUM_SYMMETRIES, 0.0);
+
+    // Iterate over all previously symmetrized nodes, up to at most 100, and accumulate similarity
+    for(size_t j = 0; j<i && j < 100; j++) {
+      const Board& otherBoard = *(boards[perm[j]]);
+      int otherBoardBestSymmetry = bestSymmetries[perm[j]];
+      SymmetryHelpers::getSymmetryDifferences(nodeBoard, otherBoard, maxDifferenceToReport, diffBuf);
+      for(int symmetry = 0; symmetry < SymmetryHelpers::NUM_SYMMETRIES; symmetry++) {
+        // diffBuff[symmetry] has the similarity between nodeBoard * symmetry  and otherBoard.
+        // Which is the same as the similarity between nodeboard * compose(symmetry,otherBoardBestSymmetry) and otherBoard * otherBoardBestSymmetry.
+        // The latter is what we want, since that's what otherBoard will actually end up as after this whole function is done.
+        // For similarity, use quadratic harmonic
+        similaritySumBuf[SymmetryHelpers::compose(symmetry, otherBoardBestSymmetry)] += 1.0 / ((0.01 + diffBuf[symmetry]) * (0.01 + diffBuf[symmetry]));
+      }
+    }
+
+    double bestSimilarity = similaritySumBuf[0];
+    int bestSymmetry = 0;
+    for(int symmetry = 1; symmetry < SymmetryHelpers::NUM_SYMMETRIES; symmetry++) {
+      if(similaritySumBuf[symmetry] > bestSimilarity) {
+        bestSimilarity = similaritySumBuf[symmetry];
+        bestSymmetry = symmetry;
+      }
+    }
+    bestSymmetries[perm[i]] = bestSymmetry;
+  }
+
+  for(size_t i = 0; i<nodes.size(); i++) {
+    nodes[i] = nodes[i].applySymmetry(bestSymmetries[i]);
+  }
+}
+
+static void maybeParseHashBonusFile(
+  const std::string& hashBonusFile,
+  double bonusFileScale,
+  Logger& logger,
+  std::map<BookHash,double>& bonusByHash,
+  std::map<BookHash,double>& expandBonusByHash,
+  std::map<BookHash,double>& visitsRequiredByHash,
+  std::map<BookHash,int>& branchRequiredByHash
+) {
+  if(hashBonusFile == "")
+    return;
+  std::vector<std::string> lines = FileUtils::readFileLines(hashBonusFile, '\n');
+  for(const std::string& line: lines) {
+    std::vector<std::string> pieces = Global::split(Global::trim(line));
+    if(pieces.size() > 2 && (
+         pieces[1] == "BONUS" ||
+         pieces[1] == "EXPAND" ||
+         pieces[1] == "VISITS" ||
+         pieces[1] == "BRANCH"
+       )
+    ) {
+      double ret = Global::stringToDouble(pieces[2]);
+      BookHash hashRet = BookHash::ofString(pieces[0]);
+      if(pieces[1] == "BONUS") {
+        if(!std::isfinite(ret) || ret < -10000 || ret > 10000)
+          throw StringError("Invalid BONUS: " + Global::doubleToString(ret));
+        if(bonusByHash.find(hashRet) != bonusByHash.end())
+          bonusByHash[hashRet] = std::max(bonusByHash[hashRet], ret * bonusFileScale);
+        else
+          bonusByHash[hashRet] = ret * bonusFileScale;
+        bonusByHash[hashRet] = std::max(bonusByHash[hashRet], ret * bonusFileScale);
+        logger.write("Adding bonus " + Global::doubleToString(ret * bonusFileScale) + " to hash " + hashRet.toString());
+      }
+      else if(pieces[1] == "EXPAND") {
+        if(!std::isfinite(ret) || ret < 0 || ret > 10000)
+          throw StringError("Invalid EXPAND: " + Global::doubleToString(ret));
+        if(expandBonusByHash.find(hashRet) != expandBonusByHash.end())
+          expandBonusByHash[hashRet] = std::max(expandBonusByHash[hashRet], ret * bonusFileScale);
+        else
+          expandBonusByHash[hashRet] = ret * bonusFileScale;
+        logger.write("Adding expand bonus " + Global::doubleToString(ret * bonusFileScale) + " to hash " + hashRet.toString());
+      }
+      else if(pieces[1] == "VISITS") {
+        if(!std::isfinite(ret) || ret < 0)
+          throw StringError("Invalid VISITS: " + Global::doubleToString(ret));
+        if(visitsRequiredByHash.find(hashRet) != visitsRequiredByHash.end())
+          visitsRequiredByHash[hashRet] = std::max(visitsRequiredByHash[hashRet], ret * bonusFileScale);
+        else
+          visitsRequiredByHash[hashRet] = ret * bonusFileScale;
+        logger.write("Adding required visits " + Global::doubleToString(ret * bonusFileScale) + " to hash " + hashRet.toString());
+      }
+      else if(pieces[1] == "BRANCH") {
+        if(!std::isfinite(ret) || ret < 0 || ret > 200)
+          throw StringError("Invalid BRANCH: " + Global::doubleToString(ret));
+        if(branchRequiredByHash.find(hashRet) != branchRequiredByHash.end())
+          branchRequiredByHash[hashRet] = std::max(branchRequiredByHash[hashRet], (int)ret);
+        else
+          branchRequiredByHash[hashRet] = (int)ret;
+        logger.write("Adding required branching factor " + Global::intToString((int)ret) + " to hash " + hashRet.toString());
+      }
+    }
+  }
+}
+
+static void maybeParseBonusFile(
+  const std::string& bonusFile,
+  int boardSizeX,
+  int boardSizeY,
+  Rules rules,
+  int repBound,
+  double bonusFileScale,
+  Logger& logger,
+  std::map<BookHash,double>& bonusByHash,
+  std::map<BookHash,double>& expandBonusByHash,
+  std::map<BookHash,double>& visitsRequiredByHash,
+  std::map<BookHash,int>& branchRequiredByHash,
+  Board& bonusInitialBoard,
+  Player& bonusInitialPla
+) {
+  if(bonusFile != "") {
+    std::unique_ptr<Sgf> sgf = Sgf::loadFile(bonusFile);
+    bool flipIfPassOrWFirst = false;
+    bool allowGameOver = false;
+    Rand seedRand("bonusByHash");
+    sgf->iterAllPositions(
+      flipIfPassOrWFirst, allowGameOver, &seedRand, [&](Sgf::PositionSample& unusedSample, const BoardHistory& sgfHist, const string& comments) {
+        (void)unusedSample;
+        if(comments.size() > 0 && (
+             comments.find("BONUS") != string::npos ||
+             comments.find("EXPAND") != string::npos ||
+             comments.find("VISITS") != string::npos ||
+             comments.find("BRANCH") != string::npos
+           )
+        ) {
+          BoardHistory hist(sgfHist.initialBoard, sgfHist.initialPla, rules, sgfHist.initialEncorePhase);
+          Board board = hist.initialBoard;
+          for(size_t i = 0; i<sgfHist.moveHistory.size(); i++) {
+            bool suc = hist.makeBoardMoveTolerant(board, sgfHist.moveHistory[i].loc, sgfHist.moveHistory[i].pla);
+            if(!suc)
+              return;
+          }
+
+          auto parseCommand = [&comments,&board](const char* commandName, double& ret) {
+            if(comments.find(commandName) != string::npos) {
+              double bonus;
+              try {
+                vector<string> nextWords = Global::split(Global::trim(comments.substr(comments.find(commandName)+std::strlen(commandName))));
+                if(nextWords.size() <= 0)
+                  throw StringError("Could not parse " + string(commandName) + " value");
+                bonus = Global::stringToDouble(nextWords[0]);
+              }
+              catch(const StringError& e) {
+                cerr << board << endl;
+                throw e;
+              }
+              ret = bonus;
+              return true;
+            }
+            return false;
+          };
+
+          double ret = 0.0;
+          BookHash hashRet;
+          int symmetryToAlignRet;
+          vector<int> symmetriesRet;
+          if(parseCommand("BONUS",ret)) {
+            if(!std::isfinite(ret) || ret < -10000 || ret > 10000)
+              throw StringError("Invalid BONUS: " + Global::doubleToString(ret));
+            for(int bookVersion = 1; bookVersion <= Book::LATEST_BOOK_VERSION; bookVersion++) {
+              BookHash::getHashAndSymmetry(hist, repBound, hashRet, symmetryToAlignRet, symmetriesRet, bookVersion);
+              if(bonusByHash.find(hashRet) != bonusByHash.end())
+                bonusByHash[hashRet] = std::max(bonusByHash[hashRet], ret * bonusFileScale);
+              else
+                bonusByHash[hashRet] = ret * bonusFileScale;
+              logger.write("Adding bonus " + Global::doubleToString(ret * bonusFileScale) + " to hash " + hashRet.toString());
+            }
+          }
+
+          if(parseCommand("EXPAND",ret)) {
+            if(!std::isfinite(ret) || ret < 0 || ret > 10000)
+              throw StringError("Invalid EXPAND: " + Global::doubleToString(ret));
+            for(int bookVersion = 1; bookVersion <= Book::LATEST_BOOK_VERSION; bookVersion++) {
+              BookHash::getHashAndSymmetry(hist, repBound, hashRet, symmetryToAlignRet, symmetriesRet, bookVersion);
+              if(expandBonusByHash.find(hashRet) != expandBonusByHash.end())
+                expandBonusByHash[hashRet] = std::max(expandBonusByHash[hashRet], ret * bonusFileScale);
+              else
+                expandBonusByHash[hashRet] = ret * bonusFileScale;
+              logger.write("Adding expand bonus " + Global::doubleToString(ret * bonusFileScale) + " to hash " + hashRet.toString());
+            }
+          }
+
+          if(parseCommand("VISITS",ret)) {
+            if(!std::isfinite(ret) || ret < 0)
+              throw StringError("Invalid VISITS: " + Global::doubleToString(ret));
+            for(int bookVersion = 1; bookVersion <= Book::LATEST_BOOK_VERSION; bookVersion++) {
+              BookHash::getHashAndSymmetry(hist, repBound, hashRet, symmetryToAlignRet, symmetriesRet, bookVersion);
+              if(visitsRequiredByHash.find(hashRet) != visitsRequiredByHash.end())
+                visitsRequiredByHash[hashRet] = std::max(visitsRequiredByHash[hashRet], ret * bonusFileScale);
+              else
+                visitsRequiredByHash[hashRet] = ret * bonusFileScale;
+              logger.write("Adding required visits " + Global::doubleToString(ret * bonusFileScale) + " to hash " + hashRet.toString());
+            }
+          }
+
+          if(parseCommand("BRANCH",ret)) {
+            if(!std::isfinite(ret) || ret < 0 || ret > 200)
+              throw StringError("Invalid BRANCH: " + Global::doubleToString(ret));
+            for(int bookVersion = 1; bookVersion <= Book::LATEST_BOOK_VERSION; bookVersion++) {
+              BookHash::getHashAndSymmetry(hist, repBound, hashRet, symmetryToAlignRet, symmetriesRet, bookVersion);
+              if(branchRequiredByHash.find(hashRet) != branchRequiredByHash.end())
+                branchRequiredByHash[hashRet] = std::max(branchRequiredByHash[hashRet], (int)ret);
+              else
+                branchRequiredByHash[hashRet] = (int)ret;
+              logger.write("Adding required branching factor " + Global::intToString((int)ret) + " to hash " + hashRet.toString());
+            }
+          }
+
+        }
+      }
+    );
+
+    XYSize xySize = sgf->getXYSize();
+    if(boardSizeX != xySize.x || boardSizeY != xySize.y)
+      throw StringError("Board size in config does not match the board size of the bonus file");
+    vector<Move> placements;
+    sgf->getPlacements(placements,boardSizeX,boardSizeY);
+    bool suc = bonusInitialBoard.setStonesFailIfNoLibs(placements);
+    if(!suc)
+      throw StringError("Invalid placements in sgf");
+    bonusInitialPla = sgf->getFirstPlayerColor();
+  }
+}
+
 
 int MainCmds::genbook(const vector<string>& args) {
   Board::initHash();
@@ -44,57 +311,77 @@ int MainCmds::genbook(const vector<string>& args) {
 
   ConfigParser cfg;
   string modelFile;
+  string humanModelFile;
   string htmlDir;
   string bookFile;
   string traceBookFile;
+  string traceSgfFile;
   string logFile;
-  string bonusFile;
+  std::vector<string> bonusFiles;
+  std::vector<string> hashBonusFiles;
   int numIterations;
   int saveEveryIterations;
   double traceBookMinVisits;
   bool allowChangingBookParams;
   bool htmlDevMode;
+  double htmlMinVisits;
+  int numBookThreads;
+
   try {
     KataGoCommandLine cmd("Generate opening book");
     cmd.addConfigFileArg("","",true);
     cmd.addModelFileArg();
+    cmd.addHumanModelFileArg();
     cmd.addOverrideConfigArg();
 
     TCLAP::ValueArg<string> htmlDirArg("","html-dir","HTML directory to export to, at the end of -num-iters",false,string(),"DIR");
     TCLAP::ValueArg<string> bookFileArg("","book-file","Book file to write to or continue expanding",true,string(),"FILE");
     TCLAP::ValueArg<string> traceBookFileArg("","trace-book-file","Other book file we should copy all the lines from",false,string(),"FILE");
+    TCLAP::ValueArg<string> traceSgfFileArg("","trace-sgf-file","Other sgf file we should copy all the lines from",false,string(),"FILE");
     TCLAP::ValueArg<string> logFileArg("","log-file","Log file to write to",true,string(),"DIR");
-    TCLAP::ValueArg<string> bonusFileArg("","bonus-file","SGF of bonuses marked",false,string(),"DIR");
+    TCLAP::MultiArg<string> bonusFileArg("","bonus-file","SGF of bonuses marked",false,"DIR");
+    TCLAP::MultiArg<string> hashBonusFileArg("","hash-bonus-file","File of bookhashes and bonuses, one hash per line",false,"DIR");
     TCLAP::ValueArg<int> numIterationsArg("","num-iters","Number of iterations to expand book",true,0,"N");
     TCLAP::ValueArg<int> saveEveryIterationsArg("","save-every","Number of iterations per save to book file",true,0,"N");
     TCLAP::ValueArg<double> traceBookMinVisitsArg("","trace-book-min-visits","Require >= this many visits for copying from traceBookFile",false,0.0,"N");
     TCLAP::SwitchArg allowChangingBookParamsArg("","allow-changing-book-params","Allow changing book params");
     TCLAP::SwitchArg htmlDevModeArg("","html-dev-mode","Denser debug output for html");
+    TCLAP::ValueArg<double> htmlMinVisitsArg("","html-min-visits","Require >= this many visits to export a position to html",false,0.0,"N");
+    TCLAP::ValueArg<int> numBookThreadsArg("","num-book-threads","Use this many threads to parallelize book operations",false,1,"N");
     cmd.add(htmlDirArg);
     cmd.add(bookFileArg);
     cmd.add(traceBookFileArg);
+    cmd.add(traceSgfFileArg);
     cmd.add(logFileArg);
     cmd.add(bonusFileArg);
+    cmd.add(hashBonusFileArg);
     cmd.add(numIterationsArg);
     cmd.add(saveEveryIterationsArg);
     cmd.add(traceBookMinVisitsArg);
     cmd.add(allowChangingBookParamsArg);
     cmd.add(htmlDevModeArg);
+    cmd.add(htmlMinVisitsArg);
+    cmd.add(numBookThreadsArg);
 
     cmd.parseArgs(args);
 
     cmd.getConfig(cfg);
     modelFile = cmd.getModelFile();
+    humanModelFile = cmd.getHumanModelFile();
     htmlDir = htmlDirArg.getValue();
     bookFile = bookFileArg.getValue();
     traceBookFile = traceBookFileArg.getValue();
+    traceSgfFile = traceSgfFileArg.getValue();
     logFile = logFileArg.getValue();
-    bonusFile = bonusFileArg.getValue();
+    bonusFiles = bonusFileArg.getValue();
+    hashBonusFiles = hashBonusFileArg.getValue();
     numIterations = numIterationsArg.getValue();
     saveEveryIterations = saveEveryIterationsArg.getValue();
     traceBookMinVisits = traceBookMinVisitsArg.getValue();
     allowChangingBookParams = allowChangingBookParamsArg.getValue();
     htmlDevMode = htmlDevModeArg.getValue();
+    htmlMinVisits = htmlMinVisitsArg.getValue();
+    numBookThreads = numBookThreadsArg.getValue();
   }
   catch (TCLAP::ArgException &e) {
     cerr << "Error: " << e.error() << " for argument " << e.argId() << endl;
@@ -109,100 +396,100 @@ int MainCmds::genbook(const vector<string>& args) {
   const bool loadKomiFromCfg = true;
   Rules rules = Setup::loadSingleRules(cfg,loadKomiFromCfg);
 
+  const bool hasHumanModel = humanModelFile != "";
+  const SearchParams params = Setup::loadSingleParams(cfg,Setup::SETUP_FOR_GTP,hasHumanModel);
+
   const int boardSizeX = cfg.getInt("boardSizeX",2,Board::MAX_LEN);
   const int boardSizeY = cfg.getInt("boardSizeY",2,Board::MAX_LEN);
   const int repBound = cfg.getInt("repBound",3,1000);
-  const double errorFactor = cfg.getDouble("errorFactor",0.01,100.0);
-  const double costPerMove = cfg.getDouble("costPerMove",0.0,1000000.0);
-  const double costPerUCBWinLossLoss = cfg.getDouble("costPerUCBWinLossLoss",0.0,1000000.0);
-  const double costPerUCBWinLossLossPow3 = cfg.getDouble("costPerUCBWinLossLossPow3",0.0,1000000.0);
-  const double costPerUCBWinLossLossPow7 = cfg.getDouble("costPerUCBWinLossLossPow7",0.0,1000000.0);
-  const double costPerUCBScoreLoss = cfg.getDouble("costPerUCBScoreLoss",0.0,1000000.0);
-  const double costPerLogPolicy = cfg.getDouble("costPerLogPolicy",0.0,1000000.0);
-  const double costPerMovesExpanded = cfg.getDouble("costPerMovesExpanded",0.0,1000000.0);
-  const double costPerSquaredMovesExpanded = cfg.getDouble("costPerSquaredMovesExpanded",0.0,1000000.0);
-  const double costWhenPassFavored = cfg.getDouble("costWhenPassFavored",0.0,1000000.0);
-  const double bonusPerWinLossError = cfg.getDouble("bonusPerWinLossError",0.0,1000000.0);
-  const double bonusPerScoreError = cfg.getDouble("bonusPerScoreError",0.0,1000000.0);
-  const double bonusPerSharpScoreDiscrepancy = cfg.getDouble("bonusPerSharpScoreDiscrepancy",0.0,1000000.0);
-  const double bonusPerExcessUnexpandedPolicy = cfg.getDouble("bonusPerExcessUnexpandedPolicy",0.0,1000000.0);
-  const double bonusForWLPV1 = cfg.contains("bonusForWLPV1") ? cfg.getDouble("bonusForWLPV1",0.0,1000000.0) : 0.0;
-  const double bonusForWLPV2 = cfg.contains("bonusForWLPV2") ? cfg.getDouble("bonusForWLPV2",0.0,1000000.0) : 0.0;
-  const double bonusForBiggestWLCost = cfg.contains("bonusForBiggestWLCost") ? cfg.getDouble("bonusForBiggestWLCost",0.0,1000000.0) : 0.0;
-  const double scoreLossCap = cfg.getDouble("scoreLossCap",0.0,1000000.0);
-  const double utilityPerScore = cfg.getDouble("utilityPerScore",0.0,1000000.0);
-  const double policyBoostSoftUtilityScale = cfg.getDouble("policyBoostSoftUtilityScale",0.0,1000000.0);
-  const double utilityPerPolicyForSorting = cfg.getDouble("utilityPerPolicyForSorting",0.0,1000000.0);
-  const double sharpScoreOutlierCap = cfg.getDouble("sharpScoreOutlierCap",0.0,1000000.0);
+
+  const double bonusFileScale = cfg.contains("bonusFileScale") ? cfg.getDouble("bonusFileScale",0.0,1000000.0) : 1.0;
+
+  const double randomizeParamsStdev = cfg.contains("randomizeParamsStdev") ? cfg.getDouble("randomizeParamsStdev",0.0,2.0) : 0.0;
+
   const bool logSearchInfo = cfg.getBool("logSearchInfo");
   const string rulesLabel = cfg.getString("rulesLabel");
   const string rulesLink = cfg.getString("rulesLink");
+
+  const int64_t minTreeVisitsToRecord =
+    cfg.contains("minTreeVisitsToRecord") ? cfg.getInt64("minTreeVisitsToRecord", (int64_t)1, (int64_t)1 << 50) : params.maxVisits;
+  const int maxDepthToRecord =
+    cfg.contains("maxDepthToRecord") ? cfg.getInt("maxDepthToRecord", 1, 100) : 1;
+  const int64_t maxVisitsForLeaves =
+    cfg.contains("maxVisitsForLeaves") ? cfg.getInt64("maxVisitsForLeaves", (int64_t)1, (int64_t)1 << 50) : (params.maxVisits+1) / 2;
+
+  BookParams cfgParams = BookParams::loadFromCfg(cfg, params.maxVisits, maxVisitsForLeaves);
 
   const int numGameThreads = cfg.getInt("numGameThreads",1,1000);
   const int numToExpandPerIteration = cfg.getInt("numToExpandPerIteration",1,10000000);
 
   std::map<BookHash,double> bonusByHash;
-  Board bonusInitialBoard(boardSizeX,boardSizeY);
-  Player bonusInitialPla = P_BLACK;
-  if(bonusFile != "") {
-    Sgf* sgf = Sgf::loadFile(bonusFile);
-    std::set<Hash128> uniqueHashes;
-    bool hashComments = true;
-    bool hashParent = true;
-    bool flipIfPassOrWFirst = false;
-    Rand seedRand("bonusByHash");
-    sgf->iterAllUniquePositions(
-      uniqueHashes, hashComments, hashParent, flipIfPassOrWFirst, &seedRand, [&](Sgf::PositionSample& unusedSample, const BoardHistory& sgfHist, const string& comments) {
-        (void)unusedSample;
-        if(comments.size() > 0 && comments.find("BONUS") != string::npos) {
-          BoardHistory hist(sgfHist.initialBoard, sgfHist.initialPla, rules, sgfHist.initialEncorePhase);
-          Board board = hist.initialBoard;
-          for(size_t i = 0; i<sgfHist.moveHistory.size(); i++) {
-            bool suc = hist.makeBoardMoveTolerant(board, sgfHist.moveHistory[i].loc, sgfHist.moveHistory[i].pla);
-            if(!suc)
-              return;
-          }
-          BookHash hashRet;
-          int symmetryToAlignRet;
-          vector<int> symmetriesRet;
+  std::map<BookHash,double> expandBonusByHash;
+  std::map<BookHash,double> visitsRequiredByHash;
+  std::map<BookHash,int> branchRequiredByHash;
+  Board bonusInitialBoard;
+  Player bonusInitialPla;
+  bonusInitialBoard = Board(boardSizeX,boardSizeY);
+  bonusInitialPla = P_BLACK;
 
-          double bonus = Global::stringToDouble(Global::trim(comments.substr(comments.find("BONUS")+5)));
-          for(int bookVersion = 1; bookVersion < Book::LATEST_BOOK_VERSION; bookVersion++) {
-            BookHash::getHashAndSymmetry(hist, repBound, hashRet, symmetryToAlignRet, symmetriesRet, bookVersion);
-            bonusByHash[hashRet] = bonus;
-            logger.write("Adding bonus " + Global::doubleToString(bonus) + " to hash " + hashRet.toString());
-          }
-        }
-      }
+  for(const std::string& bonusFile: bonusFiles) {
+    maybeParseBonusFile(
+      bonusFile,
+      boardSizeX,
+      boardSizeY,
+      rules,
+      repBound,
+      bonusFileScale,
+      logger,
+      bonusByHash,
+      expandBonusByHash,
+      visitsRequiredByHash,
+      branchRequiredByHash,
+      bonusInitialBoard,
+      bonusInitialPla
     );
-
-    XYSize xySize = sgf->getXYSize();
-    if(boardSizeX != xySize.x || boardSizeY != xySize.y)
-      throw StringError("Board size in config does not match the board size of the bonus file");
-    vector<Move> placements;
-    sgf->getPlacements(placements,boardSizeX,boardSizeY);
-    for(const Move& move: placements) {
-      bonusInitialBoard.setStone(move.loc,move.pla);
-    }
-    bonusInitialPla = sgf->getFirstPlayerColor();
+  }
+  for(const std::string& hashBonusFile: hashBonusFiles) {
+    maybeParseHashBonusFile(
+      hashBonusFile,
+      bonusFileScale,
+      logger,
+      bonusByHash,
+      expandBonusByHash,
+      visitsRequiredByHash,
+      branchRequiredByHash
+    );
   }
 
-  SearchParams params = Setup::loadSingleParams(cfg,Setup::SETUP_FOR_GTP);
+  const double wideRootNoiseBookExplore = cfg.contains("wideRootNoiseBookExplore") ? cfg.getDouble("wideRootNoiseBookExplore",0.0,5.0) : params.wideRootNoise;
+  const double cpuctExplorationLogBookExplore = cfg.contains("cpuctExplorationLogBookExplore") ? cfg.getDouble("cpuctExplorationLogBookExplore",0.0,10.0) : params.cpuctExplorationLog;
   NNEvaluator* nnEval;
+  NNEvaluator* humanEval = NULL;
   {
     Setup::initializeSession(cfg);
-    const int maxConcurrentEvals = numGameThreads * params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
     const int expectedConcurrentEvals = numGameThreads * params.numThreads;
     const int defaultMaxBatchSize = std::max(8,((numGameThreads * params.numThreads+3)/4)*4);
     const bool defaultRequireExactNNLen = true;
+    const bool disableFP16 = false;
     const string expectedSha256 = "";
     nnEval = Setup::initializeNNEvaluator(
-      modelFile,modelFile,expectedSha256,cfg,logger,rand,maxConcurrentEvals,expectedConcurrentEvals,
-      boardSizeX,boardSizeY,defaultMaxBatchSize,defaultRequireExactNNLen,
+      modelFile,modelFile,expectedSha256,cfg,logger,rand,expectedConcurrentEvals,
+      boardSizeX,boardSizeY,defaultMaxBatchSize,defaultRequireExactNNLen,disableFP16,
       Setup::SETUP_FOR_ANALYSIS
     );
+    logger.write("Loaded neural net");
+    if(humanModelFile != "") {
+      humanEval = Setup::initializeNNEvaluator(
+        humanModelFile,humanModelFile,expectedSha256,cfg,logger,rand,expectedConcurrentEvals,
+        boardSizeX,boardSizeY,defaultMaxBatchSize,defaultRequireExactNNLen,disableFP16,
+        Setup::SETUP_FOR_ANALYSIS
+      );
+      logger.write("Loaded human SL net with nnXLen " + Global::intToString(humanEval->getNNXLen()) + " nnYLen " + Global::intToString(humanEval->getNNYLen()));
+    }
   }
-  logger.write("Loaded neural net");
+  NNEvaluator* policyEvaluator = nnEval;
+  if(humanEval != NULL)
+    policyEvaluator = humanEval;
 
   vector<Search*> searches;
   for(int i = 0; i<numGameThreads; i++) {
@@ -212,6 +499,8 @@ int MainCmds::genbook(const vector<string>& args) {
 
   // Check for unused config keys
   cfg.warnUnusedKeys(cerr,&logger);
+  Setup::maybeWarnHumanSLParams(params,nnEval,NULL,cerr,&logger);
+  Setup::maybeWarnHumanSLParams(params,humanEval,NULL,cerr,&logger);
 
   if(htmlDir != "")
     MakeDir::make(htmlDir);
@@ -223,7 +512,7 @@ int MainCmds::genbook(const vector<string>& args) {
     bookFileExists = FileUtils::tryOpen(infile,bookFile);
   }
   if(bookFileExists) {
-    book = Book::loadFromFile(bookFile,sharpScoreOutlierCap);
+    book = Book::loadFromFile(bookFile,numBookThreads);
     if(
       boardSizeX != book->getInitialHist().getRecentBoard(0).x_size ||
       boardSizeY != book->getInitialHist().getRecentBoard(0).y_size ||
@@ -232,7 +521,7 @@ int MainCmds::genbook(const vector<string>& args) {
     ) {
       throw StringError("Book parameters do not match");
     }
-    if(bonusFile != "") {
+    if(bonusFiles.size() > 0) {
       if(!bonusInitialBoard.isEqualForTesting(book->getInitialHist().getRecentBoard(0), false, false))
         throw StringError(
           "Book initial board and initial board in bonus sgf file do not match\n" +
@@ -248,54 +537,45 @@ int MainCmds::genbook(const vector<string>& args) {
     }
 
     if(!allowChangingBookParams) {
+      BookParams existingBookParams = book->getParams();
       if(
-        errorFactor != book->getErrorFactor() ||
-        costPerMove != book->getCostPerMove() ||
-        costPerUCBWinLossLoss != book->getCostPerUCBWinLossLoss() ||
-        costPerUCBWinLossLossPow3 != book->getCostPerUCBWinLossLossPow3() ||
-        costPerUCBWinLossLossPow7 != book->getCostPerUCBWinLossLossPow7() ||
-        costPerUCBScoreLoss != book->getCostPerUCBScoreLoss() ||
-        costPerLogPolicy != book->getCostPerLogPolicy() ||
-        costPerMovesExpanded != book->getCostPerMovesExpanded() ||
-        costPerSquaredMovesExpanded != book->getCostPerSquaredMovesExpanded() ||
-        costWhenPassFavored != book->getCostWhenPassFavored() ||
-        bonusPerWinLossError != book->getBonusPerWinLossError() ||
-        bonusPerScoreError != book->getBonusPerScoreError() ||
-        bonusPerSharpScoreDiscrepancy != book->getBonusPerSharpScoreDiscrepancy() ||
-        bonusPerExcessUnexpandedPolicy != book->getBonusPerExcessUnexpandedPolicy() ||
-        bonusForWLPV1 != book->getBonusForWLPV1() ||
-        bonusForWLPV2 != book->getBonusForWLPV2() ||
-        bonusForBiggestWLCost != book->getBonusForBiggestWLCost() ||
-        scoreLossCap != book->getScoreLossCap() ||
-        utilityPerScore != book->getUtilityPerScore() ||
-        policyBoostSoftUtilityScale != book->getPolicyBoostSoftUtilityScale() ||
-        utilityPerPolicyForSorting != book->getUtilityPerPolicyForSorting()
+        cfgParams.errorFactor != existingBookParams.errorFactor ||
+        cfgParams.costPerMove != existingBookParams.costPerMove ||
+        cfgParams.costPerUCBWinLossLoss != existingBookParams.costPerUCBWinLossLoss ||
+        cfgParams.costPerUCBWinLossLossPow3 != existingBookParams.costPerUCBWinLossLossPow3 ||
+        cfgParams.costPerUCBWinLossLossPow7 != existingBookParams.costPerUCBWinLossLossPow7 ||
+        cfgParams.costPerUCBScoreLoss != existingBookParams.costPerUCBScoreLoss ||
+        cfgParams.costPerLogPolicy != existingBookParams.costPerLogPolicy ||
+        cfgParams.costPerMovesExpanded != existingBookParams.costPerMovesExpanded ||
+        cfgParams.costPerSquaredMovesExpanded != existingBookParams.costPerSquaredMovesExpanded ||
+        cfgParams.costWhenPassFavored != existingBookParams.costWhenPassFavored ||
+        cfgParams.bonusPerWinLossError != existingBookParams.bonusPerWinLossError ||
+        cfgParams.bonusPerScoreError != existingBookParams.bonusPerScoreError ||
+        cfgParams.bonusPerSharpScoreDiscrepancy != existingBookParams.bonusPerSharpScoreDiscrepancy ||
+        cfgParams.bonusPerExcessUnexpandedPolicy != existingBookParams.bonusPerExcessUnexpandedPolicy ||
+        cfgParams.bonusPerUnexpandedBestWinLoss != existingBookParams.bonusPerUnexpandedBestWinLoss ||
+        cfgParams.bonusForWLPV1 != existingBookParams.bonusForWLPV1 ||
+        cfgParams.bonusForWLPV2 != existingBookParams.bonusForWLPV2 ||
+        cfgParams.bonusForWLPVFinalProp != existingBookParams.bonusForWLPVFinalProp ||
+        cfgParams.bonusForBiggestWLCost != existingBookParams.bonusForBiggestWLCost ||
+        cfgParams.bonusBehindInVisitsScale != existingBookParams.bonusBehindInVisitsScale ||
+        cfgParams.scoreLossCap != existingBookParams.scoreLossCap ||
+        cfgParams.earlyBookCostReductionFactor != existingBookParams.earlyBookCostReductionFactor ||
+        cfgParams.earlyBookCostReductionLambda != existingBookParams.earlyBookCostReductionLambda ||
+        cfgParams.utilityPerScore != existingBookParams.utilityPerScore ||
+        cfgParams.policyBoostSoftUtilityScale != existingBookParams.policyBoostSoftUtilityScale ||
+        cfgParams.utilityPerPolicyForSorting != existingBookParams.utilityPerPolicyForSorting ||
+        cfgParams.adjustedVisitsWLScale != existingBookParams.adjustedVisitsWLScale ||
+        cfgParams.maxVisitsForReExpansion != existingBookParams.maxVisitsForReExpansion ||
+        cfgParams.visitsScale != existingBookParams.visitsScale ||
+        cfgParams.visitsScaleLeaves != existingBookParams.visitsScaleLeaves ||
+        cfgParams.sharpScoreOutlierCap != existingBookParams.sharpScoreOutlierCap
       ) {
         throw StringError("Book parameters do not match");
       }
     }
     else {
-      if(errorFactor != book->getErrorFactor()) { logger.write("Changing errorFactor from " + Global::doubleToString(book->getErrorFactor()) + " to " + Global::doubleToString(errorFactor)); book->setErrorFactor(errorFactor); }
-      if(costPerMove != book->getCostPerMove()) { logger.write("Changing costPerMove from " + Global::doubleToString(book->getCostPerMove()) + " to " + Global::doubleToString(costPerMove)); book->setCostPerMove(costPerMove); }
-      if(costPerUCBWinLossLoss != book->getCostPerUCBWinLossLoss()) { logger.write("Changing costPerUCBWinLossLoss from " + Global::doubleToString(book->getCostPerUCBWinLossLoss()) + " to " + Global::doubleToString(costPerUCBWinLossLoss)); book->setCostPerUCBWinLossLoss(costPerUCBWinLossLoss); }
-      if(costPerUCBWinLossLossPow3 != book->getCostPerUCBWinLossLossPow3()) { logger.write("Changing costPerUCBWinLossLossPow3 from " + Global::doubleToString(book->getCostPerUCBWinLossLossPow3()) + " to " + Global::doubleToString(costPerUCBWinLossLossPow3)); book->setCostPerUCBWinLossLossPow3(costPerUCBWinLossLossPow3); }
-      if(costPerUCBWinLossLossPow7 != book->getCostPerUCBWinLossLossPow7()) { logger.write("Changing costPerUCBWinLossLossPow7 from " + Global::doubleToString(book->getCostPerUCBWinLossLossPow7()) + " to " + Global::doubleToString(costPerUCBWinLossLossPow7)); book->setCostPerUCBWinLossLossPow7(costPerUCBWinLossLossPow7); }
-      if(costPerUCBScoreLoss != book->getCostPerUCBScoreLoss()) { logger.write("Changing costPerUCBScoreLoss from " + Global::doubleToString(book->getCostPerUCBScoreLoss()) + " to " + Global::doubleToString(costPerUCBScoreLoss)); book->setCostPerUCBScoreLoss(costPerUCBScoreLoss); }
-      if(costPerLogPolicy != book->getCostPerLogPolicy()) { logger.write("Changing costPerLogPolicy from " + Global::doubleToString(book->getCostPerLogPolicy()) + " to " + Global::doubleToString(costPerLogPolicy)); book->setCostPerLogPolicy(costPerLogPolicy); }
-      if(costPerMovesExpanded != book->getCostPerMovesExpanded()) { logger.write("Changing costPerMovesExpanded from " + Global::doubleToString(book->getCostPerMovesExpanded()) + " to " + Global::doubleToString(costPerMovesExpanded)); book->setCostPerMovesExpanded(costPerMovesExpanded); }
-      if(costPerSquaredMovesExpanded != book->getCostPerSquaredMovesExpanded()) { logger.write("Changing costPerSquaredMovesExpanded from " + Global::doubleToString(book->getCostPerSquaredMovesExpanded()) + " to " + Global::doubleToString(costPerSquaredMovesExpanded)); book->setCostPerSquaredMovesExpanded(costPerSquaredMovesExpanded); }
-      if(costWhenPassFavored != book->getCostWhenPassFavored()) { logger.write("Changing costWhenPassFavored from " + Global::doubleToString(book->getCostWhenPassFavored()) + " to " + Global::doubleToString(costWhenPassFavored)); book->setCostWhenPassFavored(costWhenPassFavored); }
-      if(bonusPerWinLossError != book->getBonusPerWinLossError()) { logger.write("Changing bonusPerWinLossError from " + Global::doubleToString(book->getBonusPerWinLossError()) + " to " + Global::doubleToString(bonusPerWinLossError)); book->setBonusPerWinLossError(bonusPerWinLossError); }
-      if(bonusPerScoreError != book->getBonusPerScoreError()) { logger.write("Changing bonusPerScoreError from " + Global::doubleToString(book->getBonusPerScoreError()) + " to " + Global::doubleToString(bonusPerScoreError)); book->setBonusPerScoreError(bonusPerScoreError); }
-      if(bonusPerSharpScoreDiscrepancy != book->getBonusPerSharpScoreDiscrepancy()) { logger.write("Changing bonusPerSharpScoreDiscrepancy from " + Global::doubleToString(book->getBonusPerSharpScoreDiscrepancy()) + " to " + Global::doubleToString(bonusPerSharpScoreDiscrepancy)); book->setBonusPerSharpScoreDiscrepancy(bonusPerSharpScoreDiscrepancy); }
-      if(bonusPerExcessUnexpandedPolicy != book->getBonusPerExcessUnexpandedPolicy()) { logger.write("Changing bonusPerExcessUnexpandedPolicy from " + Global::doubleToString(book->getBonusPerExcessUnexpandedPolicy()) + " to " + Global::doubleToString(bonusPerExcessUnexpandedPolicy)); book->setBonusPerExcessUnexpandedPolicy(bonusPerExcessUnexpandedPolicy); }
-      if(bonusForWLPV1 != book->getBonusForWLPV1()) { logger.write("Changing bonusForWLPV1 from " + Global::doubleToString(book->getBonusForWLPV1()) + " to " + Global::doubleToString(bonusForWLPV1)); book->setBonusForWLPV1(bonusForWLPV1); }
-      if(bonusForWLPV2 != book->getBonusForWLPV2()) { logger.write("Changing bonusForWLPV2 from " + Global::doubleToString(book->getBonusForWLPV2()) + " to " + Global::doubleToString(bonusForWLPV2)); book->setBonusForWLPV2(bonusForWLPV2); }
-      if(bonusForBiggestWLCost != book->getBonusForBiggestWLCost()) { logger.write("Changing bonusForBiggestWLCost from " + Global::doubleToString(book->getBonusForBiggestWLCost()) + " to " + Global::doubleToString(bonusForBiggestWLCost)); book->setBonusForBiggestWLCost(bonusForBiggestWLCost); }
-      if(scoreLossCap != book->getScoreLossCap()) { logger.write("Changing scoreLossCap from " + Global::doubleToString(book->getScoreLossCap()) + " to " + Global::doubleToString(scoreLossCap)); book->setScoreLossCap(scoreLossCap); }
-      if(utilityPerScore != book->getUtilityPerScore()) { logger.write("Changing utilityPerScore from " + Global::doubleToString(book->getUtilityPerScore()) + " to " + Global::doubleToString(utilityPerScore)); book->setUtilityPerScore(utilityPerScore); }
-      if(policyBoostSoftUtilityScale != book->getPolicyBoostSoftUtilityScale()) { logger.write("Changing policyBoostSoftUtilityScale from " + Global::doubleToString(book->getPolicyBoostSoftUtilityScale()) + " to " + Global::doubleToString(policyBoostSoftUtilityScale)); book->setPolicyBoostSoftUtilityScale(policyBoostSoftUtilityScale); }
-      if(utilityPerPolicyForSorting != book->getUtilityPerPolicyForSorting()) { logger.write("Changing utilityPerPolicyForSorting from " + Global::doubleToString(book->getUtilityPerPolicyForSorting()) + " to " + Global::doubleToString(utilityPerPolicyForSorting)); book->setUtilityPerPolicyForSorting(utilityPerPolicyForSorting); }
+      book->setParams(cfgParams);
     }
     logger.write("Loaded preexisting book with " + Global::uint64ToString(book->size()) + " nodes from " + bookFile);
     logger.write("Book version = " + Global::intToString(book->bookVersion));
@@ -312,28 +592,7 @@ int MainCmds::genbook(const vector<string>& args) {
       rules,
       bonusInitialPla,
       repBound,
-      errorFactor,
-      costPerMove,
-      costPerUCBWinLossLoss,
-      costPerUCBWinLossLossPow3,
-      costPerUCBWinLossLossPow7,
-      costPerUCBScoreLoss,
-      costPerLogPolicy,
-      costPerMovesExpanded,
-      costPerSquaredMovesExpanded,
-      costWhenPassFavored,
-      bonusPerWinLossError,
-      bonusPerScoreError,
-      bonusPerSharpScoreDiscrepancy,
-      bonusPerExcessUnexpandedPolicy,
-      bonusForWLPV1,
-      bonusForWLPV2,
-      bonusForBiggestWLCost,
-      scoreLossCap,
-      utilityPerScore,
-      policyBoostSoftUtilityScale,
-      utilityPerPolicyForSorting,
-      sharpScoreOutlierCap
+      cfgParams
     );
     logger.write("Creating new book at " + bookFile);
     book->saveToFile(bookFile);
@@ -343,18 +602,26 @@ int MainCmds::genbook(const vector<string>& args) {
     out.close();
   }
 
+  if(traceBookFile.size() > 0 && traceSgfFile.size() > 0)
+    throw StringError("Cannot trace book and sgf at the same time");
+
+  MutexPool mutexPool(1 << 17);
+
   Book* traceBook = NULL;
   if(traceBookFile.size() > 0) {
     if(numIterations > 0)
       throw StringError("Cannot specify iterations and trace book at the same time");
-    traceBook = Book::loadFromFile(traceBookFile,sharpScoreOutlierCap);
-    traceBook->recomputeEverything();
-    logger.write("Loaded trace book with " + Global::uint64ToString(book->size()) + " nodes from " + traceBookFile);
+    traceBook = Book::loadFromFile(traceBookFile);
+    traceBook->recomputeEverythingMultiThreaded(mutexPool, numBookThreads);
+    logger.write("Loaded trace book with " + Global::uint64ToString(traceBook->size()) + " nodes from " + traceBookFile);
     logger.write("traceBookMinVisits = " + Global::doubleToString(traceBookMinVisits));
   }
 
   book->setBonusByHash(bonusByHash);
-  book->recomputeEverything();
+  book->setExpandBonusByHash(expandBonusByHash);
+  book->setVisitsRequiredByHash(visitsRequiredByHash);
+  book->setBranchRequiredByHash(branchRequiredByHash);
+  book->recomputeEverythingMultiThreaded(mutexPool, numBookThreads);
 
   if(!std::atomic_is_lock_free(&shouldStop))
     throw StringError("shouldStop is not lock free, signal-quitting mechanism for terminating matches will NOT work!");
@@ -363,20 +630,29 @@ int MainCmds::genbook(const vector<string>& args) {
 
   const PrintTreeOptions options;
   const Player perspective = P_WHITE;
-  const bool pondering = false;
 
+  // ClockTimer timer;
   std::mutex bookMutex;
 
-  // Avoid all moves that are currently in the book on this node, mark avoidMoveUntilByLoc to be passed to
-  // search so that we only search new stuff.
-  auto findNewMovesAlreadyLocked = [&](const BoardHistory& hist, ConstSymBookNode constNode, std::vector<int>& avoidMoveUntilByLoc) {
+  // Avoid all moves that are currently in the book on this node,
+  // unless allowReExpansion is true and this node qualifies for the visit threshold for allowReExpansion and
+  // to re-search already searched moves freshly.
+  // Mark avoidMoveUntilByLoc to be passed to search so that we only search new stuff.
+  auto findNewMovesAlreadyLocked = [&](
+    const BoardHistory& hist,
+    ConstSymBookNode constNode,
+    bool allowReExpansion,
+    std::vector<int>& avoidMoveUntilByLoc,
+    bool& isReExpansion
+  ) {
     avoidMoveUntilByLoc = std::vector<int>(Board::MAX_ARR_SIZE,0);
+    isReExpansion = allowReExpansion && constNode.canReExpand() && constNode.recursiveValues().visits <= book->getParams().maxVisitsForReExpansion;
     Player pla = hist.presumedNextMovePla;
     Board board = hist.getRecentBoard(0);
     bool hasAtLeastOneLegalNewMove = false;
     for(Loc moveLoc = 0; moveLoc < Board::MAX_ARR_SIZE; moveLoc++) {
       if(hist.isLegal(board,moveLoc,pla)) {
-        if(constNode.isMoveInBook(moveLoc))
+        if(!isReExpansion && constNode.isMoveInBook(moveLoc))
           avoidMoveUntilByLoc[moveLoc] = 1;
         else
           hasAtLeastOneLegalNewMove = true;
@@ -385,8 +661,86 @@ int MainCmds::genbook(const vector<string>& args) {
     return hasAtLeastOneLegalNewMove;
   };
 
+  auto setParamsAndAvoidMoves = [&](Search* search, SearchParams thisParams, const std::vector<int>& avoidMoveUntilByLoc) {
+    thisParams.enableMorePassingHacks = false;
+    search->setParams(thisParams);
+    search->setAvoidMoveUntilByLoc(avoidMoveUntilByLoc, avoidMoveUntilByLoc);
+    search->setAvoidMoveUntilRescaleRoot(true);
+  };
 
-  auto setNodeThisValuesFromFinishedSearch = [&](SymBookNode node, Search* search, const SearchNode* searchNode, const std::vector<int>& avoidMoveUntilByLoc) {
+  auto setNodeThisValuesNoMoves = [&](SymBookNode node) {
+    std::lock_guard<std::mutex> lock(bookMutex);
+    BookValues& nodeValues = node.thisValuesNotInBook();
+    if(node.pla() == P_WHITE) {
+      nodeValues.winLossValue = -1e20;
+      nodeValues.scoreMean = -1e20;
+      nodeValues.sharpScoreMeanRaw = -1e20;
+      nodeValues.sharpScoreMeanClamped = -1e20;
+    }
+    else {
+      nodeValues.winLossValue = 1e20;
+      nodeValues.scoreMean = 1e20;
+      nodeValues.sharpScoreMeanRaw = 1e20;
+      nodeValues.sharpScoreMeanClamped = 1e20;
+    }
+    nodeValues.winLossError = 0.0;
+    nodeValues.scoreError = 0.0;
+    nodeValues.scoreStdev = 0.0;
+    nodeValues.maxPolicy = 0.0;
+    nodeValues.weight = 0.0;
+    nodeValues.visits = 0.0;
+
+    node.canExpand() = false;
+  };
+
+  auto setNodeThisValuesTerminal = [&](SymBookNode node, const BoardHistory& hist) {
+    assert(hist.isGameFinished);
+
+    std::lock_guard<std::mutex> lock(bookMutex);
+    BookValues& nodeValues = node.thisValuesNotInBook();
+    if(hist.isNoResult) {
+      nodeValues.winLossValue = 0.0;
+      nodeValues.scoreMean = 0.0;
+      nodeValues.sharpScoreMeanRaw = 0.0;
+      nodeValues.sharpScoreMeanClamped = 0.0;
+    }
+    else {
+      if(hist.winner == P_WHITE) {
+        assert(hist.finalWhiteMinusBlackScore > 0.0);
+        nodeValues.winLossValue = 1.0;
+      }
+      else if(hist.winner == P_BLACK) {
+        assert(hist.finalWhiteMinusBlackScore < 0.0);
+        nodeValues.winLossValue = -1.0;
+      }
+      else {
+        assert(hist.finalWhiteMinusBlackScore == 0.0);
+        nodeValues.winLossValue = 0.0;
+      }
+      nodeValues.scoreMean = hist.finalWhiteMinusBlackScore;
+      nodeValues.sharpScoreMeanRaw = hist.finalWhiteMinusBlackScore;
+      nodeValues.sharpScoreMeanClamped = hist.finalWhiteMinusBlackScore;
+    }
+
+    nodeValues.winLossError = 0.0;
+    nodeValues.scoreError = 0.0;
+    nodeValues.scoreStdev = 0.0;
+    nodeValues.maxPolicy = 1.0;
+    double visits = maxVisitsForLeaves;
+    nodeValues.weight = visits;
+    nodeValues.visits = visits;
+
+    node.canExpand() = false;
+  };
+
+  auto setNodeThisValuesFromFinishedSearch = [&](
+    SymBookNode node,
+    Search* search,
+    const SearchNode* searchNode,
+    const Board& board,
+    const BoardHistory& hist,
+    const std::vector<int>& avoidMoveUntilByLoc
+  ) {
     // Get root values
     ReportedSearchValues remainingSearchValues;
     bool getSuc = search->getPrunedNodeValues(searchNode,remainingSearchValues);
@@ -395,14 +749,24 @@ int MainCmds::genbook(const vector<string>& args) {
     assert(getSuc);
     (void)getSuc;
     double sharpScore = 0.0;
+    // cout << "Calling sharpscore " << timer.getSeconds() << endl;
     getSuc = search->getSharpScore(searchNode,sharpScore);
+    // cout << "Done sharpscore " << timer.getSeconds() << endl;
     assert(getSuc);
     (void)getSuc;
 
-    std::pair<double,double> errors = search->getAverageShorttermWLAndScoreError(searchNode);
+    // cout << "Calling shallowAvg " << timer.getSeconds() << endl;
+    std::pair<double,double> errors = search->getShallowAverageShorttermWLAndScoreError(searchNode);
+    // cout << "Done shallowAvg " << timer.getSeconds() << endl;
 
+    // Use full symmetry for the policy for nodes we record for the book
+    bool includeOwnerMap = false;
+    // cout << "Calling full nn " << timer.getSeconds() << endl;
+    std::shared_ptr<NNOutput> fullSymNNOutput = PlayUtils::getFullSymmetryNNOutput(board, hist, node.pla(), includeOwnerMap, &params.humanSLProfile, policyEvaluator);
     float policyProbs[NNPos::MAX_NN_POLICY_SIZE];
-    bool policySuc = search->getPolicy(searchNode, policyProbs);
+    std::copy(fullSymNNOutput->policyProbs, fullSymNNOutput->policyProbs+NNPos::MAX_NN_POLICY_SIZE, policyProbs);
+    // cout << "Done full nn " << timer.getSeconds() << endl;
+
     // Zero out all the policies for moves we already have, we want the max *remaining* policy
     if(avoidMoveUntilByLoc.size() > 0) {
       assert(avoidMoveUntilByLoc.size() == Board::MAX_ARR_SIZE);
@@ -414,9 +778,7 @@ int MainCmds::genbook(const vector<string>& args) {
         }
       }
     }
-    // Just in case, handle failure case with policySuc
-    // Could return false if child is terminal, or otherwise has no nn eval.
-    double maxPolicy = policySuc ? getMaxPolicy(policyProbs) : 1.0;
+    double maxPolicy = getMaxPolicy(policyProbs);
     assert(maxPolicy >= 0.0);
 
     // LOCK BOOK AND UPDATE -------------------------------------------------------
@@ -426,7 +788,8 @@ int MainCmds::genbook(const vector<string>& args) {
     BookValues& nodeValues = node.thisValuesNotInBook();
     nodeValues.winLossValue = remainingSearchValues.winLossValue;
     nodeValues.scoreMean = remainingSearchValues.expectedScore;
-    nodeValues.sharpScoreMean = sharpScore;
+    nodeValues.sharpScoreMeanRaw = sharpScore;
+    nodeValues.sharpScoreMeanClamped = sharpScore;
     nodeValues.winLossError = errors.first;
     nodeValues.scoreError = errors.second;
     nodeValues.scoreStdev = remainingSearchValues.expectedScoreStdev;
@@ -437,12 +800,21 @@ int MainCmds::genbook(const vector<string>& args) {
   };
 
 
-  // Update the thisValuesNotInBook for a node
-  auto updateNodeThisValues = [&](Search* search, const BoardHistory& hist, SymBookNode node) {
+  // Perform a short search and update thisValuesNotInBook for a node
+  auto searchAndUpdateNodeThisValues = [&](Search* search, SymBookNode node) {
     ConstSymBookNode constNode(node);
+    BoardHistory hist;
     std::vector<int> symmetries;
     {
       std::lock_guard<std::mutex> lock(bookMutex);
+      std::vector<Loc> moveHistory;
+      bool suc = node.getBoardHistoryReachingHere(hist,moveHistory);
+      if(!suc) {
+        logger.write("WARNING: Failed to get board history reaching node when trying to export to trace book, probably there is some bug");
+        logger.write("or else some hash collision or something else is wrong.");
+        logger.write("BookHash of node unable to expand: " + node.hash().toString());
+        throw StringError("Terminating since there's not a good way to put the book back into a good state with this node unupdated");
+      }
       symmetries = constNode.getSymmetries();
     }
 
@@ -453,80 +825,30 @@ int MainCmds::genbook(const vector<string>& args) {
 
     // Directly set the values for a terminal position
     if(hist.isGameFinished) {
-      std::lock_guard<std::mutex> lock(bookMutex);
-      BookValues& nodeValues = node.thisValuesNotInBook();
-      if(hist.isNoResult) {
-        nodeValues.winLossValue = 0.0;
-        nodeValues.scoreMean = 0.0;
-        nodeValues.sharpScoreMean = 0.0;
-      }
-      else {
-        if(hist.winner == P_WHITE) {
-          assert(hist.finalWhiteMinusBlackScore > 0.0);
-          nodeValues.winLossValue = 1.0;
-        }
-        else if(hist.winner == P_BLACK) {
-          assert(hist.finalWhiteMinusBlackScore < 0.0);
-          nodeValues.winLossValue = -1.0;
-        }
-        else {
-          assert(hist.finalWhiteMinusBlackScore == 0.0);
-          nodeValues.winLossValue = 0.0;
-        }
-        nodeValues.scoreMean = hist.finalWhiteMinusBlackScore;
-        nodeValues.sharpScoreMean = hist.finalWhiteMinusBlackScore;
-      }
-
-      nodeValues.winLossError = 0.0;
-      nodeValues.scoreError = 0.0;
-      nodeValues.scoreStdev = 0.0;
-      nodeValues.maxPolicy = 1.0;
-      // Treat it as if we did a fast search with the 0.5 searchfactor, clamped to reasonable bounds, with every playout weight 1.
-      double visits = std::max(1.0,std::min(100000.0,(double)std::min(params.maxVisits,params.maxPlayouts)));
-      nodeValues.weight = visits;
-      nodeValues.visits = visits;
-
-      node.canExpand() = false;
+      setNodeThisValuesTerminal(node,hist);
       return;
     }
 
     std::vector<int> avoidMoveUntilByLoc;
     bool foundNewMoves;
     {
+      const bool allowReExpansion = false;
+      bool isReExpansion;
       std::lock_guard<std::mutex> lock(bookMutex);
-      foundNewMoves = findNewMovesAlreadyLocked(hist,constNode,avoidMoveUntilByLoc);
+      foundNewMoves = findNewMovesAlreadyLocked(hist,constNode,allowReExpansion,avoidMoveUntilByLoc,isReExpansion);
     }
 
     if(!foundNewMoves) {
-      std::lock_guard<std::mutex> lock(bookMutex);
-      BookValues& nodeValues = node.thisValuesNotInBook();
-      if(node.pla() == P_WHITE) {
-        nodeValues.winLossValue = -1e20;
-        nodeValues.scoreMean = -1e20;
-        nodeValues.sharpScoreMean =  -1e20;
-      }
-      else {
-        nodeValues.winLossValue = 1e20;
-        nodeValues.scoreMean = 1e20;
-        nodeValues.sharpScoreMean =  1e20;
-      }
-      nodeValues.winLossError = 0.0;
-      nodeValues.scoreError = 0.0;
-      nodeValues.scoreStdev = 0.0;
-      nodeValues.maxPolicy = 0.0;
-      nodeValues.weight = 0.0;
-      nodeValues.visits = 0;
-
-      node.canExpand() = false;
+      setNodeThisValuesNoMoves(node);
     }
     else {
-      search->setAvoidMoveUntilByLoc(avoidMoveUntilByLoc, avoidMoveUntilByLoc);
-
-      // Do a half-cost search on the remaining moves at the node
       {
-        double searchFactor = 0.5;
-        std::atomic<bool> searchShouldStopNow(false);
-        search->runWholeSearch(searchShouldStopNow, NULL, pondering, TimeControls(), searchFactor);
+        SearchParams thisParams = params;
+        thisParams.maxVisits = std::min(params.maxVisits, maxVisitsForLeaves);
+        setParamsAndAvoidMoves(search,thisParams,avoidMoveUntilByLoc);
+        // cout << "Search and update" << timer.getSeconds() << endl;
+        search->runWholeSearch(search->rootPla);
+        // cout << "Search and update done" << timer.getSeconds() << endl;
       }
 
       if(logSearchInfo) {
@@ -538,7 +860,7 @@ int MainCmds::genbook(const vector<string>& args) {
       }
 
       // Stick all the new values into the book node
-      setNodeThisValuesFromFinishedSearch(node, search, search->getRootNode(), avoidMoveUntilByLoc);
+      setNodeThisValuesFromFinishedSearch(node, search, search->getRootNode(), search->getRootBoard(), search->getRootHist(), avoidMoveUntilByLoc);
     }
   };
 
@@ -577,6 +899,8 @@ int MainCmds::genbook(const vector<string>& args) {
         throw StringError("Target board history to add player got out of sync");
       if(movePla != node.pla())
         throw StringError("Target board history to add player got out of sync with node");
+      if(movePla != hist.presumedNextMovePla)
+        throw StringError("Target board history to add player got out of sync with hist");
 
       // Illegal move, possibly due to rules mismatch between the books. In that case, we just stop where we are.
       if(!hist.isLegal(board,moveLoc,movePla)) {
@@ -597,18 +921,9 @@ int MainCmds::genbook(const vector<string>& args) {
 
         // To avoid oddities in positions where the rules mismatch, expand every move with a noticeably higher raw policy
         // Average all 8 symmetries
-        vector<std::shared_ptr<NNOutput>> ptrs;
-        for(int sym = 0; sym<SymmetryHelpers::NUM_SYMMETRIES; sym++) {
-          MiscNNInputParams nnInputParams;
-          nnInputParams.symmetry = sym;
-          NNResultBuf buf;
-          bool skipCache = true; //Always ignore cache so that we use the desired symmetry
-          bool includeOwnerMap = false;
-          nnEval->evaluate(board,hist,pla,nnInputParams,buf,skipCache,includeOwnerMap);
-          ptrs.push_back(std::move(buf.result));
-        }
-        std::shared_ptr<NNOutput> result(new NNOutput(ptrs));
-        float* policyProbs = result->policyProbs;
+        const bool includeOwnerMap = false;
+        std::shared_ptr<NNOutput> result = PlayUtils::getFullSymmetryNNOutput(board, hist, pla, includeOwnerMap, &params.humanSLProfile, policyEvaluator);
+        const float* policyProbs = result->policyProbs;
         float moveLocPolicy = policyProbs[search->getPos(moveLoc)];
         assert(moveLocPolicy >= 0);
         vector<std::pair<Loc,float>> extraMoveLocsToExpand;
@@ -664,16 +979,186 @@ int MainCmds::genbook(const vector<string>& args) {
     }
   };
 
+  // Returns true if any child was added directly to this node (doesn't count recursive stuff).
+  std::function<bool(
+    Search*, const SearchNode*, SymBookNode,
+    const Board&, const BoardHistory&, int,
+    std::set<BookHash>&, std::set<BookHash>&,
+    std::set<const SearchNode*>&
+  )> expandFromSearchResultRecursively;
+  expandFromSearchResultRecursively = [&](
+    Search* search, const SearchNode* searchNode, SymBookNode node,
+    const Board& board, const BoardHistory& hist, int maxDepth,
+    std::set<BookHash>& nodesHashesToSearch, std::set<BookHash>& nodesHashesToUpdate,
+    std::set<const SearchNode*>& searchNodesRecursedOn
+  ) {
+    // cout << "Entering expandFromSearchResultRecursively " << timer.getSeconds() << endl;
+
+    if(maxDepth <= 0)
+      return false;
+    // Quit out immediately when handling transpositions in graph search
+    if(searchNodesRecursedOn.find(searchNode) != searchNodesRecursedOn.end())
+      return false;
+    searchNodesRecursedOn.insert(searchNode);
+
+    assert(searchNode != NULL);
+    assert(searchNode->nextPla == node.pla());
+
+    vector<Loc> locs;
+    vector<double> playSelectionValues;
+    const double scaleMaxToAtLeast = 0.0;
+    const bool allowDirectPolicyMoves = false;
+    bool suc = search->getPlaySelectionValues(*searchNode, locs, playSelectionValues, NULL, scaleMaxToAtLeast, allowDirectPolicyMoves);
+    // Possible if this was a terminal node
+    if(!suc)
+      return false;
+
+    // Find best move
+    double bestValue = playSelectionValues[0];
+    int bestIdx = 0;
+    for(int i = 1; i<playSelectionValues.size(); i++) {
+      if(playSelectionValues[i] > bestValue) {
+        bestValue = playSelectionValues[i];
+        bestIdx = i;
+      }
+    }
+    Loc bestLoc = locs[bestIdx];
+
+    ConstSearchNodeChildrenReference children = searchNode->getChildren();
+    int numChildren = children.iterateAndCountChildren();
+
+    const NNOutput* nnOutput = searchNode->getNNOutput();
+    if(numChildren <= 0 || nnOutput == nullptr)
+      return false;
+
+    // Use full symmetry for the policy for nodes we record for the book
+    bool includeOwnerMap = false;
+    std::shared_ptr<NNOutput> fullSymNNOutput = PlayUtils::getFullSymmetryNNOutput(board, hist, node.pla(), includeOwnerMap, &params.humanSLProfile, policyEvaluator);
+    const float* policyProbs = fullSymNNOutput->policyProbs;
+
+    bool anyRecursion = false;
+    bool anythingAdded = false;
+    // cout << "expandFromSearchResultRecursively begin loop over children " << timer.getSeconds() << endl;
+    for(int i = 0; i<numChildren; i++) {
+      const SearchNode* childSearchNode = children[i].getIfAllocated();
+      Loc moveLoc = children[i].getMoveLoc();
+      double rawPolicy = policyProbs[search->getPos(moveLoc)];
+      int64_t childSearchVisits = childSearchNode->stats.visits.load(std::memory_order_acquire);
+
+      // Add any child nodes that have enough visits or are the best move, if present.
+      if(moveLoc == bestLoc || childSearchVisits >= maxVisitsForLeaves) {
+        SymBookNode child;
+        Board nextBoard = board;
+        BoardHistory nextHist = hist;
+
+        {
+          std::unique_lock<std::mutex> lock(bookMutex);
+
+          if(node.isMoveInBook(moveLoc)) {
+            child = node.follow(moveLoc);
+            if(!nextHist.isLegal(nextBoard,moveLoc,node.pla())) {
+              logger.write("WARNING: Illegal move " + Location::toString(moveLoc, nextBoard));
+              ostringstream debugOut;
+              nextHist.printDebugInfo(debugOut,nextBoard);
+              logger.write(debugOut.str());
+              logger.write("BookHash of parent: " + node.hash().toString());
+              logger.write("Marking node as done so we don't try to expand it again, but something is probably wrong.");
+              node.canExpand() = false;
+            }
+            nextHist.makeBoardMoveAssumeLegal(nextBoard,moveLoc,node.pla(),nullptr);
+            // Overwrite the child if has no moves yet and we searched it deeper
+            if(child.numUniqueMovesInBook() == 0 && child.recursiveValues().visits < childSearchVisits) {
+              // No longer need lock here, setNodeThisValuesFromFinishedSearch will lock on its own.
+              lock.unlock();
+              // Carefully use an empty vector for the avoidMoveUntilByLoc, since the child didn't avoid any moves.
+              std::vector<int> childAvoidMoveUntilByLoc;
+              setNodeThisValuesFromFinishedSearch(child, search, childSearchNode, nextBoard, nextHist, childAvoidMoveUntilByLoc);
+            }
+
+            // Top off the child with a new search if as a leaf it doesn't have enough and our search also doesn't have enough.
+            if(child.numUniqueMovesInBook() == 0 && child.recursiveValues().visits < maxVisitsForLeaves)
+              nodesHashesToSearch.insert(child.hash());
+          }
+          else {
+            // Lock book to add the best child to the book
+            bool childIsTransposing;
+            {
+              assert(!node.isMoveInBook(moveLoc));
+              child = node.playAndAddMove(nextBoard, nextHist, moveLoc, rawPolicy, childIsTransposing);
+              // Somehow child was illegal?
+              if(child.isNull()) {
+                logger.write("WARNING: Illegal move " + Location::toString(moveLoc, nextBoard));
+                ostringstream debugOut;
+                nextHist.printDebugInfo(debugOut,nextBoard);
+                logger.write(debugOut.str());
+                logger.write("BookHash of parent: " + node.hash().toString());
+                logger.write("Marking node as done so we don't try to expand it again, but something is probably wrong.");
+                node.canExpand() = false;
+              }
+              nodesHashesToUpdate.insert(child.hash());
+              string moveHistoryStr;
+              for(size_t j = search->rootHistory.moveHistory.size(); j<nextHist.moveHistory.size(); j++) {
+                moveHistoryStr += Location::toString(nextHist.moveHistory[j].loc,board);
+                moveHistoryStr += " ";
+              }
+              logger.write("Adding " + node.hash().toString() + " -> " + child.hash().toString() + " moves " + moveHistoryStr);
+              // cout << "Adding " << timer.getSeconds() << endl;
+              anythingAdded = true;
+            }
+
+            // Stick all the new values into the child node, UNLESS the child already had its own search (i.e. we're just transposing)
+            // Unless the child is a leaf and we have more visits than it.
+            if(!childIsTransposing || (child.numUniqueMovesInBook() == 0 && child.recursiveValues().visits < childSearchVisits)) {
+              // No longer need lock here, setNodeThisValuesFromFinishedSearch will lock on its own.
+              lock.unlock();
+              // Carefully use an empty vector for the avoidMoveUntilByLoc, since the child didn't avoid any moves.
+              std::vector<int> childAvoidMoveUntilByLoc;
+              // cout << "Calling setNodeThisValuesFromFinishedSearch " << timer.getSeconds() << endl;
+              setNodeThisValuesFromFinishedSearch(child, search, childSearchNode, nextBoard, nextHist, childAvoidMoveUntilByLoc);
+              // cout << "Returned from setNodeThisValuesFromFinishedSearch " << timer.getSeconds() << endl;
+            }
+
+            // Top off the child with a new search if as a leaf it doesn't have enough and our search also doesn't have enough.
+            if(child.numUniqueMovesInBook() == 0 && child.recursiveValues().visits < maxVisitsForLeaves)
+              nodesHashesToSearch.insert(child.hash());
+          }
+        } // Release lock
+
+        // Recursively record children with enough visits
+        if(maxDepth > 0 && childSearchVisits >= minTreeVisitsToRecord && !nextHist.isGameFinished) {
+          anyRecursion = true;
+          // cout << "Calling expandFromSearchResultRecursively " << maxDepth << " " << childSearchVisits << " " << timer.getSeconds() << endl;
+          expandFromSearchResultRecursively(
+            search, childSearchNode, child, nextBoard, nextHist, maxDepth-1,
+            nodesHashesToSearch, nodesHashesToUpdate, searchNodesRecursedOn
+          );
+          // cout << "Returned from expandFromSearchResultRecursively " << maxDepth << " " << childSearchVisits << " " << timer.getSeconds() << endl;
+        }
+      }
+    }
+
+    // This node's values need to be recomputed at the end if it changed or anything under it changed.
+    if(anythingAdded || anyRecursion)
+      nodesHashesToUpdate.insert(node.hash());
+
+    // This node needs to be searched with its new avoid moves if any move was added to update its thisnodevalues.
+    if(anythingAdded)
+      nodesHashesToSearch.insert(node.hash());
+
+    return anythingAdded;
+  };
+
   auto expandNode = [&](int gameThreadIdx, SymBookNode node, std::vector<SymBookNode>& newAndChangedNodes) {
     ConstSymBookNode constNode(node);
 
     BoardHistory hist;
     std::vector<Loc> moveHistory;
     std::vector<int> symmetries;
+    std::vector<double> winlossHistory;
     bool suc;
     {
       std::lock_guard<std::mutex> lock(bookMutex);
-      suc = constNode.getBoardHistoryReachingHere(hist,moveHistory);
+      suc = constNode.getBoardHistoryReachingHere(hist,moveHistory,winlossHistory);
       symmetries = constNode.getSymmetries();
     }
 
@@ -712,7 +1197,9 @@ int MainCmds::genbook(const vector<string>& args) {
     }
 
     // Terminal node!
-    if(hist.isGameFinished || hist.isPastNormalPhaseEnd) {
+    // We ALLOW walking past the main phase of the game under this ruleset, to give the book the ability to
+    // solve tactics in the cleanup phase of japanese rules if needed. So we only check isGameFinished instead of isPastNormalPhaseEnd.
+    if(hist.isGameFinished) {
       std::lock_guard<std::mutex> lock(bookMutex);
       node.canExpand() = false;
       return;
@@ -726,7 +1213,13 @@ int MainCmds::genbook(const vector<string>& args) {
 
     {
       ostringstream out;
-      Board::printBoard(out, board, Board::NULL_LOC, NULL);
+      for(Move m: hist.moveHistory)
+        out << Location::toString(m.loc,board) << " ";
+      out << endl;
+      for(double winLoss: winlossHistory)
+        out << Global::strprintf("%2.0f", 100.0*(0.5 * (winLoss + 1.0))) << " ";
+      out << endl;
+      Board::printBoard(out, board, Board::NULL_LOC, &(hist.moveHistory));
       std::lock_guard<std::mutex> lock(bookMutex);
       logger.write("Expanding " + node.hash().toString() + " cost " + Global::doubleToString(node.totalExpansionCost()));
       logger.write(out.str());
@@ -734,9 +1227,11 @@ int MainCmds::genbook(const vector<string>& args) {
 
     std::vector<int> avoidMoveUntilByLoc;
     bool foundNewMoves;
+    bool isReExpansion;
     {
+      const bool allowReExpansion = true;
       std::lock_guard<std::mutex> lock(bookMutex);
-      foundNewMoves = findNewMovesAlreadyLocked(hist,constNode,avoidMoveUntilByLoc);
+      foundNewMoves = findNewMovesAlreadyLocked(hist,constNode,allowReExpansion,avoidMoveUntilByLoc,isReExpansion);
     }
     if(!foundNewMoves) {
       std::lock_guard<std::mutex> lock(bookMutex);
@@ -744,28 +1239,18 @@ int MainCmds::genbook(const vector<string>& args) {
       return;
     }
 
-    search->setAvoidMoveUntilByLoc(avoidMoveUntilByLoc, avoidMoveUntilByLoc);
+    SearchParams thisParams = params;
+    thisParams.wideRootNoise = wideRootNoiseBookExplore;
+    thisParams.cpuctExplorationLog = cpuctExplorationLogBookExplore;
+    setParamsAndAvoidMoves(search,thisParams,avoidMoveUntilByLoc);
 
-    {
-      double searchFactor = 1.0;
-      std::atomic<bool> searchShouldStopNow(false);
-      search->runWholeSearch(searchShouldStopNow, NULL, pondering, TimeControls(), searchFactor);
-    }
+    std::function<bool()> shouldStopEarly = []() noexcept {
+      return shouldStop.load(std::memory_order_acquire);
+    };
+    search->runWholeSearch(search->rootPla,&shouldStopEarly);
+
     if(shouldStop.load(std::memory_order_acquire))
       return;
-
-    Loc bestLoc = search->getChosenMoveLoc();
-    if(bestLoc == Board::NULL_LOC) {
-      std::lock_guard<std::mutex> lock(bookMutex);
-      logger.write("WARNING: Could not expand since search obtained no results, despite earlier checks about legal moves existing not yet in book");
-      logger.write("BookHash of node unable to expand: " + constNode.hash().toString());
-      ostringstream debugOut;
-      hist.printDebugInfo(debugOut,board);
-      logger.write(debugOut.str());
-      logger.write("Marking node as done so we don't try to expand it again, but something is probably wrong.");
-      node.canExpand() = false;
-      return;
-    }
 
     if(logSearchInfo) {
       std::lock_guard<std::mutex> lock(bookMutex);
@@ -775,58 +1260,77 @@ int MainCmds::genbook(const vector<string>& args) {
       logger.write(out.str());
     }
 
-    // Record the values for the move determined to be best
-    SymBookNode child;
+    // cout << "Beginning recurison " << timer.getSeconds() << endl;
+
+    std::set<BookHash> nodesHashesToSearch;
+    std::set<BookHash> nodesHashesToUpdate;
+    std::set<const SearchNode*> searchNodesRecursedOn;
+    bool anythingAdded = expandFromSearchResultRecursively(
+      search, search->rootNode, node, board, hist, maxDepthToRecord,
+      nodesHashesToSearch, nodesHashesToUpdate, searchNodesRecursedOn
+    );
+
+    // cout << "Ending recursion " << timer.getSeconds() << endl;
+
+    // And immediately do a search to update each node we need to.
     {
-      // Find policy probs from search
-      float policyProbs[NNPos::MAX_NN_POLICY_SIZE];
-      bool policySuc = search->getPolicy(policyProbs);
-      assert(policySuc);
-      (void)policySuc;
-      double rawPolicy = policyProbs[search->getPos(bestLoc)];
-
-      // Find child node from search
-      const SearchNode* childSearchNode = search->getChildForMove(search->getRootNode(), bestLoc);
-
-      // Lock book to add the best child to the book
-      bool childIsTransposing;
+      std::vector<SymBookNode> nodesToSearch;
+      // Try to make all of the nodes be consistent in symmetry so that they can share cache.
+      // Append the original position itself to the start so that it anchors the symmetries
+      nodesToSearch.push_back(node);
       {
         std::lock_guard<std::mutex> lock(bookMutex);
-        Board nextBoard = board;
-        BoardHistory nextHist = hist;
-        assert(!constNode.isMoveInBook(bestLoc));
-        child = node.playAndAddMove(nextBoard, nextHist, bestLoc, rawPolicy, childIsTransposing);
-        // Somehow child was illegal?
-        if(child.isNull()) {
-          logger.write("WARNING: Illegal move " + Location::toString(bestLoc, nextBoard));
-          ostringstream debugOut;
-          nextHist.printDebugInfo(debugOut,nextBoard);
-          logger.write(debugOut.str());
-          logger.write("BookHash of parent: " + constNode.hash().toString());
-          logger.write("Marking node as done so we don't try to expand it again, but something is probably wrong.");
-          node.canExpand() = false;
-          return;
+        for(const BookHash& hash: nodesHashesToSearch) {
+          SymBookNode nodeToSearch;
+          nodeToSearch = book->getByHash(hash);
+          nodesToSearch.push_back(nodeToSearch);
         }
-
-        newAndChangedNodes.push_back(child);
-        logger.write("Adding " + child.hash().toString() + " move " + Location::toString(bestLoc,board));
       }
+      optimizeSymmetriesInplace(nodesToSearch, NULL, logger);
 
-      // Stick all the new values into the child node, UNLESS the child already had its own search (i.e. we're just transposing)
-      if(!childIsTransposing) {
-        // Carefully use an empty vector for the avoidMoveUntilByLoc, since the child didn't avoid any moves.
-        std::vector<int> childAvoidMoveUntilByLoc;
-        setNodeThisValuesFromFinishedSearch(child, search, childSearchNode, childAvoidMoveUntilByLoc);
+      // Pop off the original position itself
+      nodesToSearch.erase(nodesToSearch.begin());
+
+      // cout << "Doing searches to update " << timer.getSeconds() << endl;
+      for(SymBookNode nodeToSearch: nodesToSearch) {
+        searchAndUpdateNodeThisValues(search,nodeToSearch);
+      }
+      // cout << "Done searches to update " << timer.getSeconds() << endl;
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(bookMutex);
+      for(const BookHash& hash: nodesHashesToUpdate) {
+        SymBookNode nodeToUpdate;
+        nodeToUpdate = book->getByHash(hash);
+        newAndChangedNodes.push_back(nodeToUpdate);
       }
     }
 
-    // And immediately do a search to update this node again now that we added a child.
-    updateNodeThisValues(search,hist,node);
+    // Only nodes that have never been expanded on their own (were added from another node's search) are allowed for reexpansion.
+    node.canReExpand() = false;
+    newAndChangedNodes.push_back(node);
+
+    // Make sure to process the nodes to search and updates so the book is in a consistent state, before we do any quitting out.
+    // On non-reexpansions, we expect to always add at least one new move to the book for this node.
+    if(!anythingAdded && !isReExpansion) {
+      std::lock_guard<std::mutex> lock(bookMutex);
+      logger.write("WARNING: Could not expand since search obtained no new moves, despite earlier checks about legal moves existing not yet in book");
+      logger.write("BookHash of node unable to expand: " + constNode.hash().toString());
+      ostringstream debugOut;
+      hist.printDebugInfo(debugOut,board);
+      logger.write(debugOut.str());
+      logger.write("Possibly this was simply due to a multi-step expansion of another search getting there first, so logging this but proceeding as normal");
+      // logger.write("Marking node as done so we don't try to expand it again, but something is probably wrong.");
+      // node.canExpand() = false;
+    }
+
   };
 
-  if(traceBook != NULL) {
+  if(traceBook != NULL || traceSgfFile.size() > 0) {
     std::set<BookHash> nodesHashesToUpdate;
-    {
+
+    if(traceBook != NULL) {
       ThreadSafeQueue<SymBookNode> positionsToTrace;
       std::vector<SymBookNode> allNodes = traceBook->getAllLeaves(traceBookMinVisits);
       std::atomic<int64_t> variationsAdded(0);
@@ -869,6 +1373,34 @@ int MainCmds::genbook(const vector<string>& args) {
         Global::int64ToString(currentVariationsAdded) + "/" + Global::uint64ToString(allNodes.size())
       );
     }
+    else {
+      assert(traceSgfFile.size() > 0);
+      std::unique_ptr<Sgf> sgf = Sgf::loadFile(traceSgfFile);
+      bool flipIfPassOrWFirst = false;
+      bool allowGameOver = false;
+      Rand seedRand("bonusByHash");
+      int64_t variationsAdded = 0;
+      sgf->iterAllPositions(
+        flipIfPassOrWFirst, allowGameOver, &seedRand, [&](Sgf::PositionSample& unusedSample, const BoardHistory& sgfHist, const string& comments) {
+          (void)unusedSample;
+          (void)comments;
+          int gameThreadIdx = 0;
+          addVariationToBookWithoutUpdate(gameThreadIdx, sgfHist, nodesHashesToUpdate);
+          variationsAdded += 1;
+          if(variationsAdded % 400 == 0) {
+            logger.write(
+              "Tracing sgf, variationsAdded " +
+              Global::int64ToString(variationsAdded)
+            );
+          }
+        }
+      );
+      logger.write(
+        "Tracing sgf, variationsAdded " +
+        Global::int64ToString(variationsAdded)
+      );
+    }
+
     {
       ThreadSafeQueue<BookHash> hashesToUpdate;
       std::atomic<int64_t> hashesUpdated(0);
@@ -881,22 +1413,13 @@ int MainCmds::genbook(const vector<string>& args) {
           if(!suc)
             return;
           SymBookNode node;
-          BoardHistory hist;
           {
             std::lock_guard<std::mutex> lock(bookMutex);
             node = book->getByHash(hash);
             assert(!node.isNull());
-            std::vector<Loc> moveHistory;
-            suc = node.getBoardHistoryReachingHere(hist,moveHistory);
-            if(!suc) {
-              logger.write("WARNING: Failed to get board history reaching node when trying to export to trace book, probably there is some bug");
-              logger.write("or else some hash collision or something else is wrong.");
-              logger.write("BookHash of node unable to expand: " + node.hash().toString());
-              throw StringError("Terminating since there's not a good way to put the book back into a good state with this node unupdated");
-            }
           }
           Search* search = searches[gameThreadIdx];
-          updateNodeThisValues(search, hist, node);
+          searchAndUpdateNodeThisValues(search, node);
           int64_t currentHashesUpdated = hashesUpdated.fetch_add(1) + 1;
           if(currentHashesUpdated % 100 == 0) {
             logger.write(
@@ -929,7 +1452,7 @@ int MainCmds::genbook(const vector<string>& args) {
     }
 
     logger.write("Recomputing recursive values for entire book");
-    book->recomputeEverything();
+    book->recomputeEverythingMultiThreaded(mutexPool, numBookThreads);
   }
   else {
     ThreadSafeQueue<SymBookNode> positionsToSearch;
@@ -940,6 +1463,7 @@ int MainCmds::genbook(const vector<string>& args) {
 
       if(iteration % saveEveryIterations == 0 && iteration != 0) {
         logger.write("SAVING TO FILE " + bookFile);
+        book->setParams(cfgParams);
         book->saveToFile(bookFile);
         ofstream out;
         FileUtils::open(out, bookFile + ".cfg");
@@ -949,7 +1473,24 @@ int MainCmds::genbook(const vector<string>& args) {
 
       logger.write("BEGINNING BOOK EXPANSION ITERATION " + Global::intToString(iteration));
 
-      std::vector<SymBookNode> nodesToExpand = book->getNextNToExpand(std::min(1+iteration/2,numToExpandPerIteration));
+      if(randomizeParamsStdev > 0.0) {
+        BookParams paramsCopy = cfgParams;
+        paramsCopy.randomizeParams(rand, randomizeParamsStdev);
+        book->setParams(paramsCopy);
+        book->recomputeEverythingMultiThreaded(mutexPool, numBookThreads);
+        logger.write("Randomized params and recomputed costs");
+      }
+
+      std::vector<SymBookNode> nodesToExpand = book->getNextNToExpand(
+        std::min(
+          1 + iteration*2 + (iteration*iteration / 25),
+          numToExpandPerIteration
+        )
+      );
+      // Try to make all of the expanded nodes be consistent in symmetry so that they can share cache, in case
+      // many of them are for related board positions.
+      optimizeSymmetriesInplace(nodesToExpand, &rand, logger);
+
       for(SymBookNode node: nodesToExpand) {
         bool suc = positionsToSearch.forcePush(node);
         assert(suc);
@@ -978,14 +1519,15 @@ int MainCmds::genbook(const vector<string>& args) {
         threads[gameThreadIdx].join();
       }
 
-      book->recompute(newAndChangedNodes);
+      book->recomputeMultiThreaded(newAndChangedNodes, mutexPool, numBookThreads);
       if(shouldStop.load(std::memory_order_acquire))
         break;
     }
   }
 
-  if(traceBook != NULL || numIterations > 0) {
+  if(traceBook != NULL || traceSgfFile.size() > 0 || numIterations > 0) {
     logger.write("SAVING TO FILE " + bookFile);
+    book->setParams(cfgParams);
     book->saveToFile(bookFile);
     ofstream out;
     FileUtils::open(out, bookFile + ".cfg");
@@ -995,14 +1537,124 @@ int MainCmds::genbook(const vector<string>& args) {
 
   if(htmlDir != "") {
     logger.write("EXPORTING HTML TO " + htmlDir);
-    book->exportToHtmlDir(htmlDir,rulesLabel,rulesLink,htmlDevMode,logger);
+    int64_t numFilesWritten = book->exportToHtmlDir(htmlDir,rulesLabel,rulesLink,htmlDevMode,htmlMinVisits,logger);
+    logger.write("Done exporting, exported " + Global::int64ToString(numFilesWritten) + " files");
   }
 
   for(int i = 0; i<numGameThreads; i++)
     delete searches[i];
   delete nnEval;
+  if(humanEval != NULL)
+    delete humanEval;
   delete book;
   delete traceBook;
+  ScoreValue::freeTables();
+  logger.write("DONE");
+  return 0;
+}
+
+int MainCmds::writebook(const vector<string>& args) {
+  Board::initHash();
+  ScoreValue::initTables();
+
+  ConfigParser cfg;
+  string htmlDir;
+  string bookFile;
+  string bonusFile;
+  bool htmlDevMode;
+  double htmlMinVisits;
+  try {
+    KataGoCommandLine cmd("Generate opening book");
+    cmd.addConfigFileArg("","",false);
+    cmd.addOverrideConfigArg();
+
+    TCLAP::ValueArg<string> htmlDirArg("","html-dir","HTML directory to export to, at the end of -num-iters",true,string(),"DIR");
+    TCLAP::ValueArg<string> bookFileArg("","book-file","Book file to write to or continue expanding",true,string(),"FILE");
+    TCLAP::ValueArg<string> bonusFileArg("","bonus-file","SGF of bonuses marked",false,string(),"DIR");
+    TCLAP::SwitchArg htmlDevModeArg("","html-dev-mode","Denser debug output for html");
+    TCLAP::ValueArg<double> htmlMinVisitsArg("","html-min-visits","Require >= this many visits to export a position to html",false,0.0,"N");
+    cmd.add(htmlDirArg);
+    cmd.add(bookFileArg);
+    cmd.add(bonusFileArg);
+    cmd.add(htmlDevModeArg);
+    cmd.add(htmlMinVisitsArg);
+
+    cmd.parseArgs(args);
+
+    cmd.getConfigAllowEmpty(cfg);
+    htmlDir = htmlDirArg.getValue();
+    bookFile = bookFileArg.getValue();
+    bonusFile = bonusFileArg.getValue();
+    htmlDevMode = htmlDevModeArg.getValue();
+    htmlMinVisits = htmlMinVisitsArg.getValue();
+  }
+  catch (TCLAP::ArgException &e) {
+    cerr << "Error: " << e.error() << " for argument " << e.argId() << endl;
+    return 1;
+  }
+
+
+  Rand rand;
+  const bool logToStdoutDefault = true;
+  Logger logger(&cfg, logToStdoutDefault);
+
+  const string rulesLabel = cfg.getString("rulesLabel");
+  const string rulesLink = cfg.getString("rulesLink");
+  const double bonusFileScale = cfg.contains("bonusFileScale") ? cfg.getDouble("bonusFileScale",0.0,1000000.0) : 1.0;
+  const SearchParams params = Setup::loadSingleParams(cfg,Setup::SETUP_FOR_GTP);
+
+  const int64_t maxVisitsForLeaves =
+    cfg.contains("maxVisitsForLeaves") ? cfg.getInt64("maxVisitsForLeaves", (int64_t)1, (int64_t)1 << 50) : (params.maxVisits+1) / 2;
+
+  BookParams cfgParams = BookParams::loadFromCfg(cfg, params.maxVisits, maxVisitsForLeaves);
+
+  const bool loadKomiFromCfg = true;
+  Rules rules = Setup::loadSingleRules(cfg,loadKomiFromCfg);
+  const int boardSizeX = cfg.getInt("boardSizeX",2,Board::MAX_LEN);
+  const int boardSizeY = cfg.getInt("boardSizeY",2,Board::MAX_LEN);
+  const int repBound = cfg.getInt("repBound",3,1000);
+
+  std::map<BookHash,double> bonusByHash;
+  std::map<BookHash,double> expandBonusByHash;
+  std::map<BookHash,double> visitsRequiredByHash;
+  std::map<BookHash,int> branchRequiredByHash;
+  Board bonusInitialBoard;
+  Player bonusInitialPla;
+
+  maybeParseBonusFile(
+    bonusFile,
+    boardSizeX,
+    boardSizeY,
+    rules,
+    repBound,
+    bonusFileScale,
+    logger,
+    bonusByHash,
+    expandBonusByHash,
+    visitsRequiredByHash,
+    branchRequiredByHash,
+    bonusInitialBoard,
+    bonusInitialPla
+  );
+
+  // Check for unused config keys
+  cfg.warnUnusedKeys(cerr,&logger);
+
+  MakeDir::make(htmlDir);
+
+  Book* book = Book::loadFromFile(bookFile);
+  book->setParams(cfgParams);
+  book->setBonusByHash(bonusByHash);
+  book->setExpandBonusByHash(expandBonusByHash);
+  book->setVisitsRequiredByHash(visitsRequiredByHash);
+  book->setBranchRequiredByHash(branchRequiredByHash);
+  book->recomputeEverything();
+
+  logger.write("EXPORTING HTML TO " + htmlDir);
+  int64_t numFilesWritten = book->exportToHtmlDir(htmlDir,rulesLabel,rulesLink,htmlDevMode,htmlMinVisits,logger);
+  logger.write("Done exporting, exported " + Global::int64ToString(numFilesWritten) + " files");
+
+  delete book;
   ScoreValue::freeTables();
   logger.write("DONE");
   return 0;
@@ -1036,8 +1688,7 @@ int MainCmds::checkbook(const vector<string>& args) {
 
   Book* book;
   {
-    double sharpScoreOutlierCap = 2.0;
-    book = Book::loadFromFile(bookFile,sharpScoreOutlierCap);
+    book = Book::loadFromFile(bookFile);
     logger.write("Loaded preexisting book with " + Global::uint64ToString(book->size()) + " nodes from " + bookFile);
     logger.write("Book version = " + Global::intToString(book->bookVersion));
   }
@@ -1104,3 +1755,831 @@ int MainCmds::checkbook(const vector<string>& args) {
   return 0;
 }
 
+int MainCmds::booktoposes(const vector<string>& args) {
+  Board::initHash();
+  ScoreValue::initTables();
+  Rand seedRand;
+
+  ConfigParser cfg;
+  string modelFile;
+
+  string outDir;
+  string bookFile;
+  int numThreads;
+  int includeDepth;
+  double includeVisits;
+  int maxDepth;
+  double minVisits;
+  bool enableHints;
+  double constantWeight;
+  double depthWeight;
+  double depthWeightScale;
+  double policySurpriseWeight;
+  double valueSurpriseWeight;
+  double minWeight;
+  try {
+    KataGoCommandLine cmd("Dump startposes out of book");
+    cmd.addConfigFileArg("","");
+    cmd.addModelFileArg();
+
+    cmd.addOverrideConfigArg();
+
+    TCLAP::ValueArg<string> outDirArg("","out-dir","Directory to write poses",true,string(),"DIR");
+    TCLAP::ValueArg<string> bookFileArg("","book-file","Book file to write to or continue expanding",true,string(),"FILE");
+    TCLAP::ValueArg<int> numThreadsArg("","num-threads","Number of threads to use for processing",false,1,"N");
+    TCLAP::ValueArg<int> includeDepthArg("","include-depth","Include positions up to this depth",false,-1,"DEPTH");
+    TCLAP::ValueArg<double> includeVisitsArg("","include-visits","Include positions this many visits or more",false,1e300,"VISITS");
+    TCLAP::ValueArg<int> maxDepthArg("","max-depth","Only include positions up to this depth",false,100000000,"DEPTH");
+    TCLAP::ValueArg<double> minVisitsArg("","min-visits","Only include positions with this many visits or more",false,-1.0,"VISITS");
+    TCLAP::SwitchArg enableHintsArg("","enable-hints","Hint the top book move");
+    TCLAP::ValueArg<double> constantWeightArg("","constant-weight","How much weight to give each position as a fixed baseline",false,0.0,"FLOAT");
+    TCLAP::ValueArg<double> depthWeightArg("","depth-weight","How much extra weight to give based on depth",false,0.0,"FLOAT");
+    TCLAP::ValueArg<double> depthWeightScaleArg("","depth-weight-scale","Depth scale over which depth weight decays by a factor of e",false,1.0,"FLOAT");
+    TCLAP::ValueArg<double> policySurpriseWeightArg("","policy-surprise-weight","How much weight to give each position per logit of policy surprise",false,0.0,"FLOAT");
+    TCLAP::ValueArg<double> valueSurpriseWeightArg("","value-surprise-weight","How much weight to give each position per logit of value surprise",false,0.0,"FLOAT");
+    TCLAP::ValueArg<double> minWeightArg("","min-weight","Only finally include positions with this much weight",false,0.0,"FLOAT");
+
+    cmd.add(outDirArg);
+    cmd.add(bookFileArg);
+    cmd.add(numThreadsArg);
+    cmd.add(includeDepthArg);
+    cmd.add(includeVisitsArg);
+    cmd.add(maxDepthArg);
+    cmd.add(minVisitsArg);
+    cmd.add(enableHintsArg);
+    cmd.add(constantWeightArg);
+    cmd.add(depthWeightArg);
+    cmd.add(depthWeightScaleArg);
+    cmd.add(policySurpriseWeightArg);
+    cmd.add(valueSurpriseWeightArg);
+    cmd.add(minWeightArg);
+
+    cmd.parseArgs(args);
+
+    modelFile = cmd.getModelFile();
+    outDir = outDirArg.getValue();
+    bookFile = bookFileArg.getValue();
+    numThreads = numThreadsArg.getValue();
+    includeDepth = includeDepthArg.getValue();
+    includeVisits = includeVisitsArg.getValue();
+    maxDepth = maxDepthArg.getValue();
+    minVisits = minVisitsArg.getValue();
+    enableHints = enableHintsArg.getValue();
+    constantWeight = constantWeightArg.getValue();
+    depthWeight = depthWeightArg.getValue();
+    depthWeightScale = depthWeightScaleArg.getValue();
+    policySurpriseWeight = policySurpriseWeightArg.getValue();
+    valueSurpriseWeight = valueSurpriseWeightArg.getValue();
+    minWeight = minWeightArg.getValue();
+
+    cmd.getConfig(cfg);
+  }
+  catch (TCLAP::ArgException &e) {
+    cerr << "Error: " << e.error() << " for argument " << e.argId() << endl;
+    return 1;
+  }
+
+  const bool logToStdout = true;
+  const bool logToStderr = false;
+  const bool logTime = false;
+  Logger logger(nullptr, logToStdout, logToStderr, logTime);
+
+  Book* book;
+  {
+    book = Book::loadFromFile(bookFile);
+    logger.write("Loaded preexisting book with " + Global::uint64ToString(book->size()) + " nodes from " + bookFile);
+    logger.write("Book version = " + Global::intToString(book->bookVersion));
+  }
+
+  NNEvaluator* nnEval;
+  {
+    Setup::initializeSession(cfg);
+    int expectedConcurrentEvals = numThreads;
+    int defaultMaxBatchSize = std::max(8,((numThreads+3)/4)*4);
+    bool defaultRequireExactNNLen = true;
+    bool disableFP16 = false;
+    string expectedSha256 = "";
+    nnEval = Setup::initializeNNEvaluator(
+      modelFile,modelFile,expectedSha256,cfg,logger,seedRand,expectedConcurrentEvals,
+      book->initialBoard.x_size,book->initialBoard.y_size,defaultMaxBatchSize,defaultRequireExactNNLen,disableFP16,
+      Setup::SETUP_FOR_GTP
+    );
+  }
+  logger.write("Loaded neural net");
+
+  cfg.warnUnusedKeys(cerr,&logger);
+
+  std::map<BookHash,int> depthByHash;
+
+  std::vector<ConstSymBookNode> nodesToExplore;
+  std::vector<int> depthsToExplore;
+  nodesToExplore.push_back(book->getRoot());
+  depthsToExplore.push_back(0);
+
+  logger.write("Beginning book sweep");
+  int numNodesExplored = 0;
+  while(nodesToExplore.size() > 0) {
+    ConstSymBookNode node = nodesToExplore[nodesToExplore.size()-1];
+    int depth = depthsToExplore[depthsToExplore.size()-1];
+    nodesToExplore.pop_back();
+    depthsToExplore.pop_back();
+
+    if(depth > maxDepth)
+      continue;
+    if(node.recursiveValues().visits < minVisits)
+      continue;
+    if(depth > includeDepth && node.recursiveValues().visits < includeVisits)
+      continue;
+
+    BookHash hash = node.hash();
+    {
+      auto iter = depthByHash.find(hash);
+      if(iter != depthByHash.end())
+        if(depth >= iter->second)
+          continue;
+      depthByHash[hash] = depth;
+    }
+
+    std::vector<BookMove> moves = node.getUniqueMovesInBook();
+    for(int i = (int)moves.size()-1; i >= 0; i--) {
+      nodesToExplore.push_back(node.follow(moves[i].move));
+      depthsToExplore.push_back(depth+1);
+    }
+    numNodesExplored += 1;
+    if(numNodesExplored % 100000 == 0)
+      logger.write("Num nodes explored: " + Global::intToString(numNodesExplored));
+  }
+
+  logger.write("Collected " + Global::intToString(depthByHash.size()) + " many positions in book to potentially use");
+
+  PosWriter posWriter("bookposes.txt", outDir, 1, 0, 100000);
+  posWriter.start();
+
+  std::mutex statsLock;
+  int numPositionsProcessed = 0;
+  int numPositionsWritten = 0;
+  double totalWeightFromConstant = 0.0;
+  double totalWeightFromDepth = 0.0;
+  double totalWeightFromPolicySurprise = 0.0;
+  double totalWeightFromValueSurpriseIrreducible = 0.0;
+  double totalWeightFromValueSurpriseDivergence = 0.0;
+
+  auto processPoses = [&](int threadIdx) {
+    Rand rand;
+    int counter = 0;
+    for(auto iter = depthByHash.begin(); iter != depthByHash.end(); ++iter) {
+      if(counter % numThreads != threadIdx) {
+        counter += 1;
+        continue;
+      }
+      counter += 1;
+
+      BookHash hash = iter->first;
+      int depth = iter->second;
+      ConstSymBookNode node = book->getByHash(hash).applySymmetry(rand.nextInt(0,7));
+
+      Player pla = node.pla();
+      BoardHistory hist;
+      std::vector<Loc> moveHistory;
+      bool suc = node.getBoardHistoryReachingHere(hist,moveHistory);
+      if(!suc) {
+        logger.write("WARNING: Failed to get board history reaching node, probably there is some bug");
+        logger.write("or else some hash collision or something else is wrong.");
+        logger.write("BookHash of node unable to expand: " + node.hash().toString());
+
+        ostringstream out;
+        Board board = hist.getRecentBoard(0);
+        Board::printBoard(out, board, Board::NULL_LOC, NULL);
+        for(Loc move: moveHistory)
+          out << Location::toString(move,book->initialBoard) << " ";
+        logger.write("Moves:");
+        logger.write(out.str());
+        continue;
+      }
+
+      Sgf::PositionSample sample;
+      sample.board = hist.getRecentBoard(5);
+      for(int i = std::max(0,(int)hist.moveHistory.size()-5); i<hist.moveHistory.size(); i++)
+        sample.moves.push_back(hist.moveHistory[i]);
+      sample.nextPla = sample.moves.size() > 0 ? sample.moves[0].pla : pla;
+      sample.initialTurnNumber = depth - (int)sample.moves.size();
+      testAssert(sample.initialTurnNumber >= 0);
+      sample.hintLoc = Board::NULL_LOC;
+
+      std::vector<double> sortingValue;
+      std::vector<BookMove> moves = node.getUniqueMovesInBook();
+      for(int i = 0; i<moves.size(); i++) {
+        ConstSymBookNode child = node.follow(moves[i].move);
+        RecursiveBookValues values = child.recursiveValues();
+        double plaFactor = pla == P_WHITE ? 1.0 : -1.0;
+        double value = book->getSortingValue(plaFactor,values.winLossValue,values.scoreMean,values.sharpScoreMean,values.scoreLCB,values.scoreUCB,moves[i].rawPolicy);
+        sortingValue.push_back(value);
+      }
+
+      Loc bestMove = Board::NULL_LOC;
+      if(sortingValue.size() > 0) {
+        double bestSortingValue = -1e100;
+        for(int i = 0; i<sortingValue.size(); i++) {
+          if(sortingValue[i] > bestSortingValue) {
+            bestSortingValue = sortingValue[i];
+            bestMove = moves[i].move;
+          }
+        }
+      }
+
+      if(enableHints)
+        sample.hintLoc = bestMove;
+
+      double bookWLValue = node.recursiveValues().winLossValue;
+      double bookWinChance = std::max(0.0, std::min(1.0, 0.5 * (bookWLValue + 1.0)));
+      double bookLossChance = std::max(0.0, std::min(1.0, 0.5 * (-bookWLValue + 1.0)));
+
+      double policySurprise = 0.0;
+      double valueSurpriseIrreducible = 0.0;
+      double valueSurpriseTotal = 0.0;
+      Board board = hist.getRecentBoard(0);
+      for(int sym = 0; sym<SymmetryHelpers::NUM_SYMMETRIES; sym++) {
+        MiscNNInputParams nnInputParams;
+        nnInputParams.symmetry = sym;
+        NNResultBuf buf;
+        bool skipCache = true; //Always ignore cache so that we use the desired symmetry
+        bool includeOwnerMap = false;
+        if(policySurpriseWeight > 0 || valueSurpriseWeight > 0)
+          nnEval->evaluate(board,hist,pla,nnInputParams,buf,skipCache,includeOwnerMap);
+
+        if(policySurpriseWeight > 0) {
+          if(bestMove != Board::NULL_LOC) {
+            double policyProb = buf.result->policyProbs[NNPos::locToPos(bestMove,board.x_size,nnEval->getNNXLen(),nnEval->getNNYLen())];
+            assert(policyProb >= 0.0 && policyProb <= 1.0);
+            policySurprise += -1.0 / (double)SymmetryHelpers::NUM_SYMMETRIES * log(policyProb + 1e-30);
+          }
+        }
+
+        if(valueSurpriseWeight > 0) {
+          double wlValue = (double)buf.result->whiteWinProb - (double)buf.result->whiteLossProb;
+          double winChance = std::max(0.0, std::min(1.0, 0.5 * (wlValue + 1.0)));
+          double lossChance = std::max(0.0, std::min(1.0, 0.5 * (-wlValue + 1.0)));
+
+          valueSurpriseIrreducible += -1.0 / (double)SymmetryHelpers::NUM_SYMMETRIES * (
+            bookWinChance * log(bookWinChance + 1e-30) + bookLossChance * log(bookLossChance + 1e-30)
+          );
+          valueSurpriseTotal += -1.0 / (double)SymmetryHelpers::NUM_SYMMETRIES * (
+            bookWinChance * log(winChance + 1e-30) + bookLossChance * log(lossChance + 1e-30)
+          );
+        }
+      }
+
+      double weightFromConstant = constantWeight;
+      double weightFromDepth = exp(-(double)depth / depthWeightScale) * depthWeight;
+      double weightFromPolicySurprise = policySurprise * policySurpriseWeight;
+      double weightFromValueSurpriseIrreducible = valueSurpriseIrreducible * valueSurpriseWeight;
+      double weightFromValueSurpriseDivergence = (valueSurpriseTotal - valueSurpriseIrreducible) * valueSurpriseWeight;
+
+      double weight = weightFromConstant + weightFromDepth + weightFromPolicySurprise + weightFromValueSurpriseIrreducible + weightFromValueSurpriseDivergence;
+      sample.weight = weight;
+
+      std::lock_guard<std::mutex> lock(statsLock);
+
+      if(sample.weight >= minWeight) {
+        posWriter.writePos(sample);
+
+        totalWeightFromConstant += weightFromConstant;
+        totalWeightFromDepth += weightFromDepth;
+        totalWeightFromPolicySurprise += weightFromPolicySurprise;
+        totalWeightFromValueSurpriseIrreducible += weightFromValueSurpriseIrreducible;
+        totalWeightFromValueSurpriseDivergence += weightFromValueSurpriseDivergence;
+
+        numPositionsWritten += 1;
+      }
+
+      numPositionsProcessed += 1;
+      if(numPositionsProcessed % 20000 == 0)
+        logger.write(
+          "Num positions processed: " +
+          Global::intToString(numPositionsProcessed) + "/" + Global::intToString(depthByHash.size()) + ", written " + Global::intToString(numPositionsWritten)
+        );
+    }
+  };
+
+  vector<std::thread> threads;
+  for(int threadIdx = 0; threadIdx<numThreads; threadIdx++) {
+    threads.push_back(std::thread(processPoses, threadIdx));
+  }
+  for(int threadIdx = 0; threadIdx<numThreads; threadIdx++) {
+    threads[threadIdx].join();
+  }
+  threads.clear();
+
+  posWriter.flushAndStop();
+
+  logger.write("totalWeightFromConstant " + Global::doubleToString(totalWeightFromConstant));
+  logger.write("totalWeightFromDepth " + Global::doubleToString(totalWeightFromDepth));
+  logger.write("totalWeightFromPolicySurprise " + Global::doubleToString(totalWeightFromPolicySurprise));
+  logger.write("totalWeightFromValueSurpriseIrreducible " + Global::doubleToString(totalWeightFromValueSurpriseIrreducible));
+  logger.write("totalWeightFromValueSurpriseDivergence " + Global::doubleToString(totalWeightFromValueSurpriseDivergence));
+  logger.write("numPositionsWritten " + Global::intToString(numPositionsWritten));
+
+  delete book;
+  ScoreValue::freeTables();
+  logger.write("DONE");
+  return 0;
+}
+
+int MainCmds::comparebooks(const vector<string>& args) {
+  Board::initHash();
+  ScoreValue::initTables();
+
+  string bookFile1;
+  string bookFile2;
+  double winLossThreshold;
+  double scoreThreshold;
+  try {
+    KataGoCommandLine cmd("Compare two books and find positions with significant value differences");
+
+    TCLAP::ValueArg<string> bookFile1Arg("","book1","First book file to compare",true,string(),"FILE");
+    TCLAP::ValueArg<string> bookFile2Arg("","book2","Second book file to compare",true,string(),"FILE");
+    TCLAP::ValueArg<double> winLossThresholdArg("","winloss-threshold","Minimum winLossValue difference to report",false,0.1,"THRESHOLD");
+    TCLAP::ValueArg<double> scoreThresholdArg("","score-threshold","Minimum scoreMean difference to report",false,1.0,"THRESHOLD");
+    cmd.add(bookFile1Arg);
+    cmd.add(bookFile2Arg);
+    cmd.add(winLossThresholdArg);
+    cmd.add(scoreThresholdArg);
+
+    cmd.parseArgs(args);
+
+    bookFile1 = bookFile1Arg.getValue();
+    bookFile2 = bookFile2Arg.getValue();
+    winLossThreshold = winLossThresholdArg.getValue();
+    scoreThreshold = scoreThresholdArg.getValue();
+  }
+  catch (TCLAP::ArgException &e) {
+    cerr << "Error: " << e.error() << " for argument " << e.argId() << endl;
+    return 1;
+  }
+
+  const bool logToStdout = false;
+  const bool logToStderr = true;
+  const bool logTime = false;
+  Logger logger(nullptr, logToStdout, logToStderr, logTime);
+
+  Book* book1;
+  Book* book2;
+  {
+    logger.write("Loading first book");
+    book1 = Book::loadFromFile(bookFile1);
+    logger.write("Loaded first book with " + Global::uint64ToString(book1->size()) + " nodes from " + bookFile1);
+    logger.write("Book1 version = " + Global::intToString(book1->bookVersion));
+
+    logger.write("Loading second book");
+    book2 = Book::loadFromFile(bookFile2);
+    logger.write("Loaded second book with " + Global::uint64ToString(book2->size()) + " nodes from " + bookFile2);
+    logger.write("Book2 version = " + Global::intToString(book2->bookVersion));
+  }
+
+  if(
+    book1->initialBoard.x_size != book2->initialBoard.x_size ||
+    book1->initialBoard.y_size != book2->initialBoard.y_size ||
+    book1->repBound != book2->repBound ||
+    book1->initialRules != book2->initialRules
+  ) {
+    logger.write("ERROR: Books have different board sizes, rep bounds, or rules");
+    delete book1;
+    delete book2;
+    return 1;
+  }
+
+  book1->recomputeEverything();
+  book2->recomputeEverything();
+
+  if(book1->size() > book2->size()) {
+    std::swap(book1,book2);
+  }
+
+
+  // CSV header
+  cout << "hash,winLossDelta,scoreDelta,winLoss1,winLoss2,score1,score2,moveDepth,moveHistory" << endl;
+
+  std::vector<SymBookNode> allNodes1 = book1->getAllNodes();
+  logger.write("Comparing positions...");
+  int64_t numCommonPositions = 0;
+  int64_t numReported = 0;
+
+  for(SymBookNode node1: allNodes1) {
+    ConstSymBookNode constNode1(node1);
+    BookHash hash = constNode1.hash();
+
+    ConstSymBookNode constNode2 = book2->getByHash(hash);
+    if(constNode2.isNull()) {
+      continue;
+    }
+
+    numCommonPositions++;
+
+    const RecursiveBookValues& values1 = constNode1.recursiveValues();
+    const RecursiveBookValues& values2 = constNode2.recursiveValues();
+
+    double winLossDelta = std::abs(values1.winLossValue - values2.winLossValue);
+    double scoreDelta = std::abs(values1.scoreMean - values2.scoreMean);
+
+    if(winLossDelta >= winLossThreshold || scoreDelta >= scoreThreshold) {
+      BoardHistory hist;
+      std::vector<Loc> moveHistory;
+      bool suc = constNode1.getBoardHistoryReachingHere(hist, moveHistory);
+
+      if(!suc) {
+        logger.write("WARNING: Failed to get board history for hash " + hash.toString());
+        continue;
+      }
+
+      std::ostringstream moveHistoryStream;
+      for(size_t i = 0; i < moveHistory.size(); i++) {
+        if(i > 0) moveHistoryStream << " ";
+        moveHistoryStream << Location::toString(moveHistory[i], book1->initialBoard);
+      }
+
+      cout << hash.toString() << ","
+           << winLossDelta << ","
+           << scoreDelta << ","
+           << values1.winLossValue << ","
+           << values2.winLossValue << ","
+           << values1.scoreMean << ","
+           << values2.scoreMean << ","
+           << hist.moveHistory.size() << ","
+           << moveHistoryStream.str() << endl;
+
+      numReported++;
+    }
+
+    if(numCommonPositions % 10000 == 0) {
+      logger.write("Processed " + Global::int64ToString(numCommonPositions) + " common positions, reported " + Global::int64ToString(numReported));
+    }
+  }
+
+  logger.write("Total common positions: " + Global::int64ToString(numCommonPositions));
+  logger.write("Positions reported: " + Global::int64ToString(numReported));
+
+  delete book1;
+  delete book2;
+  ScoreValue::freeTables();
+  logger.write("DONE");
+  return 0;
+}
+
+int MainCmds::findbookbottlenecks(const vector<string>& args) {
+  Board::initHash();
+  ScoreValue::initTables();
+
+  string bookFile;
+  string outputJsonlFile;
+  double maxDepth;
+  double minVisits;
+  double addWLChangeToDepthFactor;
+  double winLossDelta;
+  double discretizationIncrement;
+  int numThreads;
+
+  try {
+    KataGoCommandLine cmd("Find points where book values depend on few leaves");
+
+    TCLAP::ValueArg<string> bookFileArg("","book-file","Book file to analyze",true,string(),"FILE");
+    TCLAP::ValueArg<string> outputJsonlFileArg("","output-jsonl","Output JSONL file path",true,string(),"FILE");
+    TCLAP::ValueArg<double> maxDepthArg("","max-depth","Maximum depth from root to analyze",true,0.0,"N");
+    TCLAP::ValueArg<double> minVisitsArg("","min-visits","Min visits for nodes to analyze",true,0.0,"N");
+    TCLAP::ValueArg<double> addWLChangeToDepthFactorArg("","add-wlchange-to-depth-factor","Count a change of this much WL (double for two-sided mistakes) as this much depth",true,0.0,"N");
+    TCLAP::ValueArg<double> winLossDeltaArg("","winloss-delta","Winloss delta to analyze",true,0.0,"DELTA");
+    TCLAP::ValueArg<double> discretizationIncrementArg("","discretization-increment","Discretization increment for thresholds",true,0.0,"INCREMENT");
+    TCLAP::ValueArg<int> numThreadsArg("","num-threads","Number of threads to use",false,1,"N");
+
+    cmd.add(bookFileArg);
+    cmd.add(outputJsonlFileArg);
+    cmd.add(maxDepthArg);
+    cmd.add(minVisitsArg);
+    cmd.add(addWLChangeToDepthFactorArg);
+    cmd.add(winLossDeltaArg);
+    cmd.add(discretizationIncrementArg);
+    cmd.add(numThreadsArg);
+
+    cmd.parseArgs(args);
+
+    bookFile = bookFileArg.getValue();
+    outputJsonlFile = outputJsonlFileArg.getValue();
+    maxDepth = maxDepthArg.getValue();
+    minVisits = minVisitsArg.getValue();
+    addWLChangeToDepthFactor = addWLChangeToDepthFactorArg.getValue();
+    winLossDelta = winLossDeltaArg.getValue();
+    discretizationIncrement = discretizationIncrementArg.getValue();
+    numThreads = numThreadsArg.getValue();
+  }
+  catch (TCLAP::ArgException &e) {
+    cerr << "Error: " << e.error() << " for argument " << e.argId() << endl;
+    return 1;
+  }
+
+  const bool logToStdout = true;
+  const bool logToStderr = false;
+  const bool logTime = false;
+  Logger logger(nullptr, logToStdout, logToStderr, logTime);
+
+  MutexPool mutexPool(1 << 17);
+
+  Book* book;
+  {
+    logger.write("Loading book");
+    book = Book::loadFromFile(bookFile, numThreads);
+    logger.write("Loaded book with " + Global::uint64ToString(book->size()) + " nodes from " + bookFile);
+    logger.write("Book version = " + Global::intToString(book->bookVersion));
+  }
+
+  book->recomputeEverythingMultiThreaded(mutexPool,numThreads);
+
+  struct NodeAndDepthInfo {
+    ConstSymBookNode node;
+    int depth;
+    double wlIncrease;
+    double wlDecrease;
+    double effectiveDepth;
+    NodeAndDepthInfo() = default;
+    NodeAndDepthInfo(ConstSymBookNode n, int d, double wli, double wld, double ed): node(n), depth(d), wlIncrease(wli), wlDecrease(wld), effectiveDepth(ed) {}
+  };
+
+  struct ThresholdGroup {
+    double threshold;
+    bool increasing;
+    std::vector<NodeAndDepthInfo> nodesToCheck;
+    ThresholdGroup() = default;
+    ThresholdGroup(double t, bool inc): threshold(t), increasing(inc) {}
+  };
+
+  logger.write("Collecting nodes up to depth " + Global::doubleToString(maxDepth));
+
+  std::map<double, ThresholdGroup> groupsByThresholdIncreasing;
+  std::map<double, ThresholdGroup> groupsByThresholdDecreasing;
+
+  int64_t numNodesCollected = 0;
+  {
+    std::vector<NodeAndDepthInfo> nodesToExplore;
+    std::set<BookHash> visited;
+    nodesToExplore.push_back(NodeAndDepthInfo(book->getRoot(), 0, 0.0, 0.0, 0.0));
+
+    for(size_t i = 0; i<nodesToExplore.size(); i++) {
+      NodeAndDepthInfo info = nodesToExplore[i];
+      if(info.effectiveDepth > maxDepth)
+        continue;
+
+      ConstSymBookNode node = info.node;
+      if(node.recursiveValues().visits < minVisits)
+        continue;
+
+      BookHash hash = node.hash();
+      if(contains(visited,hash))
+        continue;
+      visited.insert(hash);
+
+      // Calculate thresholds for this node, rounding to nearest increment
+      double currentWinLoss = node.recursiveValues().winLossValue;
+      double targetIncreasing = currentWinLoss + winLossDelta;
+      double roundedIncreasing = std::ceil(targetIncreasing / discretizationIncrement) * discretizationIncrement;
+      double targetDecreasing = currentWinLoss - winLossDelta;
+      double roundedDecreasing = std::floor(targetDecreasing / discretizationIncrement) * discretizationIncrement;
+      // Accumulate for processing
+      if(roundedIncreasing < 1.0) {
+        auto iter = groupsByThresholdIncreasing.find(roundedIncreasing);
+        if(iter == groupsByThresholdIncreasing.end()) {
+          groupsByThresholdIncreasing[roundedIncreasing] = ThresholdGroup(roundedIncreasing, true);
+          iter = groupsByThresholdIncreasing.find(roundedIncreasing);
+        }
+        iter->second.nodesToCheck.push_back(info);
+      }
+      if(roundedDecreasing > -1.0) {
+        auto iter = groupsByThresholdDecreasing.find(roundedDecreasing);
+        if(iter == groupsByThresholdDecreasing.end()) {
+          groupsByThresholdDecreasing[roundedDecreasing] = ThresholdGroup(roundedDecreasing, false);
+          iter = groupsByThresholdDecreasing.find(roundedDecreasing);
+        }
+        iter->second.nodesToCheck.push_back(info);
+      }
+
+      std::vector<BookMove> moves = node.getUniqueMovesInBook();
+      for(size_t j = 0; j < moves.size(); j++) {
+        NodeAndDepthInfo newInfo;
+        newInfo.node = node.follow(moves[j].move);
+        newInfo.depth = info.depth+1;
+        newInfo.wlIncrease = info.wlIncrease;
+        newInfo.wlDecrease = info.wlDecrease;
+        double newWinLoss = newInfo.node.recursiveValues().winLossValue;
+        if(newWinLoss > currentWinLoss)
+          newInfo.wlIncrease += newWinLoss - currentWinLoss;
+        else
+          newInfo.wlDecrease += currentWinLoss - newWinLoss;
+        newInfo.effectiveDepth = newInfo.depth + addWLChangeToDepthFactor * (newInfo.wlIncrease + newInfo.wlDecrease + std::min(newInfo.wlIncrease, newInfo.wlDecrease));
+
+        nodesToExplore.push_back(newInfo);
+      }
+
+      numNodesCollected += 1;
+      if(numNodesCollected % 10000 == 0)
+        logger.write("Num nodes collected: " + Global::intToString(numNodesCollected));
+    }
+  }
+
+  logger.write("Collected " + Global::int64ToString(numNodesCollected) + " book nodes");
+  logger.write("Created " + Global::intToString(groupsByThresholdIncreasing.size()) + " increasing threshold groups");
+  logger.write("Created " + Global::intToString(groupsByThresholdDecreasing.size()) + " decreasing threshold groups");
+
+  // Combine all groups into a single vector
+  std::vector<ThresholdGroup> allGroups;
+  for(auto& pair : groupsByThresholdIncreasing) {
+    allGroups.push_back(pair.second);
+  }
+  for(auto& pair : groupsByThresholdDecreasing) {
+    allGroups.push_back(pair.second);
+  }
+
+  // Open output file
+  std::ofstream outputFile;
+  FileUtils::open(outputFile, outputJsonlFile);
+  std::mutex outputMutex;
+  std::atomic<int64_t> entriesWritten(0);
+
+  // Processes a whole group
+  auto processGroup = [&](int threadIdx, size_t groupIdx) {
+    (void)threadIdx;
+
+    const ThresholdGroup& group = allGroups[groupIdx];
+
+    // Sharing caches for this entire group is safe because the whole group has the same threshold and
+    // is all increasing or all decreasing.
+    std::map<BookHash, double> costCache;
+    std::map<BookHash, Book::MinCostResult> resultCache;
+
+    // Ignore if the total cost to prove the new value is more than this.
+    const double pruneOverCost = 1000.0;
+    auto costFunc = [&book,&group,winLossDelta](ConstSymBookNode node) -> double {
+      double cost = node.totalExpansionCost() * 1.2 - node.minCostFromRoot() * 0.2;
+      if(cost > 1.0)
+        cost = std::pow(cost,1.30);
+
+      double thisWL = node.thisValuesNotInBook().winLossValue;
+      if(node.canReExpand() && node.recursiveValues().visits <= book->getParams().maxVisitsForReExpansion)
+        thisWL = node.recursiveValues().winLossValue;
+
+      auto transformWL = [](double wl) {
+        return wl * wl * wl * wl * wl + wl;
+      };
+
+      // Augment the cost based on how far the value is away from the threshold, in transformed space.
+      double transformedWLDifference;
+      if(group.increasing)
+        transformedWLDifference = transformWL(group.threshold) - transformWL(thisWL);
+      else
+        transformedWLDifference = transformWL(thisWL) - transformWL(group.threshold);
+      cost *= 0.5 + std::max(0.0, 0.5 * transformedWLDifference / winLossDelta);
+
+      return cost;
+    };
+    auto edgeCost = [&book,&group](ConstSymBookNode node, const BookMove& edgeMove) noexcept -> double {
+      (void)node;
+      (void)edgeMove;
+      return 0.0;
+    };
+
+    for(const NodeAndDepthInfo& info : group.nodesToCheck) {
+      ConstSymBookNode node = info.node;
+      BookHash nodeHash = node.hash();
+      testAssert(!node.isNull());
+
+      Book::MinCostResult result = book->computeMinCostToChangeWinLoss(
+        node,
+        costFunc,
+        edgeCost,
+        group.threshold,
+        group.increasing,
+        pruneOverCost,
+        costCache,
+        resultCache
+      );
+      if(result.totalCost > pruneOverCost) {
+        logger.write("Not writing node with cost " + Global::doubleToString(result.totalCost));
+        continue;
+      }
+
+      // Optimize symmetries so that the output and logging all ends up using
+      // a symmetry where the node and the nodes to change overlap well.
+      std::vector<SymBookNode> nodesToOptimize;
+      nodesToOptimize.push_back(book->getByHash(nodeHash));
+      for(const BookHash& hashToChange: result.nodes) {
+        nodesToOptimize.push_back(book->getByHash(hashToChange));
+      }
+      optimizeSymmetriesInplace(nodesToOptimize, NULL, logger);
+
+      // Use the optimized node for the rest of the processing
+      SymBookNode optimizedNode = nodesToOptimize[0];
+
+      BoardHistory hist;
+      std::vector<Loc> moveHistory;
+      bool suc = optimizedNode.getBoardHistoryReachingHere(hist, moveHistory);
+      testAssert(suc);
+
+      nlohmann::json jsonEntry;
+      jsonEntry["hash"] = nodeHash.toString();
+      jsonEntry["bookCost"] = optimizedNode.minCostFromRoot();
+      jsonEntry["visits"] = optimizedNode.recursiveValues().visits;
+      jsonEntry["adjustedVisits"] = optimizedNode.recursiveValues().adjustedVisits;
+      jsonEntry["depth"] = info.depth;
+      jsonEntry["effectiveDepth"] = info.effectiveDepth;
+      jsonEntry["wlIncrease"] = info.wlIncrease;
+      jsonEntry["wlDecrease"] = info.wlDecrease;
+      jsonEntry["minCost"] = result.totalCost;
+      jsonEntry["currentWL"] = optimizedNode.recursiveValues().winLossValue;
+      jsonEntry["threshold"] = group.threshold;
+      jsonEntry["increasing"] = group.increasing;
+
+      std::vector<std::string> nodesToChangeList;
+      for(const BookHash& h: result.nodes)
+        nodesToChangeList.push_back(h.toString());
+      jsonEntry["minSetToChange"] = nodesToChangeList;
+      std::vector<int> nodesToChangeBranchCountsList;
+      for(const BookHash& h: result.nodes)
+        nodesToChangeBranchCountsList.push_back(book->getByHash(h).numUniqueMovesInBook());
+      jsonEntry["minSetToChangeBranchCounts"] = nodesToChangeBranchCountsList;
+
+      std::vector<std::string> moveHistoryStrings;
+      for(Loc move: moveHistory)
+        moveHistoryStrings.push_back(Location::toString(move, book->initialBoard));
+      jsonEntry["moveHistory"] = moveHistoryStrings;
+
+      std::vector<std::vector<std::string>> moveHistoryToChangeStringss;
+      for(size_t i = 0; i < result.nodes.size(); i++) {
+        // Use the optimized version from nodesToOptimize[i+1] (offset by 1 since [0] is the main node)
+        SymBookNode optimizedNodeToChange = nodesToOptimize[i + 1];
+        BoardHistory histToChange;
+        std::vector<Loc> moveHistoryToChange;
+        bool suc2 = optimizedNodeToChange.getBoardHistoryReachingHere(histToChange, moveHistoryToChange);
+        testAssert(suc2);
+
+        std::vector<std::string> moveHistoryToChangeStrings;
+        for(Loc move : moveHistoryToChange)
+          moveHistoryToChangeStrings.push_back(Location::toString(move, book->initialBoard));
+        moveHistoryToChangeStringss.push_back(moveHistoryToChangeStrings);
+      }
+      jsonEntry["moveHistoryToChangeStrings"] = moveHistoryToChangeStringss;
+
+      {
+        std::lock_guard<std::mutex> lock(outputMutex);
+        outputFile << jsonEntry.dump() << "\n";
+      }
+
+      // Logging output
+      {
+        std::ostringstream out;
+
+        out << ("\n========================================") << endl;
+        out << "Node: " << nodeHash.toString() << endl;
+        out << "BookCost: " << optimizedNode.minCostFromRoot() << endl;
+        out << "Visits: " << optimizedNode.recursiveValues().visits << endl;
+        out << "AdjustedVisits: " << optimizedNode.recursiveValues().adjustedVisits << endl;
+        out << "Current WinLoss: " << optimizedNode.recursiveValues().winLossValue << endl;
+        out << ("Threshold: " + Global::doubleToString(group.threshold) + " (" + (group.increasing ? "increasing" : "decreasing") + ")") << endl;
+        out << "Min Cost: " << result.totalCost << endl;
+        for(Loc move : moveHistory)
+          out << Location::toString(move, book->initialBoard) << " ";
+        out << "\n";
+
+        Board board = hist.getRecentBoard(0);
+        Board::printBoard(out, board, Board::NULL_LOC, &(hist.moveHistory));
+
+        out << ("Num nodes to change: " + Global::intToString((int)result.nodes.size())) << endl;
+        for(size_t i = 0; i < result.nodes.size(); i++) {
+          // Use the optimized version from nodesToOptimize[i+1] (offset by 1 since [0] is the main node)
+          SymBookNode optimizedNodeToChange = nodesToOptimize[i + 1];
+          BoardHistory histToChange;
+          std::vector<Loc> moveHistoryToChange;
+          bool suc2 = optimizedNodeToChange.getBoardHistoryReachingHere(histToChange, moveHistoryToChange);
+          testAssert(suc2);
+
+          for(Loc move : moveHistoryToChange)
+            out << Location::toString(move, book->initialBoard) << " ";
+          out << "\n";
+        }
+
+        logger.write(out.str());
+      }
+
+      int64_t currentEntries = entriesWritten.fetch_add(1) + 1;
+      if(currentEntries % 100 == 0) {
+        logger.write("Entries written: " + Global::int64ToString(currentEntries));
+      }
+    }
+  };
+
+  logger.write("Starting parallel processing with " + Global::intToString(numThreads) + " threads");
+  Parallel::iterRange(numThreads, allGroups.size(), logger, processGroup);
+
+  outputFile.close();
+  logger.write("Total entries written: " + Global::int64ToString(entriesWritten.load()));
+
+  delete book;
+  ScoreValue::freeTables();
+  logger.write("DONE");
+  return 0;
+}

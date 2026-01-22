@@ -42,12 +42,7 @@ namespace NeuralNet {
   LoadedModel* loadModelFile(const std::string& file, const std::string& expectedSha256);
   void freeLoadedModel(LoadedModel* loadedModel);
 
-  std::string getModelName(const LoadedModel* loadedModel);
-  int getModelVersion(const LoadedModel* loadedModel);
-
-  //Return the "nearest" supported ruleset to desiredRules by this model.
-  //Fills supported with true if desiredRules itself was exactly supported, false if some modifications had to be made.
-  Rules getSupportedRules(const LoadedModel* loadedModel, const Rules& desiredRules, bool& supported);
+  const ModelDesc& getModelDesc(const LoadedModel* loadedModel);
 
   // Context -------------------------------------------------------------------
 
@@ -89,6 +84,8 @@ namespace NeuralNet {
   );
   void freeComputeHandle(ComputeHandle* computeHandle);
 
+  bool isUsingFP16(const ComputeHandle* computeHandle);
+
   //Input Buffers ---------------------------------------------------------------
 
   InputBuffers* createInputBuffers(const LoadedModel* loadedModel, int maxBatchSize, int nnXLen, int nnYLen);
@@ -96,7 +93,7 @@ namespace NeuralNet {
 
   //The neural net takes in 2 tensors as input.
   //One of them ("spatial") is 3-dimensional per-batch-element (4-dimensional including the batch dimension N),
-  //containing floats for the the values of different features (C) across the space of the board (H,W),
+  //containing floats for the values of different features (C) across the space of the board (H,W),
   //such as placement of stones and prior move locations.
   //The other ("global") is 1-dimensional per-batch-element containing floats for features that are
   //global to the board state, such as game rules and komi.

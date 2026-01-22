@@ -12,7 +12,7 @@ STRUCT_NAMED_TRIPLE(uint8_t,x,uint8_t,y,Player,pla,MoveNoBSize);
 STRUCT_NAMED_PAIR(int,x,int,y,XYSize);
 
 struct SgfNode {
-  std::map<std::string,std::vector<std::string>>* props;
+  std::unique_ptr<std::map<std::string,std::vector<std::string>>> props;
   MoveNoBSize move;
 
   SgfNode();
@@ -25,8 +25,14 @@ struct SgfNode {
   SgfNode& operator=(SgfNode&&) noexcept;
 
   bool hasProperty(const char* key) const;
+  bool hasProperty(const std::string& key) const;
   std::string getSingleProperty(const char* key) const;
+  std::string getSingleProperty(const std::string& key) const;
   const std::vector<std::string> getProperties(const char* key) const;
+  const std::vector<std::string> getProperties(const std::string& key) const;
+
+  void addProperty(const std::string& key, const std::string& value);
+  void appendComment(const std::string& value);
 
   bool hasPlacements() const;
   void accumPlacements(std::vector<Move>& moves, int xSize, int ySize) const;
@@ -35,14 +41,18 @@ struct SgfNode {
   Color getPLSpecifiedColor() const;
   Rules getRulesFromRUTagOrFail() const;
   Player getSgfWinner() const;
+  float getKomiOrFail() const;
+  float getKomiOrDefault(float defaultKomi) const;
+
+  std::string getPlayerName(Player pla) const;
 };
 
 struct Sgf {
   static constexpr int RANK_UNKNOWN = -100000;
 
   std::string fileName;
-  std::vector<SgfNode*> nodes;
-  std::vector<Sgf*> children;
+  std::vector<std::unique_ptr<SgfNode>> nodes;
+  std::vector<std::unique_ptr<Sgf>> children;
   Hash128 hash;
 
   Sgf();
@@ -51,14 +61,17 @@ struct Sgf {
   Sgf(const Sgf&) = delete;
   Sgf& operator=(const Sgf&) = delete;
 
-  static Sgf* parse(const std::string& str);
-  static Sgf* loadFile(const std::string& file);
-  static std::vector<Sgf*> loadFiles(const std::vector<std::string>& files);
-  static std::vector<Sgf*> loadSgfsFile(const std::string& file);
-  static std::vector<Sgf*> loadSgfsFiles(const std::vector<std::string>& files);
+  static std::unique_ptr<Sgf> parse(const std::string& str);
+  static std::unique_ptr<Sgf> loadFile(const std::string& file);
+  static std::vector<std::unique_ptr<Sgf>> loadFiles(const std::vector<std::string>& files);
+  static std::vector<std::unique_ptr<Sgf>> loadSgfsFile(const std::string& file);
+  static std::vector<std::unique_ptr<Sgf>> loadSgfsFiles(const std::vector<std::string>& files);
+
+  static std::vector<std::unique_ptr<Sgf>> loadSgfOrSgfsLogAndIgnoreErrors(const std::string& file, Logger& logger);
 
   XYSize getXYSize() const;
-  float getKomi() const;
+  float getKomiOrFail() const;
+  float getKomiOrDefault(float defaultKomi) const;
   bool hasRules() const;
   Rules getRulesOrFail() const;
   int getHandicapValue() const;
@@ -66,10 +79,24 @@ struct Sgf {
   Color getFirstPlayerColor() const;
 
   int getRank(Player pla) const; //dan ranks are 1d=0, 2d=1,... 9d=8. Kyu ranks are negative.
+  int getRating(Player pla) const;
   std::string getPlayerName(Player pla) const;
+
+  bool hasRootProperty(const std::string& property) const;
+  std::string getRootPropertyWithDefault(const std::string& property, const std::string& defaultRet) const;
+  std::vector<std::string> getRootProperties(const std::string& property) const;
+
+  void addRootProperty(const std::string& key, const std::string& value);
 
   void getPlacements(std::vector<Move>& moves, int xSize, int ySize) const;
   void getMoves(std::vector<Move>& moves, int xSize, int ySize) const;
+
+  template<typename T>
+  T traverse(
+    T initialValue,
+    std::function<T(T, T)> reduce,
+    std::function<T(const Sgf*, T)> transform
+  ) const;
 
   //Maximum depth of sgf tree in nodes
   int64_t depth() const;
@@ -85,21 +112,35 @@ struct Sgf {
     //This provides a little bit of history and context, which can also be relevant for setting up ko prohibitions.
     std::vector<Move> moves;
     //Turn number as of the start of board.
-    int initialTurnNumber;
+    int64_t initialTurnNumber;
     //Hinted move that may be good at the end of position sample, or Board::NULL_LOC
     Loc hintLoc;
     //The weight of this sample, for random selection
     double weight;
+    //Arbitrary label or metadata
+    std::string metadata;
+    //Scaling of training weight in the training data
+    double trainingWeight = 1.0;
 
     static std::string toJsonLine(const PositionSample& sample);
     static PositionSample ofJsonLine(const std::string& s);
 
-    //Return a copy of tihs sample with all player stones and moves flipped to the opposite color
+    //Return a copy of this sample with all player stones and moves flipped to the opposite color
     Sgf::PositionSample getColorFlipped() const;
+
+    //Return a copy of this sample except one move earlier
+    Sgf::PositionSample previousPosition(double newWeight) const;
+    bool hasPreviousPositions(int numPrevious) const;
+
+    bool tryGetCurrentBoardHistory(const Rules& rules, Player& nextPlaToMove, BoardHistory& hist) const;
+
+    int64_t getCurrentTurnNumber() const;
 
     //For the moment, only used in testing since it does extra consistency checks.
     //If we need a version to be used in "prod", we could make an efficient version maybe as operator==.
     bool isEqualForTesting(const PositionSample& other, bool checkNumCaptures, bool checkSimpleKo) const;
+
+    static void writePosOfHist(PositionSample& sampleBuf, const BoardHistory& hist, Player nextPla);
   };
 
   //Loads SGF all unique positions in ALL branches of that SGF.
@@ -113,6 +154,7 @@ struct Sgf {
     bool hashComments,
     bool hashParent,
     bool flipIfPassOrWFirst,
+    bool allowGameOver,
     Rand* rand,
     std::vector<PositionSample>& samples
   ) const;
@@ -122,6 +164,17 @@ struct Sgf {
     bool hashComments,
     bool hashParent,
     bool flipIfPassOrWFirst,
+    bool allowGameOver,
+    Rand* rand,
+    std::function<void(PositionSample&,const BoardHistory&,const std::string&)> f
+  ) const;
+
+  //Same as iterAllUniquePositions, but without the uniqueness. Will re-traverse same positions if they
+  //occur multiple times in the SGF.
+  //f is allowed to mutate and consume sample.
+  void iterAllPositions(
+    bool flipIfPassOrWFirst,
+    bool allowGameOver,
     Rand* rand,
     std::function<void(PositionSample&,const BoardHistory&,const std::string&)> f
   ) const;
@@ -132,27 +185,30 @@ struct Sgf {
   void getMovesHelper(std::vector<Move>& moves, int xSize, int ySize) const;
 
 
-  void iterAllUniquePositionsHelper(
+  void iterAllPositionsHelper(
     Board& board, BoardHistory& hist, Player nextPla,
     const Rules& rules, int xSize, int ySize,
     PositionSample& sampleBuf,
-    int initialTurnNumber,
     std::set<Hash128>& uniqueHashes,
+    bool requireUnique,
     bool hashComments,
     bool hashParent,
     bool flipIfPassOrWFirst,
+    bool allowGameOver,
+    bool isRoot,
     Rand* rand,
     std::vector<std::pair<int64_t,int64_t>>& variationTraceNodesBranch,
     std::function<void(PositionSample&,const BoardHistory&,const std::string&)> f
   ) const;
-  void samplePositionIfUniqueHelper(
+  void samplePositionHelper(
     Board& board, BoardHistory& hist, Player nextPla,
     PositionSample& sampleBuf,
-    int initialTurnNumber,
     std::set<Hash128>& uniqueHashes,
+    bool requireUnique,
     bool hashComments,
     bool hashParent,
     bool flipIfPassOrWFirst,
+    bool allowGameOver,
     const std::string& comments,
     std::function<void(PositionSample&,const BoardHistory&,const std::string&)> f
   ) const;
@@ -166,20 +222,19 @@ struct CompactSgf {
   int xSize;
   int ySize;
   int64_t depth;
-  float komi;
   Player sgfWinner;
   Hash128 hash;
 
-  CompactSgf(const Sgf* sgf);
+  CompactSgf(const Sgf& sgf);
   CompactSgf(Sgf&& sgf);
   ~CompactSgf();
 
   CompactSgf(const CompactSgf&) = delete;
   CompactSgf& operator=(const CompactSgf&) = delete;
 
-  static CompactSgf* parse(const std::string& str);
-  static CompactSgf* loadFile(const std::string& file);
-  static std::vector<CompactSgf*> loadFiles(const std::vector<std::string>& files);
+  static std::unique_ptr<CompactSgf> parse(const std::string& str);
+  static std::unique_ptr<CompactSgf> loadFile(const std::string& file);
+  static std::vector<std::unique_ptr<CompactSgf>> loadFiles(const std::vector<std::string>& files);
 
   bool hasRules() const;
   Rules getRulesOrFail() const;
@@ -214,6 +269,20 @@ namespace WriteSgf {
     bool tryNicerRulesString,
     bool omitResignPlayerMove,
     double overrideFinishedWhiteScore
+  );
+  void writeSgf(
+    std::ostream& out, const std::string& bName, const std::string& wName,
+    const BoardHistory& endHist,
+    const std::vector<std::string>& extraComments
+  );
+  void writeSgf(
+    std::ostream& out, const std::string& bName, const std::string& wName,
+    const BoardHistory& endHist,
+    const FinishedGameData* gameData,
+    bool tryNicerRulesString,
+    bool omitResignPlayerMove,
+    double overrideFinishedWhiteScore,
+    const std::vector<std::string>& extraComments
   );
 
   //If hist is a finished game, print the result to out along with SGF tag, else do nothing

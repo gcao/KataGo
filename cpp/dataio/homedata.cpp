@@ -18,6 +18,11 @@
 #include <codecvt>
 #endif
 
+#if __MINGW32__
+// `std::wstring_convert` needs explicit including in case of MINGW
+#include <locale>
+#endif
+
 #include "../core/makedir.h"
 
 using namespace std;
@@ -91,8 +96,8 @@ vector<string> HomeData::getDefaultFilesDirs() {
   vector<string> ret;
   if(count >= 0 && count < bufSize-1) {
     string exePath(result,count);
-    const gfs::path path(exePath);
-    string exeDir = path.parent_path().string();
+    const gfs::path path(gfs::u8path(exePath));
+    string exeDir = path.parent_path().u8string();
     ret.push_back(exeDir);
   }
   ret.push_back(getHomeDataDir(false,""));

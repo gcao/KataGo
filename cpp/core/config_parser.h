@@ -42,6 +42,7 @@ class ConfigParser {
   static std::map<std::string,std::string> parseCommaSeparated(const std::string& commaSeparatedValues);
 
   void warnUnusedKeys(std::ostream& out, Logger* logger) const;
+  void markKeyUsed(const std::string& key);
   void markAllKeysUsedWithPrefix(const std::string& prefix);
   void unsetUsedKey(const std::string& key);
   void applyAlias(const std::string& mapThisKey, const std::string& toThisKey);
@@ -88,7 +89,9 @@ class ConfigParser {
   std::vector<float> getFloats(const std::string& key, float min, float max);
   std::vector<double> getDoubles(const std::string& key, double min, double max);
 
- private:
+  std::vector<std::pair<int,int>> getNonNegativeIntDashedPairs(const std::string& key, int min, int max);
+
+private:
   bool initialized;
   std::string fileName;
   std::string contents;
@@ -119,6 +122,8 @@ class ConfigParser {
   void readStreamContent(std::istream& in);
   std::string lineAndFileInfo() const;
   std::string extractBaseDir(const std::string &fname);
+
+  bool parseKeyValue(const std::string& trimmedLine, std::string& key, std::string& value);
 };
 
 

@@ -322,7 +322,7 @@ size_t Rand::nextIndexCumulative(const double* cumRelProbs, size_t n)
 {
   assert(n > 0);
   assert(n < 0xFFFFFFFF);
-  double_t sum = cumRelProbs[n-1];
+  double sum = cumRelProbs[n-1];
   double d = nextDouble(sum);
   size_t r = BSearch::findFirstGt(cumRelProbs,d,0,n);
   if(r == n)
@@ -369,6 +369,18 @@ double Rand::nextGamma(double a) {
   // u [0,1)
   // v > 0  < some large number
   // xx >= 0 < some large number
+}
+
+void Rand::fillShuffledUIntRange(size_t n, uint32_t* buf) {
+  if(n >= 0xFFFFffffu)
+    throw StringError("Rand::fillShuffledUIntRange: out of range value for n: " + Global::uint64ToString(n));
+  for(size_t i = 0; i < n; i++) {
+    buf[i] = (uint32_t)i;
+  }
+  for(size_t i = 1; i < n; i++) {
+    size_t r = (size_t)nextUInt(i+1);
+    std::swap(buf[i],buf[r]);
+  }
 }
 
 static void simpleTest()
@@ -1139,4 +1151,48 @@ Gamma(4.0) expected: Mean 4.000000 Variance 4.000000 Skew 1.000000 ExcessKurt 1.
     TestCommon::expect(name,out,expected);
   }
 
+  {
+    const char* name = "Shuffle tests";
+    Rand rand("shuffletest!");
+    std::vector<uint32_t> buf(32,99);
+    rand.fillShuffledUIntRange(16,buf.data()+8);
+    for(int i = 0; i<32; i++) {
+      out << buf[i] << endl;
+    }
+    string expected = R"%%(
+99
+99
+99
+99
+99
+99
+99
+99
+6
+9
+10
+11
+1
+15
+2
+12
+7
+14
+8
+4
+5
+13
+0
+3
+99
+99
+99
+99
+99
+99
+99
+99
+)%%";
+    TestCommon::expect(name,out,expected);
+  }
 }

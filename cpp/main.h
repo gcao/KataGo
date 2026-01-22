@@ -10,8 +10,9 @@ namespace MainCmds {
   int gtp(const std::vector<std::string>& args);
   int tuner(const std::vector<std::string>& args);
   int match(const std::vector<std::string>& args);
-  int matchauto(const std::vector<std::string>& args);
   int selfplay(const std::vector<std::string>& args);
+
+  int testgpuerror(const std::vector<std::string>& args);
 
   int runtests(const std::vector<std::string>& args);
   int runnnlayertests(const std::vector<std::string>& args);
@@ -38,14 +39,23 @@ namespace MainCmds {
   int samplesgfs(const std::vector<std::string>& args);
   int dataminesgfs(const std::vector<std::string>& args);
   int genbook(const std::vector<std::string>& args);
+  int writebook(const std::vector<std::string>& args);
   int checkbook(const std::vector<std::string>& args);
+  int booktoposes(const std::vector<std::string>& args);
+  int comparebooks(const std::vector<std::string>& args);
+  int findbookbottlenecks(const std::vector<std::string>& args);
+  int writetrainingdata(const std::vector<std::string>& args);
 
   int trystartposes(const std::vector<std::string>& args);
   int viewstartposes(const std::vector<std::string>& args);
+  int checksgfhintpolicy(const std::vector<std::string>& args);
+  int genposesfromselfplayinit(const std::vector<std::string>& args);
 
   int demoplay(const std::vector<std::string>& args);
   int printclockinfo(const std::vector<std::string>& args);
   int sampleinitializations(const std::vector<std::string>& args);
+  int evalrandominits(const std::vector<std::string>& args);
+  int searchentropyanalysis(const std::vector<std::string>& args);
 
   int sandbox();
 }

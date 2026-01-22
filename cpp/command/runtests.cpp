@@ -6,6 +6,8 @@
 #include "../core/elo.h"
 #include "../core/fancymath.h"
 #include "../core/config_parser.h"
+#include "../core/datetime.h"
+#include "../core/fileutils.h"
 #include "../core/base64.h"
 #include "../core/timer.h"
 #include "../core/threadtest.h"
@@ -30,6 +32,7 @@ int MainCmds::runtests(const vector<string>& args) {
 
   BSearch::runTests();
   Rand::runTests();
+  DateTime::runTests();
   FancyMath::runTests();
   ComputeElos::runTests();
   Base64::runTests();
@@ -49,11 +52,19 @@ int MainCmds::runtests(const vector<string>& args) {
   Tests::runSgfTests();
   Tests::runBasicSymmetryTests();
   Tests::runBoardSymmetryTests();
+  Tests::runSymmetryDifferenceTests();
   Tests::runBoardReplayTest();
 
   ScoreValue::freeTables();
 
-  Tests::runConfigTests({});
+  Tests::runInlineConfigTests();
+
+  // Pick an arbitrary file that the test uses
+  if(FileUtils::exists("tests/data/configs/folded/test-parent.cfg"))
+    Tests::runConfigTests({});
+  else {
+    cout << "Not being run out of git repo, skipping config parsing tests" << endl;
+  }
 
   cout << "All tests passed" << endl;
   return 0;
@@ -71,6 +82,10 @@ int MainCmds::runoutputtests(const vector<string>& args) {
   Tests::runScoreTests();
   Tests::runNNSymmetryTests();
   Tests::runSgfFileTests();
+  Tests::runCollectFilesTests();
+  Tests::runLoadModelTests();
+  Tests::runTaskParsingTests();
+  Tests::runBookTests();
 
   ScoreValue::freeTables();
 
@@ -337,13 +352,14 @@ int MainCmds::runownershiptests(const vector<string>& args) {
 
 
 int MainCmds::runtinynntests(const vector<string>& args) {
-  if(args.size() != 2) {
-    cerr << "Must supply exactly one arguments: TMPDIR" << endl;
+  if(args.size() != 3) {
+    cerr << "Must supply exactly two arguments: TMPDIR ERRORTOLFACTOR" << endl;
     return 1;
   }
   Board::initHash();
   ScoreValue::initTables();
 
+  double errorTolFactor = Global::stringToDouble(args[2]);
   ConfigParser cfg;
   {
     //Dummy parameters
@@ -379,7 +395,8 @@ int MainCmds::runtinynntests(const vector<string>& args) {
     args[1],
     logger,
     cfg,
-    randFileName
+    randFileName,
+    errorTolFactor
   );
 
   ScoreValue::freeTables();
@@ -410,20 +427,26 @@ int MainCmds::runnnevalcanarytests(const vector<string>& args) {
   NNEvaluator* nnEval;
   {
     Setup::initializeSession(cfg);
-    int maxConcurrentEvals = 2;
-    int expectedConcurrentEvals = 1;
-    int defaultMaxBatchSize = 8;
-    bool defaultRequireExactNNLen = false;
-    string expectedSha256 = "";
+    const int expectedConcurrentEvals = 1;
+    const int defaultMaxBatchSize = 8;
+    const bool defaultRequireExactNNLen = false;
+    const bool disableFP16 = false;
+    const string expectedSha256 = "";
     nnEval = Setup::initializeNNEvaluator(
-      modelFile,modelFile,expectedSha256,cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,
-      NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,defaultRequireExactNNLen,
+      modelFile,modelFile,expectedSha256,cfg,logger,seedRand,expectedConcurrentEvals,
+      NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,defaultRequireExactNNLen,disableFP16,
       Setup::SETUP_FOR_GTP
     );
   }
 
   bool print = true;
-  Tests::runCanaryTests(nnEval,symmetry,print);
+  if(symmetry == -1) {
+    for(int sym = 0; sym < 8; sym++)
+      Tests::runCanaryTests(nnEval,sym,print);
+  }
+  else {
+    Tests::runCanaryTests(nnEval,symmetry,print);
+  }
   delete nnEval;
 
   ScoreValue::freeTables();
@@ -463,14 +486,14 @@ int MainCmds::runbeginsearchspeedtest(const vector<string>& args) {
   SearchParams params = Setup::loadSingleParams(cfg,Setup::SETUP_FOR_GTP);
   {
     Setup::initializeSession(cfg);
-    const int maxConcurrentEvals = params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
     const int expectedConcurrentEvals = params.numThreads;
     const int defaultMaxBatchSize = std::max(8,((params.numThreads+3)/4)*4);
     const bool defaultRequireExactNNLen = false;
+    const bool disableFP16 = false;
     const string expectedSha256 = "";
     nnEval = Setup::initializeNNEvaluator(
-      modelFile,modelFile,expectedSha256,cfg,logger,rand,maxConcurrentEvals,expectedConcurrentEvals,
-      Board::MAX_LEN,Board::MAX_LEN,defaultMaxBatchSize,defaultRequireExactNNLen,
+      modelFile,modelFile,expectedSha256,cfg,logger,rand,expectedConcurrentEvals,
+      Board::MAX_LEN,Board::MAX_LEN,defaultMaxBatchSize,defaultRequireExactNNLen,disableFP16,
       Setup::SETUP_FOR_GTP
     );
   }
@@ -587,14 +610,14 @@ int MainCmds::runownershipspeedtest(const vector<string>& args) {
   SearchParams params = Setup::loadSingleParams(cfg,Setup::SETUP_FOR_GTP);
   {
     Setup::initializeSession(cfg);
-    const int maxConcurrentEvals = params.numThreads * 2 + 16; // * 2 + 16 just to give plenty of headroom
     const int expectedConcurrentEvals = params.numThreads;
     const int defaultMaxBatchSize = std::max(8,((params.numThreads+3)/4)*4);
     const bool defaultRequireExactNNLen = false;
+    const bool disableFP16 = false;
     const string expectedSha256 = "";
     nnEval = Setup::initializeNNEvaluator(
-      modelFile,modelFile,expectedSha256,cfg,logger,rand,maxConcurrentEvals,expectedConcurrentEvals,
-      Board::MAX_LEN,Board::MAX_LEN,defaultMaxBatchSize,defaultRequireExactNNLen,
+      modelFile,modelFile,expectedSha256,cfg,logger,rand,expectedConcurrentEvals,
+      Board::MAX_LEN,Board::MAX_LEN,defaultMaxBatchSize,defaultRequireExactNNLen,disableFP16,
       Setup::SETUP_FOR_GTP
     );
   }
@@ -729,5 +752,7 @@ int MainCmds::runsleeptest(const vector<string>& args) {
 
 int MainCmds::runconfigtests(const vector<string>& args) {
   Tests::runConfigTests(args);
+  Tests::runParseAllConfigsTest();
   return 0;
 }
+

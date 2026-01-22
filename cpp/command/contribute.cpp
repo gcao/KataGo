@@ -30,6 +30,16 @@ int MainCmds::contribute(const std::vector<std::string>& args) {
 }
 
 #else
+#if defined(CACHE_TENSORRT_PLAN) && defined(USE_TENSORRT_BACKEND)
+
+int MainCmds::contribute(const std::vector<std::string>& args) {
+  (void)args;
+  std::cout << "This version of KataGo was compiled with CACHE_TENSORRT_PLAN enabled, which does not support contribute due to excessive disk space usage and possible performance issues." << std::endl;
+  std::cout << "Compile with CACHE_TENSORRT_PLAN=0 (-DUSE_CACHE_TENSORRT_PLAN=0 in CMake) instead." << std::endl;
+  return 0;
+}
+
+#else
 
 #include "../distributed/client.h"
 
@@ -109,7 +119,9 @@ static void runAndUploadSingleGame(
   std::unique_ptr<ostream>& outputEachMove, std::function<void()> flushOutputEachMove,
   const std::function<bool()>& shouldStopFunc,
   const WaitableFlag* shouldPause,
-  bool logGamesAsJson, bool alwaysIncludeOwnership
+  bool logGamesAsJson,
+  bool alwaysIncludeOwnership,
+  bool warnTaskUnusedKeys
 ) {
   if(gameTask.task.isRatingGame) {
     logger.write(
@@ -130,18 +142,31 @@ static void runAndUploadSingleGame(
 
   istringstream taskCfgIn(gameTask.task.config);
   ConfigParser taskCfg(taskCfgIn);
+  const std::string overrides = gameTask.repIdx < gameTask.task.overrides.size() ? gameTask.task.overrides[gameTask.repIdx] : std::string();
+  try {
+    if(overrides.size() > 0) {
+      map<string,string> newkvs = ConfigParser::parseCommaSeparated(overrides);
+      taskCfg.overrideKeys(newkvs);
+    }
+  }
+  catch(StringError& e) {
+    cerr << "Error applying overrides " << overrides << endl;
+    cerr << e.what() << endl;
+    throw;
+  }
 
   NNEvaluator* nnEvalBlack = gameTask.nnEvalBlack;
   NNEvaluator* nnEvalWhite = gameTask.nnEvalWhite;
 
   SearchParams baseParams;
   PlaySettings playSettings;
+  const bool isDistributed = true;
   try {
     baseParams = Setup::loadSingleParams(taskCfg,Setup::SETUP_FOR_DISTRIBUTED);
     if(gameTask.task.isRatingGame)
       playSettings = PlaySettings::loadForGatekeeper(taskCfg);
     else
-      playSettings = PlaySettings::loadForSelfplay(taskCfg);
+      playSettings = PlaySettings::loadForSelfplay(taskCfg, isDistributed);
   }
   catch(StringError& e) {
     cerr << "Error parsing task config" << endl;
@@ -169,7 +194,8 @@ static void runAndUploadSingleGame(
   GameRunner* gameRunner = new GameRunner(taskCfg, playSettings, logger);
 
   //Check for unused config keys
-  taskCfg.warnUnusedKeys(cerr,&logger);
+  if(warnTaskUnusedKeys)
+    taskCfg.warnUnusedKeys(cerr,&logger);
 
   //Make sure not to fork games in the middle for rating games!
   if(gameTask.task.isRatingGame)
@@ -247,7 +273,7 @@ static void runAndUploadSingleGame(
 
       // Usual analysis response fields
       ret["turnNumber"] = hist.moveHistory.size();
-      search->getAnalysisJson(perspective,analysisPVLen,preventEncore,true,alwaysIncludeOwnership,false,false,false,false,ret);
+      search->getAnalysisJson(perspective,analysisPVLen,preventEncore,true,alwaysIncludeOwnership,false,false,false,false,false,ret);
       std::cout << ret.dump() + "\n" << std::flush; // no endl due to race conditions
     }
 
@@ -302,37 +328,43 @@ static void runAndUploadSingleGame(
       if(gameTask.task.doWriteTrainingData) {
         //Pre-upload, verify that the GPU is okay.
         Tests::runCanaryTests(nnEvalBlack, NNInputs::SYMMETRY_NOTSPECIFIED, false);
+
+        string resultingFilename;
+        int64_t numDataRows = 0;
+        bool producedFile = false;
         gameTask.blackManager->withDataWriters(
           nnEvalBlack,
-          [gameData,&gameTask,gameIdx,&sgfFile,&connection,&logger,&shouldStopFunc](TrainingDataWriter* tdataWriter, TrainingDataWriter* vdataWriter, std::ofstream* sgfOut) {
-            (void)vdataWriter;
+          [gameData,&gameTask,gameIdx,&sgfFile,&connection,&logger,&shouldStopFunc,&posSample,&resultingFilename,&numDataRows,&producedFile](
+            TrainingDataWriter* tdataWriter, std::ofstream* sgfOut
+          ) {
             (void)sgfOut;
             assert(tdataWriter->isEmpty());
             tdataWriter->writeGame(*gameData);
-            string resultingFilename;
-            int64_t numDataRows = tdataWriter->numRowsInBuffer();
-            bool producedFile = tdataWriter->flushIfNonempty(resultingFilename);
-            //It's possible we'll have zero data if the game started in a nearly finished position and cheap search never
-            //gave us a real turn of search, in which case just ignore that game.
-            if(producedFile) {
-              bool suc = false;
-              try {
-                suc = connection->uploadTrainingGameAndData(gameTask.task,gameData,sgfFile,resultingFilename,numDataRows,retryOnFailure,shouldStopFunc);
-              }
-              catch(StringError& e) {
-                logger.write(string("Giving up uploading training game and data due to error:\n") + e.what());
-                suc = false;
-              }
-              if(suc)
-                logger.write(
-                  "Finished game " + Global::int64ToString(gameIdx)  + " (training), uploaded sgf " + sgfFile + " and training data " + resultingFilename
-                  + " (" + Global::int64ToString(numDataRows) + " rows)"
-                );
-            }
-            else {
-              logger.write("Finished game " + Global::int64ToString(gameIdx) + " (training), skipping uploading sgf " + sgfFile + " since it's an empty game");
-            }
-          });
+            numDataRows = tdataWriter->numRowsInBuffer();
+            producedFile = tdataWriter->flushIfNonempty(resultingFilename);
+          }
+        );
+
+        //It's possible we'll have zero data if the game started in a nearly finished position and cheap search never
+        //gave us a real turn of search, in which case just ignore that game.
+        if(producedFile) {
+          bool suc = false;
+          try {
+            suc = connection->uploadTrainingGameAndData(gameTask.task,gameData,posSample,sgfFile,resultingFilename,numDataRows,retryOnFailure,shouldStopFunc);
+          }
+          catch(StringError& e) {
+            logger.write(string("Giving up uploading training game and data due to error:\n") + e.what());
+            suc = false;
+          }
+          if(suc)
+            logger.write(
+              "Finished game " + Global::int64ToString(gameIdx)  + " (training), uploaded sgf " + sgfFile + " and training data " + resultingFilename
+              + " (" + Global::int64ToString(numDataRows) + " rows)"
+            );
+        }
+        else {
+          logger.write("Finished game " + Global::int64ToString(gameIdx) + " (training), skipping uploading sgf " + sgfFile + " since it's an empty game");
+        }
       }
       else {
         bool suc = false;
@@ -518,7 +550,7 @@ int MainCmds::contribute(const vector<string>& args) {
     maxSimultaneousGames = 16;
   }
   else {
-    maxSimultaneousGames = userCfg->getInt("maxSimultaneousGames", 1, 4000);
+    maxSimultaneousGames = userCfg->getInt("maxSimultaneousGames", 1, 16000);
   }
   bool onlyPlayRatingMatches = false;
   if(userCfg->contains("onlyPlayRatingMatches")) {
@@ -571,6 +603,8 @@ int MainCmds::contribute(const vector<string>& args) {
   string watchOngoingGameInFileName = userCfg->contains("watchOngoingGameInFileName") ? userCfg->getString("watchOngoingGameInFileName") : "";
   const bool logGamesAsJson = userCfg->contains("logGamesAsJson") ? userCfg->getBool("logGamesAsJson") : false;
   const bool alwaysIncludeOwnership = userCfg->contains("includeOwnership") ? userCfg->getBool("includeOwnership") : false;
+  const bool warnTaskUnusedKeys = userCfg->contains("warnTaskUnusedKeys") ? userCfg->getBool("warnTaskUnusedKeys") : false;
+
   if(watchOngoingGameInFileName == "")
     watchOngoingGameInFileName = "watchgame.txt";
 
@@ -582,7 +616,10 @@ int MainCmds::contribute(const vector<string>& args) {
     mirrorUseProxy,
     &logger
   );
+  connection->testConnection();
+  logger.write("Connected to " + serverUrl);
   const Client::RunParameters runParams = connection->getRunParameters();
+  logger.write("Found active training run: " + runParams.runName);
 
   MakeDir::make(baseDir);
   baseDir = baseDir + "/" + runParams.runName;
@@ -607,7 +644,8 @@ int MainCmds::contribute(const vector<string>& args) {
 
   {
     const bool randFileName = true;
-    NNEvaluator* tinyNNEval = TinyModelTest::runTinyModelTest(baseDir, logger, *userCfg, randFileName);
+    const double errorTolFactor = 1.0;
+    NNEvaluator* tinyNNEval = TinyModelTest::runTinyModelTest(baseDir, logger, *userCfg, randFileName, errorTolFactor);
     //Before we delete the tinyNNEval, it conveniently has all the info about what gpuidxs the user wants from the config, so
     //use it to tune everything.
 #ifdef USE_OPENCL_BACKEND
@@ -676,9 +714,6 @@ int MainCmds::contribute(const vector<string>& args) {
 
   const int maxSimultaneousRatingGamesPossible = std::min(taskRepFactor * maxRatingMatches, maxSimultaneousGames);
 
-  //Don't write "validation" data for distributed self-play. If the server-side wants to split out some data as "validation" for training
-  //then that can be done server-side.
-  const double validationProp = 0.0;
   //If we ever get more than this many games behind on writing data, something is weird.
   const int maxSelfplayDataQueueSize = maxSimultaneousGames * 4;
   const int maxRatingDataQueueSize = maxSimultaneousRatingGamesPossible * 4;
@@ -751,7 +786,7 @@ int MainCmds::contribute(const vector<string>& args) {
     &numRatingGamesActive,&numMovesPlayed,&watchOngoingGameInFile,&watchOngoingGameInFileName,
     &shouldStopFunc,&shouldStopGracefullyFunc,
     &shouldPause,
-    &logGamesAsJson, &alwaysIncludeOwnership,
+    &logGamesAsJson, &alwaysIncludeOwnership, &warnTaskUnusedKeys,
     &freeGameTask
   ] (
     int gameLoopThreadIdx
@@ -786,7 +821,7 @@ int MainCmds::contribute(const vector<string>& args) {
         int64_t gameIdx = numGamesStarted.fetch_add(1,std::memory_order_acq_rel);
         runAndUploadSingleGame(
           connection,gameTask,gameIdx,logger,seed,forkData,sgfsDir,thisLoopSeedRand,numMovesPlayed,outputEachMove,flushOutputEachMove,
-          shouldStopFunc,shouldPause,logGamesAsJson,alwaysIncludeOwnership
+          shouldStopFunc,shouldPause,logGamesAsJson,alwaysIncludeOwnership,warnTaskUnusedKeys
         );
       }
       freeGameTask(gameTask);
@@ -807,7 +842,7 @@ int MainCmds::contribute(const vector<string>& args) {
 
   auto loadNeuralNetIntoManager =
     [&runParams,&tdataDir,&sgfsDir,&logger,&userCfg,maxSimultaneousGames,maxSimultaneousRatingGamesPossible,&userCfgWarnedYet,
-     &invalidModelErrorTimer,&invalidModelErrorEwms,&lastInvalidModelErrorTime,&invalidModelErrorMutex](
+     &invalidModelErrorTimer,&invalidModelErrorEwms,&lastInvalidModelErrorTime,&invalidModelErrorMutex,&shouldPause](
       SelfplayManager* manager, const Client::ModelInfo modelInfo, const string& modelFile, bool isRatingManager
     ) {
     const string& modelName = modelInfo.name;
@@ -852,7 +887,6 @@ int MainCmds::contribute(const vector<string>& args) {
     }
 
     const int maxSimultaneousGamesThisNet = isRatingManager ? maxSimultaneousRatingGamesPossible : maxSimultaneousGames;
-    const int maxConcurrentEvals = runParams.maxSearchThreadsAllowed * maxSimultaneousGamesThisNet * 2 + 16;
     const int expectedConcurrentEvals = runParams.maxSearchThreadsAllowed * maxSimultaneousGamesThisNet;
     const bool defaultRequireExactNNLen = false;
     const int defaultMaxBatchSize = maxSimultaneousGamesThisNet;
@@ -864,13 +898,83 @@ int MainCmds::contribute(const vector<string>& args) {
     int maxRowsPerTrainFile = 20000;
 
     Rand rand;
-    NNEvaluator* nnEval = Setup::initializeNNEvaluator(
-      modelName,modelFile,modelInfo.sha256,*userCfg,logger,rand,maxConcurrentEvals,expectedConcurrentEvals,
-      NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,defaultRequireExactNNLen,
-      Setup::SETUP_FOR_DISTRIBUTED
-    );
-    assert(!nnEval->isNeuralNetLess() || modelFile == "/dev/null");
-    logger.write("Loaded latest neural net " + modelName + " from: " + modelFile);
+
+    NNEvaluator* nnEval;
+
+    {
+      const bool disableFP16 = false;
+      nnEval = Setup::initializeNNEvaluator(
+        modelName,modelFile,modelInfo.sha256,*userCfg,logger,rand,expectedConcurrentEvals,
+        NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,defaultRequireExactNNLen,disableFP16,
+        Setup::SETUP_FOR_DISTRIBUTED
+      );
+      assert(!nnEval->isNeuralNetLess() || modelFile == "/dev/null");
+      logger.write("Loaded latest neural net " + modelName + " from: " + modelFile);
+    }
+
+    if(!nnEval->isNeuralNetLess()) {
+      NNEvaluator* nnEval32;
+
+      if(nnEval->isAnyThreadUsingFP16()) {
+        const bool disableFP16 = true;
+        nnEval32 = Setup::initializeNNEvaluator(
+          modelName,modelFile,modelInfo.sha256,*userCfg,logger,rand,expectedConcurrentEvals,
+          NNPos::MAX_BOARD_LEN,NNPos::MAX_BOARD_LEN,defaultMaxBatchSize,defaultRequireExactNNLen,disableFP16,
+          Setup::SETUP_FOR_DISTRIBUTED
+        );
+      }
+      else {
+        nnEval32 = nnEval;
+      }
+      logger.write("Testing loaded net");
+
+      const bool verbose = false;
+      const bool quickTest = true;
+      // Cap test to avoid spawning too many threads when many selfplay games are running
+      const int maxBatchSizeCap = std::min(4, 1 + nnEval->getMaxBatchSize()/2);
+      bool fp32BatchSuccessBuf = true;
+      bool fp32BatchSuccessBufRect = true;
+      const string referenceFileName = "";
+      const double policyOptimismForTest = 0.25;
+      const double pdaForTest = 0.0;
+      const double nnPolicyTemperatureForTest = 1.0;
+
+      bool success = Tests::runBackendErrorTest(
+        nnEval,nnEval32,logger,"19",maxBatchSizeCap,verbose,quickTest,
+        policyOptimismForTest,pdaForTest,nnPolicyTemperatureForTest,
+        fp32BatchSuccessBuf,referenceFileName
+      );
+      bool successRect = Tests::runBackendErrorTest(
+        nnEval,nnEval32,logger,"rectangle",maxBatchSizeCap,verbose,quickTest,
+        policyOptimismForTest,pdaForTest,nnPolicyTemperatureForTest,
+        fp32BatchSuccessBufRect,referenceFileName
+      );
+
+      fp32BatchSuccessBuf = fp32BatchSuccessBuf && fp32BatchSuccessBufRect;
+      success = success && successRect;
+
+      if(!fp32BatchSuccessBuf) {
+        logger.write("Error: large GPU numerical errors, unable to continue");
+        shouldStop.store(true);
+        shouldStopGracefully.store(true);
+        shouldPause->setPermanently(false);
+        if(nnEval32 != nnEval)
+          delete nnEval32;
+        delete nnEval;
+        return false;
+      }
+      if(!success) {
+        logger.write("Warning: large FP16 errors, using FP32 instead");
+        assert(nnEval32 != nnEval);
+        delete nnEval;
+        nnEval = nnEval32;
+      }
+      else {
+      logger.write("Testing loaded net okay");
+        if(nnEval32 != nnEval)
+          delete nnEval32;
+      }
+    }
 
     if(!userCfgWarnedYet) {
       userCfgWarnedYet = true;
@@ -888,11 +992,10 @@ int MainCmds::contribute(const vector<string>& args) {
     const int dataBoardLen = runParams.dataBoardLen;
     TrainingDataWriter* tdataWriter = new TrainingDataWriter(
       tdataOutputDir, inputsVersion, maxRowsPerTrainFile, firstFileRandMinProp, dataBoardLen, dataBoardLen, Global::uint64ToHexString(rand.nextUInt64()));
-    TrainingDataWriter* vdataWriter = NULL;
     ofstream* sgfOut = NULL;
 
     logger.write("Loaded new neural net " + nnEval->getModelName());
-    manager->loadModelNoDataWritingLoop(nnEval, tdataWriter, vdataWriter, sgfOut);
+    manager->loadModelNoDataWritingLoop(nnEval, tdataWriter, sgfOut);
     return true;
   };
 
@@ -901,8 +1004,8 @@ int MainCmds::contribute(const vector<string>& args) {
   //For distributed selfplay, we have a single thread primarily in charge of the manager, so we turn this off
   //to ensure there is no asynchronous removal of models.
   bool autoCleanupAllButLatestIfUnused = false;
-  SelfplayManager* selfplayManager = new SelfplayManager(validationProp, maxSelfplayDataQueueSize, &logger, logGamesEvery, autoCleanupAllButLatestIfUnused);
-  SelfplayManager* ratingManager = new SelfplayManager(validationProp, maxRatingDataQueueSize, &logger, logGamesEvery, autoCleanupAllButLatestIfUnused);
+  SelfplayManager* selfplayManager = new SelfplayManager(maxSelfplayDataQueueSize, &logger, logGamesEvery, autoCleanupAllButLatestIfUnused);
+  SelfplayManager* ratingManager = new SelfplayManager(maxRatingDataQueueSize, &logger, logGamesEvery, autoCleanupAllButLatestIfUnused);
 
   //Start game loop threads! Yay!
   //Just start based on selfplay games, rating games will poke in as needed
@@ -1352,4 +1455,6 @@ int MainCmds::contribute(const vector<string>& args) {
   return 0;
 }
 
+#endif //CACHE_TENSORRT_PLAN
 #endif //BUILD_DISTRIBUTED
+

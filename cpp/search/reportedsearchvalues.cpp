@@ -23,8 +23,9 @@ ReportedSearchValues::ReportedSearchValues(
   double scoreMean = scoreMeanAvg;
   double scoreMeanSq = scoreMeanSqAvg;
   double scoreStdev = ScoreValue::getScoreStdev(scoreMean,scoreMeanSq);
-  staticScoreValue = ScoreValue::expectedWhiteScoreValue(scoreMean,scoreStdev,0.0,2.0,search.rootBoard);
-  dynamicScoreValue = ScoreValue::expectedWhiteScoreValue(scoreMean,scoreStdev,search.recentScoreCenter,search.searchParams.dynamicScoreCenterScale,search.rootBoard);
+  double sqrtBoardArea = search.rootBoard.sqrtBoardArea();
+  staticScoreValue = ScoreValue::expectedWhiteScoreValue(scoreMean,scoreStdev,0.0,2.0, sqrtBoardArea);
+  dynamicScoreValue = ScoreValue::expectedWhiteScoreValue(scoreMean,scoreStdev,search.recentScoreCenter,search.searchParams.dynamicScoreCenterScale, sqrtBoardArea);
   expectedScore = scoreMean;
   expectedScoreStdev = scoreStdev;
   lead = leadAvg;
@@ -47,4 +48,20 @@ ReportedSearchValues::ReportedSearchValues(
 
   weight = totalWeight;
   visits = totalVisits;
+}
+
+std::ostream& operator<<(std::ostream& out, const ReportedSearchValues& values) {
+  out << "winValue " << values.winValue << "\n";
+  out << "lossValue " << values.lossValue << "\n";
+  out << "noResultValue " << values.noResultValue << "\n";
+  out << "staticScoreValue " << values.staticScoreValue << "\n";
+  out << "dynamicScoreValue " << values.dynamicScoreValue << "\n";
+  out << "expectedScore " << values.expectedScore << "\n";
+  out << "expectedScoreStdev " << values.expectedScoreStdev << "\n";
+  out << "lead " << values.lead << "\n";
+  out << "winLossValue " << values.winLossValue << "\n";
+  out << "utility " << values.utility << "\n";
+  out << "weight " << values.weight << "\n";
+  out << "visits " << values.visits << "\n";
+  return out;
 }

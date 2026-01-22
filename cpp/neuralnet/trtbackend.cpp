@@ -7,6 +7,7 @@
 #include "../core/fileutils.h"
 #include "../core/makedir.h"
 #include "../core/sha2.h"
+#include "../core/test.h"
 #include "../dataio/homedata.h"
 #include "../neuralnet/desc.h"
 #include "../neuralnet/modelversion.h"
@@ -16,6 +17,9 @@
 
 using namespace std;
 using namespace nvinfer1;
+
+// Define this to print out some of the intermediate values of the neural net
+//#define DEBUG_INTERMEDIATE_VALUES
 
 static void checkCudaError(const cudaError_t status, const char* opName, const char* file, const char* func, int line) {
   if(status != cudaSuccess)
@@ -79,6 +83,7 @@ struct LoadedModel {
 
   LoadedModel(const string& fileName, const string& expectedSha256) {
     ModelDesc::loadFromFileMaybeGZipped(fileName, modelDesc, expectedSha256);
+    modelDesc.applyScale8ToReduceActivations();
   }
 
   LoadedModel() = delete;
@@ -95,31 +100,25 @@ void NeuralNet::freeLoadedModel(LoadedModel* loadedModel) {
   delete loadedModel;
 }
 
-string NeuralNet::getModelName(const LoadedModel* loadedModel) {
-  return loadedModel->modelDesc.name;
-}
-
-int NeuralNet::getModelVersion(const LoadedModel* loadedModel) {
-  return loadedModel->modelDesc.version;
-}
-
-Rules NeuralNet::getSupportedRules(const LoadedModel* loadedModel, const Rules& desiredRules, bool& supported) {
-  return loadedModel->modelDesc.getSupportedRules(desiredRules, supported);
+const ModelDesc& NeuralNet::getModelDesc(const LoadedModel* loadedModel) {
+  return loadedModel->modelDesc;
 }
 
 struct TRTModel {
   int nnXLen;
   int nnYLen;
+  int maxBatchSize;
   bool requireExactNNLen;
 
   // TensorRT keeps only reference to weights before engine is built
   const LoadedModel* rawModel;
   vector<unique_ptr<float[]>> extraWeights;
 
-  int version;
+  int modelVersion;
   uint8_t tuneHash[32];
+  IOptimizationProfile* profile;
   unique_ptr<INetworkDefinition> network;
-  vector<pair<string, Dims>> debugOutputs;
+  vector<pair<string, string>> debugOutputs;
 
   TRTModel() = default;
   TRTModel(TRTModel&&) = default;
@@ -131,13 +130,14 @@ struct TRTModel {
 struct ModelParser {
   unique_ptr<TRTModel> model;
 
-  ITensor* inputFeature;
-  ITensor* inputGlobalFeature;
+  ITensor* inputMask;
+  ITensor* inputSpatial;
+  ITensor* inputGlobal;
+  ITensor* inputMeta;
 
-  ILayer* maskExtractLayer;
-  ILayer* maskExtractSumLayer;
-  ILayer* maskExtractLinLayer;
-  ILayer* maskExtractQuadLayer;
+  ILayer* maskSumLayer;
+  ILayer* maskScaleLayer;
+  ILayer* maskQuadLayer;
 
   string tuneDesc;  // Serves as a hash of the network architecture specific to tuning
 
@@ -145,43 +145,65 @@ struct ModelParser {
   ModelParser(const ModelParser&) = delete;
   ModelParser& operator=(const ModelParser&) = delete;
 
-  unique_ptr<TRTModel> parse(
+  // Bump this when between katago versions we want to forcibly drop old timing caches and plan caches.
+  static constexpr int tuneSalt = 7;
+
+  unique_ptr<TRTModel> build(
     unique_ptr<INetworkDefinition> net,
+    IOptimizationProfile* profile,
     const LoadedModel* rawModel,
     int nnXLen,
     int nnYLen,
+    int maxBatchSize,
     bool requireExactNNLen) {
     model = make_unique<TRTModel>();
 
     model->nnXLen = nnXLen;
     model->nnYLen = nnYLen;
-    model->rawModel = rawModel;
+    model->profile = profile;
     model->network = move(net);
+    model->rawModel = rawModel;
+    model->maxBatchSize = maxBatchSize;
     model->requireExactNNLen = requireExactNNLen;
 
     auto& network = model->network;
     auto modelDesc = &model->rawModel->modelDesc;
 
-    int modelSalt = 1; // Bump this when between katago versions we want to forcibly drop old timing caches.
-    tuneDesc = Global::strprintf(
-      R"("model"(%d,%d,%d,%d,%d,%d,%d))",
-      modelSalt,
-      modelDesc->version,
-      modelDesc->numInputChannels,
-      modelDesc->numInputGlobalChannels,
-      modelDesc->numValueChannels,
-      modelDesc->numScoreValueChannels,
-      modelDesc->numOwnershipChannels);
+    if(modelDesc->numInputMetaChannels > 0) {
+      tuneDesc = Global::strprintf(
+        R"|("salt"(%d)"modelwithmeta"(%d,%d,%d,%d,%d,%d,%d))|",
+        tuneSalt,
+        modelDesc->modelVersion,
+        modelDesc->numInputChannels,
+        modelDesc->numInputGlobalChannels,
+        modelDesc->numInputMetaChannels,
+        modelDesc->numValueChannels,
+        modelDesc->numScoreValueChannels,
+        modelDesc->numOwnershipChannels
+      );
+    }
+    else {
+      tuneDesc = Global::strprintf(
+        R"|("salt"(%d)"model"(%d,%d,%d,%d,%d,%d))|",
+        tuneSalt,
+        modelDesc->modelVersion,
+        modelDesc->numInputChannels,
+        modelDesc->numInputGlobalChannels,
+        modelDesc->numValueChannels,
+        modelDesc->numScoreValueChannels,
+        modelDesc->numOwnershipChannels
+      );
+    }
 
-    model->version = modelDesc->version;
+    model->modelVersion = modelDesc->modelVersion;
     network->setName(modelDesc->name.c_str());
 
     initInputs();
-    initMaskLayers();
+    initMaskProcLayers();
 
-    auto trunk = parseTrunk(&modelDesc->trunk);
-    parsePolicyHead(&modelDesc->policyHead, trunk->getOutput(0));
-    parseValueHead(&modelDesc->valueHead, trunk->getOutput(0));
+    auto trunk = buildTrunk(&modelDesc->trunk);
+    buildPolicyHead(trunk->getOutput(0), &modelDesc->policyHead);
+    buildValueHead(trunk->getOutput(0), &modelDesc->valueHead);
 
     SHA2::get256(tuneDesc.c_str(), model->tuneHash);
 
@@ -194,7 +216,7 @@ struct ModelParser {
     ILayer* debugOutputLayer = nullptr;
     if(force2D) {
       auto layer = network->addShuffle(*tensor);
-      layer->setReshapeDimensions({1, {-1}});
+      layer->setReshapeDimensions({2, {0, -1}});
       debugOutputLayer = layer;
     } else {
       debugOutputLayer = network->addIdentity(*tensor);
@@ -206,7 +228,7 @@ struct ModelParser {
     debugOutput->setName(debugOutputName.c_str());
     debugOutput->setType(DataType::kFLOAT);
     debugOutput->setAllowedFormats(1U << static_cast<int>(TensorFormat::kLINEAR));
-    model->debugOutputs.push_back(pair<string, Dims>(description, debugOutput->getDimensions()));
+    model->debugOutputs.push_back(pair<string, string>(debugOutputName, description));
 #else
     (void)tensor;
     (void)description;
@@ -215,6 +237,7 @@ struct ModelParser {
   }
 
   void initInputs() {
+    auto profile = model->profile;
     auto& network = model->network;
     auto modelDesc = &model->rawModel->modelDesc;
 
@@ -222,19 +245,26 @@ struct ModelParser {
     int nnYLen = model->nnYLen;
     int numInputChannels = modelDesc->numInputChannels;
     int numInputGlobalChannels = modelDesc->numInputGlobalChannels;
+    int numInputMetaChannels = modelDesc->numInputMetaChannels;
 
-    int numFeatures = NNModelVersion::getNumSpatialFeatures(model->version);
+    int numFeatures = NNModelVersion::getNumSpatialFeatures(model->modelVersion);
     if(numInputChannels != numFeatures)
       throw StringError(Global::strprintf(
         "Neural net numInputChannels (%d) was not the expected number based on version (%d)",
         numInputChannels,
         numFeatures));
-    int numGlobalFeatures = NNModelVersion::getNumGlobalFeatures(model->version);
+    int numGlobalFeatures = NNModelVersion::getNumGlobalFeatures(model->modelVersion);
     if(numInputGlobalChannels != numGlobalFeatures)
       throw StringError(Global::strprintf(
         "Neural net numInputGlobalChannels (%d) was not the expected number based on version (%d)",
         numInputGlobalChannels,
         numGlobalFeatures));
+    if(numInputMetaChannels > 0) {
+      if(numInputMetaChannels != SGFMetadata::METADATA_INPUT_NUM_CHANNELS)
+        throw StringError(Global::strprintf("Neural net numInputMetaChannels (%d) was not the expected number (%d)",
+          numInputMetaChannels, SGFMetadata::METADATA_INPUT_NUM_CHANNELS
+        ));
+    }
 
     if(nnXLen > NNPos::MAX_BOARD_LEN)
       throw StringError(
@@ -243,177 +273,226 @@ struct ModelParser {
       throw StringError(
         Global::strprintf("nnYLen (%d) is greater than NNPos::MAX_BOARD_LEN (%d)", nnYLen, NNPos::MAX_BOARD_LEN));
 
-    assert(network->hasImplicitBatchDimension());
+    inputMask = network->addInput("InputMask", DataType::kFLOAT, {4, {-1, 1, nnYLen, nnXLen}});
+    inputMask->setAllowedFormats(1U << static_cast<int>(TensorFormat::kLINEAR));
+    profile->setDimensions("InputMask", OptProfileSelector::kMIN, Dims4(1, 1, nnYLen, nnXLen));
+    profile->setDimensions("InputMask", OptProfileSelector::kOPT, Dims4(model->maxBatchSize, 1, nnYLen, nnXLen));
+    profile->setDimensions("InputMask", OptProfileSelector::kMAX, Dims4(model->maxBatchSize, 1, nnYLen, nnXLen));
 
-    inputFeature = network->addInput("InputFeature", DataType::kFLOAT, {3, {numInputChannels, nnYLen, nnXLen}});
-    inputFeature->setAllowedFormats(1U << static_cast<int>(TensorFormat::kLINEAR));
+    inputSpatial = network->addInput("InputSpatial", DataType::kFLOAT, {4, {-1, numInputChannels, nnYLen, nnXLen}});
+    inputSpatial->setAllowedFormats(1U << static_cast<int>(TensorFormat::kLINEAR));
+    profile->setDimensions("InputSpatial", OptProfileSelector::kMIN, Dims4(1, numInputChannels, nnYLen, nnXLen));
+    profile->setDimensions(
+      "InputSpatial", OptProfileSelector::kOPT, Dims4(model->maxBatchSize, numInputChannels, nnYLen, nnXLen));
+    profile->setDimensions(
+      "InputSpatial", OptProfileSelector::kMAX, Dims4(model->maxBatchSize, numInputChannels, nnYLen, nnXLen));
 
-    inputGlobalFeature = network->addInput("InputGlobalFeature", DataType::kFLOAT, {3, {numInputGlobalChannels, 1, 1}});
-    inputFeature->setAllowedFormats(1U << static_cast<int>(TensorFormat::kLINEAR));
+    inputGlobal =
+      network->addInput("InputGlobal", DataType::kFLOAT, {4, {-1, numInputGlobalChannels, 1, 1}});
+    inputSpatial->setAllowedFormats(1U << static_cast<int>(TensorFormat::kLINEAR));
+    profile->setDimensions("InputGlobal", OptProfileSelector::kMIN, Dims4(1, numInputGlobalChannels, 1, 1));
+    profile->setDimensions(
+      "InputGlobal", OptProfileSelector::kOPT, Dims4(model->maxBatchSize, numInputGlobalChannels, 1, 1));
+    profile->setDimensions(
+      "InputGlobal", OptProfileSelector::kMAX, Dims4(model->maxBatchSize, numInputGlobalChannels, 1, 1));
 
-    markDebugOutput(inputFeature, "Initial bin features");
+    if(numInputMetaChannels > 0) {
+      inputMeta =
+        network->addInput("InputMeta", DataType::kFLOAT, {4, {-1, numInputMetaChannels, 1, 1}});
+      inputSpatial->setAllowedFormats(1U << static_cast<int>(TensorFormat::kLINEAR));
+      profile->setDimensions("InputMeta", OptProfileSelector::kMIN, Dims4(1, numInputMetaChannels, 1, 1));
+      profile->setDimensions(
+        "InputMeta", OptProfileSelector::kOPT, Dims4(model->maxBatchSize, numInputMetaChannels, 1, 1));
+      profile->setDimensions(
+        "InputMeta", OptProfileSelector::kMAX, Dims4(model->maxBatchSize, numInputMetaChannels, 1, 1));
+    }
+    else {
+      inputMeta = NULL;
+    }
+
+    markDebugOutput(inputSpatial, "Initial bin features");
   }
 
-  void initMaskLayers() {
+  void initMaskProcLayers() {
     int nnXLen = model->nnXLen;
     int nnYLen = model->nnYLen;
     auto& network = model->network;
 
     if(!model->requireExactNNLen) {
-      maskExtractLayer = network->addSlice(*inputFeature, {3, {0, 0, 0}}, {3, {1, nnYLen, nnXLen}}, {3, {1, 1, 1}});
-      maskExtractLayer->setName("MaskExtract");
-      maskExtractLayer->setPrecision(DataType::kFLOAT);
+      maskSumLayer = network->addReduce(*inputMask, ReduceOperation::kSUM, 1U << 2 | 1U << 3, true);
+      maskSumLayer->setName("InputMask/sum");
+      maskSumLayer->setPrecision(DataType::kFLOAT);
 
-      maskExtractSumLayer =
-        network->addReduce(*maskExtractLayer->getOutput(0), ReduceOperation::kSUM, 1U << 1 | 1U << 2, true);
-      maskExtractSumLayer->setName("MaskExtract/Sum");
-      maskExtractSumLayer->setPrecision(DataType::kFLOAT);
+      auto maskWidthLayer = network->addUnary(*maskSumLayer->getOutput(0), UnaryOperation::kSQRT);
+      maskWidthLayer->setName("InputMask/width");
+      maskWidthLayer->setPrecision(DataType::kFLOAT);
 
-      auto maskExtractWidthLayer = network->addUnary(*maskExtractSumLayer->getOutput(0), UnaryOperation::kSQRT);
-      maskExtractWidthLayer->setName("MaskExtract/Width");
-      maskExtractWidthLayer->setPrecision(DataType::kFLOAT);
-
-      auto maskExtractLinWeightsShift = make_unique<float[]>(1);
-      auto maskExtractLinWeightsScale = make_unique<float[]>(1);
-      maskExtractLinWeightsShift[0] = -1.4f;
-      maskExtractLinWeightsScale[0] = 0.1f;
-      maskExtractLinLayer = network->addScale(
-        *maskExtractWidthLayer->getOutput(0),
+      auto maskScaleWeightsShift = make_unique<float[]>(1);
+      auto maskScaleWeightsScale = make_unique<float[]>(1);
+      maskScaleWeightsShift[0] = -1.4f;
+      maskScaleWeightsScale[0] = 0.1f;
+      maskScaleLayer = network->addScale(
+        *maskWidthLayer->getOutput(0),
         ScaleMode::kUNIFORM,
-        {DataType::kFLOAT, maskExtractLinWeightsShift.get(), 1},
-        {DataType::kFLOAT, maskExtractLinWeightsScale.get(), 1},
+        {DataType::kFLOAT, maskScaleWeightsShift.get(), 1},
+        {DataType::kFLOAT, maskScaleWeightsScale.get(), 1},
         {DataType::kFLOAT, nullptr, 0});
-      maskExtractLinLayer->setName("MaskExtract/Lin");
-      maskExtractLinLayer->setPrecision(DataType::kFLOAT);
-      model->extraWeights.push_back(move(maskExtractLinWeightsShift));
-      model->extraWeights.push_back(move(maskExtractLinWeightsScale));
+      maskScaleLayer->setName("InputMask/scale");
+      maskScaleLayer->setPrecision(DataType::kFLOAT);
+      model->extraWeights.push_back(move(maskScaleWeightsShift));
+      model->extraWeights.push_back(move(maskScaleWeightsScale));
 
-      auto maskExtractCenterSquareWeightsShift = make_unique<float[]>(1);
-      auto maskExtractCenterSquareWeightsPower = make_unique<float[]>(1);
-      maskExtractCenterSquareWeightsShift[0] = -14.0f;
-      maskExtractCenterSquareWeightsPower[0] = 2.0f;
-      auto maskExtractCenterSquareLayer = network->addScale(
-        *maskExtractWidthLayer->getOutput(0),
+      auto maskCenterSquareWeightsShift = make_unique<float[]>(1);
+      auto maskCenterSquareWeightsPower = make_unique<float[]>(1);
+      maskCenterSquareWeightsShift[0] = -14.0f;
+      maskCenterSquareWeightsPower[0] = 2.0f;
+      auto maskCenterSquareLayer = network->addScale(
+        *maskWidthLayer->getOutput(0),
         ScaleMode::kUNIFORM,
-        {DataType::kFLOAT, maskExtractCenterSquareWeightsShift.get(), 1},
+        {DataType::kFLOAT, maskCenterSquareWeightsShift.get(), 1},
         {DataType::kFLOAT, nullptr, 0},
-        {DataType::kFLOAT, maskExtractCenterSquareWeightsPower.get(), 1});
-      maskExtractCenterSquareLayer->setName("MaskExtract/CenterSquare");
-      maskExtractCenterSquareLayer->setPrecision(DataType::kFLOAT);
-      model->extraWeights.push_back(move(maskExtractCenterSquareWeightsShift));
-      model->extraWeights.push_back(move(maskExtractCenterSquareWeightsPower));
+        {DataType::kFLOAT, maskCenterSquareWeightsPower.get(), 1});
+      maskCenterSquareLayer->setName("InputMask/centersquare");
+      maskCenterSquareLayer->setPrecision(DataType::kFLOAT);
+      model->extraWeights.push_back(move(maskCenterSquareWeightsShift));
+      model->extraWeights.push_back(move(maskCenterSquareWeightsPower));
 
-      auto maskExtractQuadWeightsShift = make_unique<float[]>(1);
-      auto maskExtractQuadWeightsScale = make_unique<float[]>(1);
-      maskExtractQuadWeightsShift[0] = -0.1f;
-      maskExtractQuadWeightsScale[0] = 0.01f;
-      maskExtractQuadLayer = network->addScale(
-        *maskExtractCenterSquareLayer->getOutput(0),
+      auto maskQuadWeightsShift = make_unique<float[]>(1);
+      auto maskQuadWeightsScale = make_unique<float[]>(1);
+      maskQuadWeightsShift[0] = -0.1f;
+      maskQuadWeightsScale[0] = 0.01f;
+      maskQuadLayer = network->addScale(
+        *maskCenterSquareLayer->getOutput(0),
         ScaleMode::kUNIFORM,
-        {DataType::kFLOAT, maskExtractQuadWeightsShift.get(), 1},
-        {DataType::kFLOAT, maskExtractQuadWeightsScale.get(), 1},
+        {DataType::kFLOAT, maskQuadWeightsShift.get(), 1},
+        {DataType::kFLOAT, maskQuadWeightsScale.get(), 1},
         {DataType::kFLOAT, nullptr, 0});
-      maskExtractQuadLayer->setName("MaskExtract/Quad");
-      maskExtractQuadLayer->setPrecision(DataType::kFLOAT);
-      model->extraWeights.push_back(move(maskExtractQuadWeightsShift));
-      model->extraWeights.push_back(move(maskExtractQuadWeightsScale));
+      maskQuadLayer->setName("InputMask/quad");
+      maskQuadLayer->setPrecision(DataType::kFLOAT);
+      model->extraWeights.push_back(move(maskQuadWeightsShift));
+      model->extraWeights.push_back(move(maskQuadWeightsScale));
     } else {
-      float maskExtractWidth = sqrtf(nnXLen * nnYLen);
+      float maskWidth = sqrtf(nnXLen * nnYLen);
 
-      auto linLayerWeights = make_unique<float[]>(1);
-      linLayerWeights[0] = maskExtractWidth * 0.1f - 1.4f;
-      maskExtractLinLayer = network->addConstant({3, {1, 1, 1}}, {DataType::kFLOAT, linLayerWeights.get(), 1});
-      maskExtractLinLayer->setName("MaskExtract/Lin");
-      model->extraWeights.push_back(move(linLayerWeights));
+      auto maskScaleLayerWeights = make_unique<float[]>(1);
+      maskScaleLayerWeights[0] = maskWidth * 0.1f - 1.4f;
+      maskScaleLayer = network->addConstant({4, {1, 1, 1, 1}}, {DataType::kFLOAT, maskScaleLayerWeights.get(), 1});
+      maskScaleLayer->setName("InputMask/scale");
+      model->extraWeights.push_back(move(maskScaleLayerWeights));
 
-      auto quadLayerWeights = make_unique<float[]>(1);
-      quadLayerWeights[0] = (maskExtractWidth - 14.0f) * (maskExtractWidth - 14.0f) * 0.01f - 0.1f;
-      maskExtractQuadLayer = network->addConstant({3, {1, 1, 1}}, {DataType::kFLOAT, quadLayerWeights.get(), 1});
-      maskExtractQuadLayer->setName("MaskExtract/Quad");
-      model->extraWeights.push_back(move(quadLayerWeights));
+      auto maskQuadLayerWeights = make_unique<float[]>(1);
+      maskQuadLayerWeights[0] = (maskWidth - 14.0f) * (maskWidth - 14.0f) * 0.01f - 0.1f;
+      maskQuadLayer = network->addConstant({4, {1, 1, 1, 1}}, {DataType::kFLOAT, maskQuadLayerWeights.get(), 1});
+      maskQuadLayer->setName("InputMask/quad");
+      model->extraWeights.push_back(move(maskQuadLayerWeights));
     }
   }
 
-  ILayer* parseTrunk(const TrunkDesc* desc) {
+  ILayer* buildTrunk(const TrunkDesc* desc) {
     auto& network = model->network;
 
     string name = desc->name;
-    int numBlocks = desc->numBlocks;
     int numChannels = desc->trunkNumChannels;
 
     tuneDesc += Global::strprintf(
-      R"("%s"(%d,%d,%d,%d,%d,%d))",
+      R"|("%s"(%d,%d,%d,%d,%d))|",
       desc->name.c_str(),
       desc->numBlocks,
       desc->trunkNumChannels,
       desc->midNumChannels,
       desc->regularNumChannels,
-      desc->dilatedNumChannels,
       desc->gpoolNumChannels);
 
-    auto initialConvLayer = parseConvLayer(&desc->initialConv, inputFeature);
-    auto initialMatMulLayer = parseMatMulLayer(&desc->initialMatMul, inputGlobalFeature);
+    auto initialConvLayer = buildConvLayer(inputSpatial, &desc->initialConv);
+    auto initialMatMulLayer = buildMatMulLayer(inputGlobal, &desc->initialMatMul);
+    ILayer* initialMetaLayer;
+    if(desc->metaEncoderVersion > 0) {
+      initialMetaLayer = buildSGFMetadataEncoder(inputMeta, &desc->sgfMetadataEncoder);
+    }
+    else {
+      initialMetaLayer = NULL;
+    }
 
     auto initialConv = initialConvLayer->getOutput(0);
     auto initialMatMul = initialMatMulLayer->getOutput(0);
+    auto initialMeta = initialMetaLayer == NULL ? NULL : initialMetaLayer->getOutput(0);
 
-    assert(initialConv->getDimensions().d[0] == numChannels);
-    assert(initialMatMul->getDimensions().d[0] == numChannels);
+    assert(initialConv->getDimensions().d[1] == numChannels);
+    assert(initialMatMul->getDimensions().d[1] == numChannels);
+    if(initialMeta != NULL) {
+      assert(initialMeta->getDimensions().d[1] == numChannels);
+    }
 
     markDebugOutput(initialConvLayer->getOutput(0), "After initial conv");
 
     auto initialBiasLayer = network->addElementWise(*initialConv, *initialMatMul, ElementWiseOperation::kSUM);
-    auto initiaBiasLayerName = name + "/initbias";
-    initialBiasLayer->setName(initiaBiasLayerName.c_str());
-    ILayer* trunkScratchLayer = initialBiasLayer;
+    if(initialMeta != NULL) {
+      initialBiasLayer = network->addElementWise(*(initialBiasLayer->getOutput(0)), *initialMeta, ElementWiseOperation::kSUM);
+    }
+    auto initialBiasLayerName = name + "/initbias";
+    initialBiasLayer->setName(initialBiasLayerName.c_str());
 
-    assert(desc->blocks.size() == numBlocks);
-    for(int i = 0; i < numBlocks; i++) {
-      markDebugOutput(trunkScratchLayer->getOutput(0), "Trunk before block " + to_string(i));
-      if(desc->blocks[i].first == ORDINARY_BLOCK_KIND) {
-        auto blockDesc = static_cast<ResidualBlockDesc*>(desc->blocks[i].second.get());
-        trunkScratchLayer = parseResidualBlock(blockDesc, trunkScratchLayer->getOutput(0));
-      } else if(desc->blocks[i].first == DILATED_BLOCK_KIND) {
-        auto blockDesc = static_cast<DilatedResidualBlockDesc*>(desc->blocks[i].second.get());
-        trunkScratchLayer = parseDilatedResidualBlock(blockDesc, trunkScratchLayer->getOutput(0));
-      } else if(desc->blocks[i].first == GLOBAL_POOLING_BLOCK_KIND) {
-        auto blockDesc = static_cast<GlobalPoolingResidualBlockDesc*>(desc->blocks[i].second.get());
-        trunkScratchLayer = parseGlobalPoolingResidualBlock(blockDesc, trunkScratchLayer->getOutput(0));
+    assert(desc->blocks.size() == desc->numBlocks);
+    auto trunkScratchLayer = buildResidualBlockStack(initialBiasLayer->getOutput(0), desc->blocks, "trunk");
+
+    auto trunkTipBatchNormLayer = buildBatchNormLayer(trunkScratchLayer->getOutput(0), &desc->trunkTipBN);
+    auto trunkTipActivationLayer =
+      buildActivationLayer(trunkTipBatchNormLayer->getOutput(0), &desc->trunkTipActivation);
+    auto trunkTipMaskLayer = applyMaskLayer(trunkTipActivationLayer);
+
+    auto trunkTipCastLayer = applyCastLayer(trunkTipMaskLayer, DataType::kFLOAT);
+    markDebugOutput(trunkTipCastLayer->getOutput(0), "Trunk tip");
+
+    return trunkTipCastLayer;
+  }
+
+  ILayer* buildResidualBlockStack(
+    ITensor* input,
+    const std::vector<std::pair<int, unique_ptr_void>>& blocks,
+    const string& name) {
+    ILayer* trunkScratchLayer = model->network->addIdentity(*input);
+    auto trunkScratchLayerName = name + "/scratch";
+    trunkScratchLayer->setName(trunkScratchLayerName.c_str());
+
+    for(int i = 0; i < blocks.size(); i++) {
+      markDebugOutput(trunkScratchLayer->getOutput(0), name + " before block " + to_string(i));
+      if(blocks[i].first == ORDINARY_BLOCK_KIND) {
+        auto blockDesc = static_cast<ResidualBlockDesc*>(blocks[i].second.get());
+        trunkScratchLayer = buildResidualBlock(trunkScratchLayer->getOutput(0), blockDesc);
+      } else if(blocks[i].first == GLOBAL_POOLING_BLOCK_KIND) {
+        auto blockDesc = static_cast<GlobalPoolingResidualBlockDesc*>(blocks[i].second.get());
+        trunkScratchLayer = buildGlobalPoolingResidualBlock(trunkScratchLayer->getOutput(0), blockDesc);
+      } else if(blocks[i].first == NESTED_BOTTLENECK_BLOCK_KIND) {
+        auto blockDesc = static_cast<NestedBottleneckResidualBlockDesc*>(blocks[i].second.get());
+        trunkScratchLayer = buildNestedBottleneckResidualBlock(trunkScratchLayer->getOutput(0), blockDesc);
       } else {
         ASSERT_UNREACHABLE;
       }
     }
 
-    auto trunkTipBatchNormLayer = parseBatchNormLayer(&desc->trunkTipBN, trunkScratchLayer->getOutput(0));
-    auto trunkTipActivationLayer =
-      parseActivationLayer(&desc->trunkTipActivation, trunkTipBatchNormLayer->getOutput(0));
-    auto trunkTipMaskLayer = applyMaskLayer(trunkTipActivationLayer);
-
-    markDebugOutput(trunkTipMaskLayer->getOutput(0), "Trunk tip");
-
-    return trunkTipMaskLayer;
+    return trunkScratchLayer;
   }
 
-  void parsePolicyHead(const PolicyHeadDesc* desc, ITensor* input) {
+  void buildPolicyHead(ITensor* input, const PolicyHeadDesc* desc) {
     auto& network = model->network;
     string name = desc->name;
 
-    auto p1ConvLayer = parseConvLayer(&desc->p1Conv, input);
-    auto g1ConvLayer = parseConvLayer(&desc->g1Conv, input);
-    auto g1BatchNormLayer = parseBatchNormLayer(&desc->g1BN, g1ConvLayer->getOutput(0));
-    auto g1ActivationLayer = parseActivationLayer(&desc->g1Activation, g1BatchNormLayer->getOutput(0));
-    auto g1MaskLayer = applyMaskLayer(g1ActivationLayer);
+    auto p1ConvLayer = buildConvLayer(input, &desc->p1Conv, true);
+    auto g1ConvLayer = buildConvLayer(input, &desc->g1Conv, true);
+    auto g1BatchNormLayer = buildBatchNormLayer(g1ConvLayer->getOutput(0), &desc->g1BN, true);
+    auto g1ActivationLayer = buildActivationLayer(g1BatchNormLayer->getOutput(0), &desc->g1Activation, true);
+    auto g1MaskLayer = applyMaskLayer(g1ActivationLayer, true);
     auto g1CastLayer = applyCastLayer(g1MaskLayer, DataType::kFLOAT);
     auto gpoolLayer = applyGPoolLayer(g1CastLayer, true);
-    auto gpoolToBiasMulLayer = parseMatMulLayer(&desc->gpoolToBiasMul, gpoolLayer->getOutput(0), true);
+    auto gpoolToBiasMulLayer = buildMatMulLayer(gpoolLayer->getOutput(0), &desc->gpoolToBiasMul, true);
     auto p1CastLayer = applyCastLayer(p1ConvLayer, DataType::kFLOAT);
     auto gpoolBiasLayer = network->addElementWise(
       *p1CastLayer->getOutput(0), *gpoolToBiasMulLayer->getOutput(0), ElementWiseOperation::kSUM);
     auto gpoolBiasLayerName = name + "/gpbias";
     gpoolBiasLayer->setName(gpoolBiasLayerName.c_str());
     gpoolBiasLayer->setPrecision(DataType::kFLOAT);
-    auto p1BatchNormLayer = parseBatchNormLayer(&desc->p1BN, gpoolBiasLayer->getOutput(0), true);
-    auto p1ActivationLayer = parseActivationLayer(&desc->p1Activation, p1BatchNormLayer->getOutput(0), true);
+    auto p1BatchNormLayer = buildBatchNormLayer(gpoolBiasLayer->getOutput(0), &desc->p1BN, true);
+    auto p1ActivationLayer = buildActivationLayer(p1BatchNormLayer->getOutput(0), &desc->p1Activation, true);
     auto p1MaskLayer = applyMaskLayer(p1ActivationLayer, true);
 
     markDebugOutput(p1ConvLayer->getOutput(0), "p1 pre-gpool-sum");
@@ -426,67 +505,69 @@ struct ModelParser {
     assert(desc->p2Conv.convXSize == 1);
     assert(desc->p2Conv.convYSize == 1);
 
-    auto p2ConvLayer = parseConvLayer(&desc->p2Conv, p1MaskLayer->getOutput(0), true);
-    auto p2ConvReshapeLayer = network->addShuffle(*p2ConvLayer->getOutput(0));
-    auto p2ConvReshapeLayerName = string(p2ConvLayer->getName()) + "/reshape";
-    p2ConvReshapeLayer->setName(p2ConvReshapeLayerName.c_str());
-    p2ConvReshapeLayer->setReshapeDimensions({1, {-1}});
-    p2ConvReshapeLayer->setPrecision(DataType::kFLOAT);
+    auto p2ConvLayer = buildConvLayer(p1MaskLayer->getOutput(0), &desc->p2Conv, true);
+    p2ConvLayer->setPrecision(DataType::kFLOAT);
+    if(model->modelVersion >= 15) {
+      auto gpoolToPassMulLayer = buildMatMulLayer(gpoolLayer->getOutput(0), &desc->gpoolToPassMul, true);
+      gpoolToPassMulLayer->setPrecision(DataType::kFLOAT);
+      auto gpoolToPassBiasLayer = buildMatBiasLayer(gpoolToPassMulLayer->getOutput(0), &desc->gpoolToPassBias, true);
+      auto gpoolToPassActLayer = buildActivationLayer(gpoolToPassBiasLayer->getOutput(0), &desc->passActivation, true);
+      auto gpoolToPassMul2Layer = buildMatMulLayer(gpoolToPassActLayer->getOutput(0), &desc->gpoolToPassMul2, true);
+      gpoolToPassMul2Layer->setPrecision(DataType::kFLOAT);
 
-    markDebugOutput(p2ConvReshapeLayer->getOutput(0), "p2");
+      auto outputPolicyPass = gpoolToPassMul2Layer->getOutput(0);
+      network->markOutput(*outputPolicyPass);
+      outputPolicyPass->setName("OutputPolicyPass");
+      outputPolicyPass->setType(DataType::kFLOAT);
+      outputPolicyPass->setAllowedFormats(1U << static_cast<int>(TensorFormat::kLINEAR));
+    } else {
+      auto gpoolToPassMulLayer = buildMatMulLayer(gpoolLayer->getOutput(0), &desc->gpoolToPassMul, true);
+      gpoolToPassMulLayer->setPrecision(DataType::kFLOAT);
 
-    auto gpoolToPassMulLayer = parseMatMulLayer(&desc->gpoolToPassMul, gpoolLayer->getOutput(0), true);
-    auto gpoolToPassMulReshapeLayer = network->addShuffle(*gpoolToPassMulLayer->getOutput(0));
-    auto gpoolToPassMulReshapeLayerName = string(gpoolToPassMulLayer->getName()) + "/reshape";
-    gpoolToPassMulReshapeLayer->setName(gpoolToPassMulReshapeLayerName.c_str());
-    gpoolToPassMulReshapeLayer->setReshapeDimensions({1, {-1}});
-    gpoolToPassMulReshapeLayer->setPrecision(DataType::kFLOAT);
+      auto outputPolicyPass = gpoolToPassMulLayer->getOutput(0);
+      network->markOutput(*outputPolicyPass);
+      outputPolicyPass->setName("OutputPolicyPass");
+      outputPolicyPass->setType(DataType::kFLOAT);
+      outputPolicyPass->setAllowedFormats(1U << static_cast<int>(TensorFormat::kLINEAR));
+    }
 
-    markDebugOutput(gpoolToPassMulReshapeLayer->getOutput(0), "p2pass");
-
-    ITensor* concatInputs[] = {p2ConvReshapeLayer->getOutput(0), gpoolToPassMulReshapeLayer->getOutput(0)};
-    auto concatLayer = network->addConcatenation(concatInputs, 2);
-    auto concatLayerName = name + "/concat";
-    concatLayer->setName(concatLayerName.c_str());
-    concatLayer->setPrecision(DataType::kFLOAT);
-
-    auto outputPolicy = concatLayer->getOutput(0);
+    auto outputPolicy = p2ConvLayer->getOutput(0);
     network->markOutput(*outputPolicy);
     outputPolicy->setName("OutputPolicy");
     outputPolicy->setType(DataType::kFLOAT);
     outputPolicy->setAllowedFormats(1U << static_cast<int>(TensorFormat::kLINEAR));
   }
 
-  void parseValueHead(const ValueHeadDesc* desc, ITensor* input) {
+  void buildValueHead(ITensor* input, const ValueHeadDesc* desc) {
     auto& network = model->network;
 
-    auto v1ConvLayer = parseConvLayer(&desc->v1Conv, input);
-    auto v1BatchNormLayer = parseBatchNormLayer(&desc->v1BN, v1ConvLayer->getOutput(0));
-    auto v1ActivationLayer = parseActivationLayer(&desc->v1Activation, v1BatchNormLayer->getOutput(0));
-    auto v1MaskLayer = applyMaskLayer(v1ActivationLayer);
+    auto v1ConvLayer = buildConvLayer(input, &desc->v1Conv, true);
+    auto v1BatchNormLayer = buildBatchNormLayer(v1ConvLayer->getOutput(0), &desc->v1BN, true);
+    auto v1ActivationLayer = buildActivationLayer(v1BatchNormLayer->getOutput(0), &desc->v1Activation, true);
+    auto v1MaskLayer = applyMaskLayer(v1ActivationLayer, true);
     auto v1CastLayer = applyCastLayer(v1MaskLayer, DataType::kFLOAT);
 
     markDebugOutput(v1ConvLayer->getOutput(0), "v1");
 
     auto gpoolLayer = applyGPoolLayer(v1CastLayer, true, true);
-    auto v2MulLayer = parseMatMulLayer(&desc->v2Mul, gpoolLayer->getOutput(0), true);
-    auto v2BiasLayer = parseMatBiasLayer(&desc->v2Bias, v2MulLayer->getOutput(0), true);
-    auto v2ActivationLayer = parseActivationLayer(&desc->v2Activation, v2BiasLayer->getOutput(0), true);
+    auto v2MulLayer = buildMatMulLayer(gpoolLayer->getOutput(0), &desc->v2Mul, true);
+    auto v2BiasLayer = buildMatBiasLayer(v2MulLayer->getOutput(0), &desc->v2Bias, true);
+    auto v2ActivationLayer = buildActivationLayer(v2BiasLayer->getOutput(0), &desc->v2Activation, true);
 
     markDebugOutput(gpoolLayer->getOutput(0), "v1 pooled", true);
     markDebugOutput(v2ActivationLayer->getOutput(0), "v2", true);
 
-    auto v3MulLayer = parseMatMulLayer(&desc->v3Mul, v2ActivationLayer->getOutput(0), true);
-    auto v3BiasLayer = parseMatBiasLayer(&desc->v3Bias, v3MulLayer->getOutput(0), true);
+    auto v3MulLayer = buildMatMulLayer(v2ActivationLayer->getOutput(0), &desc->v3Mul, true);
+    auto v3BiasLayer = buildMatBiasLayer(v3MulLayer->getOutput(0), &desc->v3Bias, true);
 
-    auto sv3MulLayer = parseMatMulLayer(&desc->sv3Mul, v2ActivationLayer->getOutput(0), true);
-    auto sv3BiasLayer = parseMatBiasLayer(&desc->sv3Bias, sv3MulLayer->getOutput(0), true);
+    auto sv3MulLayer = buildMatMulLayer(v2ActivationLayer->getOutput(0), &desc->sv3Mul, true);
+    auto sv3BiasLayer = buildMatBiasLayer(sv3MulLayer->getOutput(0), &desc->sv3Bias, true);
 
     // So that mask layer can be omitted
     assert(desc->vOwnershipConv.convXSize == 1);
     assert(desc->vOwnershipConv.convYSize == 1);
 
-    auto vOwnershipConvLayer = parseConvLayer(&desc->vOwnershipConv, v1MaskLayer->getOutput(0));
+    auto vOwnershipConvLayer = buildConvLayer(v1MaskLayer->getOutput(0), &desc->vOwnershipConv, true);
     auto vOwnershipCastLayer = applyCastLayer(vOwnershipConvLayer, DataType::kFLOAT);
 
     auto outputValue = v3BiasLayer->getOutput(0);
@@ -508,20 +589,34 @@ struct ModelParser {
     outputOwnership->setAllowedFormats(1U << static_cast<int>(TensorFormat::kLINEAR));
 
     auto modelDesc = &model->rawModel->modelDesc;
-    assert(outputValue->getDimensions().d[0] == modelDesc->numValueChannels);
-    assert(outputScoreValue->getDimensions().d[0] == modelDesc->numScoreValueChannels);
-    assert(outputOwnership->getDimensions().d[0] == modelDesc->numOwnershipChannels);
+    assert(outputValue->getDimensions().d[1] == modelDesc->numValueChannels);
+    assert(outputScoreValue->getDimensions().d[1] == modelDesc->numScoreValueChannels);
+    assert(outputOwnership->getDimensions().d[1] == modelDesc->numOwnershipChannels);
   }
 
-  ILayer* parseResidualBlock(const ResidualBlockDesc* desc, ITensor* input) {
-    auto preBatchNormLayer = parseBatchNormLayer(&desc->preBN, input);
-    auto preActivationLayer = parseActivationLayer(&desc->preActivation, preBatchNormLayer->getOutput(0));
+
+  ILayer* buildSGFMetadataEncoder(ITensor* input, const SGFMetadataEncoderDesc* desc) {
+    auto mul1Layer = buildMatMulLayer(input, &desc->mul1);
+    auto bias1Layer = buildMatBiasLayer(mul1Layer->getOutput(0), &desc->bias1);
+    auto act1Layer = buildActivationLayer(bias1Layer->getOutput(0), &desc->act1);
+
+    auto mul2Layer = buildMatMulLayer(act1Layer->getOutput(0), &desc->mul2);
+    auto bias2Layer = buildMatBiasLayer(mul2Layer->getOutput(0), &desc->bias2);
+    auto act2Layer = buildActivationLayer(bias2Layer->getOutput(0), &desc->act2);
+
+    auto mul3Layer = buildMatMulLayer(act2Layer->getOutput(0), &desc->mul3);
+    return mul3Layer;
+  }
+
+  ILayer* buildResidualBlock(ITensor* input, const ResidualBlockDesc* desc) {
+    auto preBatchNormLayer = buildBatchNormLayer(input, &desc->preBN);
+    auto preActivationLayer = buildActivationLayer(preBatchNormLayer->getOutput(0), &desc->preActivation);
     auto preMaskLayer = applyMaskLayer(preActivationLayer);
-    auto regularConvLayer = parseConvLayer(&desc->regularConv, preMaskLayer->getOutput(0));
-    auto midBatchNormLayer = parseBatchNormLayer(&desc->midBN, regularConvLayer->getOutput(0));
-    auto midActivationLayer = parseActivationLayer(&desc->midActivation, midBatchNormLayer->getOutput(0));
+    auto regularConvLayer = buildConvLayer(preMaskLayer->getOutput(0), &desc->regularConv);
+    auto midBatchNormLayer = buildBatchNormLayer(regularConvLayer->getOutput(0), &desc->midBN);
+    auto midActivationLayer = buildActivationLayer(midBatchNormLayer->getOutput(0), &desc->midActivation);
     auto midMaskLayer = applyMaskLayer(midActivationLayer);
-    auto finalConvLayer = parseConvLayer(&desc->finalConv, midMaskLayer->getOutput(0));
+    auto finalConvLayer = buildConvLayer(midMaskLayer->getOutput(0), &desc->finalConv);
 
     auto mergeLayer = model->network->addElementWise(*input, *finalConvLayer->getOutput(0), ElementWiseOperation::kSUM);
     mergeLayer->setName(desc->name.c_str());
@@ -529,57 +624,31 @@ struct ModelParser {
     return mergeLayer;
   }
 
-  ILayer* parseDilatedResidualBlock(const DilatedResidualBlockDesc* desc, ITensor* input) {
+  ILayer* buildGlobalPoolingResidualBlock(ITensor* input, const GlobalPoolingResidualBlockDesc* desc) {
     auto& network = model->network;
     string name = desc->name;
 
-    auto preBatchNormLayer = parseBatchNormLayer(&desc->preBN, input);
-    auto preActivationLayer = parseActivationLayer(&desc->preActivation, preBatchNormLayer->getOutput(0));
-    auto preMaskLayer = applyMaskLayer(preActivationLayer);
-    auto regularConvLayer = parseConvLayer(&desc->regularConv, preMaskLayer->getOutput(0));
-    auto dilatedConvLayer = parseConvLayer(&desc->dilatedConv, preMaskLayer->getOutput(0));
-
-    ITensor* concatInputs[] = {regularConvLayer->getOutput(0), dilatedConvLayer->getOutput(0)};
-    auto concatLayer = network->addConcatenation(concatInputs, 2);
-    auto concatLayerName = name + "/concat";
-    concatLayer->setName(concatLayerName.c_str());
-
-    auto midBatchNormLayer = parseBatchNormLayer(&desc->midBN, concatLayer->getOutput(0));
-    auto midActivationLayer = parseActivationLayer(&desc->midActivation, midBatchNormLayer->getOutput(0));
-    auto midMaskLayer = applyMaskLayer(midActivationLayer);
-    auto finalConvLayer = parseConvLayer(&desc->finalConv, midMaskLayer->getOutput(0));
-
-    auto mergeLayer = network->addElementWise(*input, *finalConvLayer->getOutput(0), ElementWiseOperation::kSUM);
-    mergeLayer->setName(name.c_str());
-
-    return mergeLayer;
-  }
-
-  ILayer* parseGlobalPoolingResidualBlock(const GlobalPoolingResidualBlockDesc* desc, ITensor* input) {
-    auto& network = model->network;
-    string name = desc->name;
-
-    auto preBatchNormLayer = parseBatchNormLayer(&desc->preBN, input);
-    auto preActivationLayer = parseActivationLayer(&desc->preActivation, preBatchNormLayer->getOutput(0));
+    auto preBatchNormLayer = buildBatchNormLayer(input, &desc->preBN);
+    auto preActivationLayer = buildActivationLayer(preBatchNormLayer->getOutput(0), &desc->preActivation);
     auto preMaskLayer = applyMaskLayer(preActivationLayer);
 
-    auto regularConvLayer = parseConvLayer(&desc->regularConv, preMaskLayer->getOutput(0));
-    auto gpoolConvLayer = parseConvLayer(&desc->gpoolConv, preMaskLayer->getOutput(0));
-    auto gpoolBatchNormLayer = parseBatchNormLayer(&desc->gpoolBN, gpoolConvLayer->getOutput(0));
-    auto gpoolActivationLayer = parseActivationLayer(&desc->gpoolActivation, gpoolBatchNormLayer->getOutput(0));
+    auto regularConvLayer = buildConvLayer(preMaskLayer->getOutput(0), &desc->regularConv);
+    auto gpoolConvLayer = buildConvLayer(preMaskLayer->getOutput(0), &desc->gpoolConv);
+    auto gpoolBatchNormLayer = buildBatchNormLayer(gpoolConvLayer->getOutput(0), &desc->gpoolBN);
+    auto gpoolActivationLayer = buildActivationLayer(gpoolBatchNormLayer->getOutput(0), &desc->gpoolActivation);
     auto gpoolMaskLayer = applyMaskLayer(gpoolActivationLayer);
     auto gpoolLayer = applyGPoolLayer(gpoolMaskLayer);
-    auto gpoolToBiasMulLayer = parseMatMulLayer(&desc->gpoolToBiasMul, gpoolLayer->getOutput(0));
+    auto gpoolToBiasMulLayer = buildMatMulLayer(gpoolLayer->getOutput(0), &desc->gpoolToBiasMul);
     auto gpoolBiasLayer = network->addElementWise(
       *regularConvLayer->getOutput(0), *gpoolToBiasMulLayer->getOutput(0), ElementWiseOperation::kSUM);
     auto gpoolBiasLayerName = name + "/gpbias";
     gpoolBiasLayer->setName(gpoolBiasLayerName.c_str());
 
-    auto midBatchNormLayer = parseBatchNormLayer(&desc->midBN, gpoolBiasLayer->getOutput(0));
-    auto midActivationLayer = parseActivationLayer(&desc->midActivation, midBatchNormLayer->getOutput(0));
+    auto midBatchNormLayer = buildBatchNormLayer(gpoolBiasLayer->getOutput(0), &desc->midBN);
+    auto midActivationLayer = buildActivationLayer(midBatchNormLayer->getOutput(0), &desc->midActivation);
     auto midMaskLayer = applyMaskLayer(midActivationLayer);
 
-    auto finalConvLayer = parseConvLayer(&desc->finalConv, midMaskLayer->getOutput(0));
+    auto finalConvLayer = buildConvLayer(midMaskLayer->getOutput(0), &desc->finalConv);
 
     auto mergeLayer = network->addElementWise(*input, *finalConvLayer->getOutput(0), ElementWiseOperation::kSUM);
     mergeLayer->setName(name.c_str());
@@ -587,14 +656,33 @@ struct ModelParser {
     return mergeLayer;
   }
 
-  ILayer* parseMatMulLayer(const MatMulLayerDesc* desc, ITensor* input, bool forceFP32 = false) {
+  ILayer* buildNestedBottleneckResidualBlock(ITensor* input, const NestedBottleneckResidualBlockDesc* desc) {
+    assert(desc->blocks.size() == desc->numBlocks);
+
+    auto preBatchNormLayer = buildBatchNormLayer(input, &desc->preBN);
+    auto preActivationLayer = buildActivationLayer(preBatchNormLayer->getOutput(0), &desc->preActivation);
+    auto preMaskLayer = applyMaskLayer(preActivationLayer);
+    auto preConvLayer = buildConvLayer(preMaskLayer->getOutput(0), &desc->preConv);
+    auto stackLayer = buildResidualBlockStack(preConvLayer->getOutput(0), desc->blocks, desc->name);
+    auto postBatchNormLayer = buildBatchNormLayer(stackLayer->getOutput(0), &desc->postBN);
+    auto postActivationLayer = buildActivationLayer(postBatchNormLayer->getOutput(0), &desc->postActivation);
+    auto postMaskLayer = applyMaskLayer(postActivationLayer);
+    auto postConvLayer = buildConvLayer(postMaskLayer->getOutput(0), &desc->postConv);
+
+    auto mergeLayer = model->network->addElementWise(*input, *postConvLayer->getOutput(0), ElementWiseOperation::kSUM);
+    mergeLayer->setName(desc->name.c_str());
+
+    return mergeLayer;
+  }
+
+  ILayer* buildMatMulLayer(ITensor* input, const MatMulLayerDesc* desc, bool forceFP32 = false) {
     int numInChannels = desc->inChannels;
     int numOutChannels = desc->outChannels;
 
-    tuneDesc += Global::strprintf(R"("%s"(%d,%d))", desc->name.c_str(), desc->inChannels, desc->outChannels);
+    tuneDesc += Global::strprintf(R"|("%s"(%d,%d))|", desc->name.c_str(), desc->inChannels, desc->outChannels);
 
     assert(desc->weights.size() == numInChannels * numOutChannels);
-    assert(input->getDimensions().d[0] == numInChannels);
+    assert(input->getDimensions().d[1] == numInChannels);
 
     // Transpose from model's CK to TensorRT's KC
     auto transposedWeights = make_unique<float[]>(desc->weights.size());
@@ -604,10 +692,12 @@ struct ModelParser {
       }
     }
 
-    // Note that FullyConnected expects I/O tensors with 3 dimentions (in addition to batch)
-    auto matMulLayer = model->network->addFullyConnected(
+    // For convenience, both I/O tensors have 3 dimentions (in addition to batch), so that
+    // matmul is mathmatically equivalent to a 2D convolution of 1x1 features and 1x1 kernels.
+    auto matMulLayer = model->network->addConvolutionNd(
       *input,
       desc->outChannels,
+      {2, {1, 1}},
       {DataType::kFLOAT, transposedWeights.get(), static_cast<int64_t>(desc->weights.size())},
       {DataType::kFLOAT, nullptr, 0});
     matMulLayer->setName(desc->name.c_str());
@@ -621,13 +711,13 @@ struct ModelParser {
     return matMulLayer;
   }
 
-  ILayer* parseMatBiasLayer(const MatBiasLayerDesc* desc, ITensor* input, bool forceFP32 = false) {
+  ILayer* buildMatBiasLayer(ITensor* input, const MatBiasLayerDesc* desc, bool forceFP32 = false) {
     int numChannels = desc->numChannels;
 
-    tuneDesc += Global::strprintf(R"("%s"(%d))", desc->name.c_str(), desc->numChannels);
+    tuneDesc += Global::strprintf(R"|("%s"(%d))|", desc->name.c_str(), desc->numChannels);
 
     assert(desc->weights.size() == numChannels);
-    assert(input->getDimensions().d[0] == numChannels);
+    assert(input->getDimensions().d[1] == numChannels);
 
     auto matBiasLayer = model->network->addScale(
       *input,
@@ -644,7 +734,7 @@ struct ModelParser {
     return matBiasLayer;
   }
 
-  ILayer* parseConvLayer(const ConvLayerDesc* desc, ITensor* input, bool forceFP32 = false) {
+  ILayer* buildConvLayer(ITensor* input, const ConvLayerDesc* desc, bool forceFP32 = false) {
     int convXSize = desc->convXSize;
     int convYSize = desc->convYSize;
     int dilationX = desc->dilationX;
@@ -653,7 +743,7 @@ struct ModelParser {
     int numOutChannels = desc->outChannels;
 
     tuneDesc += Global::strprintf(
-      R"("%s"(%d,%d,%d,%d,%d,%d))",
+      R"|("%s"(%d,%d,%d,%d,%d,%d))|",
       desc->name.c_str(),
       desc->convXSize,
       desc->convYSize,
@@ -663,7 +753,7 @@ struct ModelParser {
       desc->dilationY);
 
     assert(desc->weights.size() == convYSize * convXSize * numInChannels * numOutChannels);
-    assert(input->getDimensions().d[0] == numInChannels);
+    assert(input->getDimensions().d[1] == numInChannels);
 
     auto convLayer = model->network->addConvolutionNd(
       *input,
@@ -682,30 +772,24 @@ struct ModelParser {
     return convLayer;
   }
 
-  ILayer* parseBatchNormLayer(const BatchNormLayerDesc* desc, ITensor* input, bool forceFP32 = false) {
+  ILayer* buildBatchNormLayer(ITensor* input, const BatchNormLayerDesc* desc, bool forceFP32 = false) {
     int numChannels = desc->numChannels;
-    float epsilon = desc->epsilon;
 
-    tuneDesc += Global::strprintf(R"("%s"(%d))", desc->name.c_str(), desc->numChannels);
+    tuneDesc += Global::strprintf(R"|("%s"(%d))|", desc->name.c_str(), desc->numChannels);
 
     assert(desc->mean.size() == numChannels);
     assert(desc->variance.size() == numChannels);
     assert(desc->scale.size() == numChannels);
     assert(desc->bias.size() == numChannels);
-    assert(input->getDimensions().d[0] == numChannels);
-
-    auto mergedScale = make_unique<float[]>(numChannels);
-    auto mergedBias = make_unique<float[]>(numChannels);
-    for(int i = 0; i < numChannels; i++) {
-      mergedScale[i] = desc->scale[i] / sqrtf(desc->variance[i] + epsilon);
-      mergedBias[i] = desc->bias[i] - mergedScale[i] * desc->mean[i];
-    }
+    assert(desc->mergedScale.size() == numChannels);
+    assert(desc->mergedBias.size() == numChannels);
+    assert(input->getDimensions().d[1] == numChannels);
 
     auto bnLayer = model->network->addScale(
       *input,
       ScaleMode::kCHANNEL,
-      {DataType::kFLOAT, mergedBias.get(), static_cast<int64_t>(numChannels)},
-      {DataType::kFLOAT, mergedScale.get(), static_cast<int64_t>(numChannels)},
+      {DataType::kFLOAT, desc->mergedBias.data(), static_cast<int64_t>(numChannels)},
+      {DataType::kFLOAT, desc->mergedScale.data(), static_cast<int64_t>(numChannels)},
       {DataType::kFLOAT, nullptr, 0});
     bnLayer->setName(desc->name.c_str());
 
@@ -713,73 +797,148 @@ struct ModelParser {
       bnLayer->setPrecision(DataType::kFLOAT);
     }
 
-    model->extraWeights.push_back(move(mergedScale));
-    model->extraWeights.push_back(move(mergedBias));
-
     return bnLayer;
   }
 
-  ILayer* parseActivationLayer(const ActivationLayerDesc* desc, ITensor* input, bool forceFP32 = false) {
-    auto activationLayer = model->network->addActivation(*input, ActivationType::kRELU);
-    activationLayer->setName(desc->name.c_str());
-
-    if(forceFP32) {
-      activationLayer->setPrecision(DataType::kFLOAT);
+  ILayer* buildActivationLayer(ITensor* input, const ActivationLayerDesc* desc, bool forceFP32 = false) {
+    tuneDesc += Global::strprintf(R"|("%s"(%d))|", desc->name.c_str(), desc->activation);
+    if(desc->activation == ACTIVATION_IDENTITY) {
+      auto activationLayer = model->network->addIdentity(*input);
+      activationLayer->setName(desc->name.c_str());
+      if(forceFP32) {
+        activationLayer->setPrecision(DataType::kFLOAT);
+      }
+      return activationLayer;
     }
-
-    return activationLayer;
+    else if(desc->activation == ACTIVATION_RELU) {
+      auto activationLayer = model->network->addActivation(*input, ActivationType::kRELU);
+      activationLayer->setName(desc->name.c_str());
+      if(forceFP32) {
+        activationLayer->setPrecision(DataType::kFLOAT);
+      }
+      return activationLayer;
+    }
+    else if(desc->activation == ACTIVATION_MISH) {
+      auto softplusLayer = model->network->addActivation(*input, ActivationType::kSOFTPLUS);
+      auto softplusLayerName = desc->name + "/softplus";
+      softplusLayer->setName(softplusLayerName.c_str());
+      auto tanhLayer = model->network->addActivation(*softplusLayer->getOutput(0), ActivationType::kTANH);
+      auto tanhLayerName = desc->name + "/tanh";
+      tanhLayer->setName(tanhLayerName.c_str());
+      auto mergeLayer = model->network->addElementWise(*input, *tanhLayer->getOutput(0), ElementWiseOperation::kPROD);
+      mergeLayer->setName(desc->name.c_str());
+      if(forceFP32) {
+        softplusLayer->setPrecision(DataType::kFLOAT);
+        tanhLayer->setPrecision(DataType::kFLOAT);
+        mergeLayer->setPrecision(DataType::kFLOAT);
+      }
+      return mergeLayer;
+    }
+    else if(desc->activation == ACTIVATION_MISH_SCALE8) {
+      auto softplusLayer = model->network->addActivation(*input, ActivationType::kSOFTPLUS);
+      softplusLayer->setAlpha(1.0f);
+      softplusLayer->setBeta(8.0f);
+      auto softplusLayerName = desc->name + "/softplus";
+      softplusLayer->setName(softplusLayerName.c_str());
+      auto tanhLayer = model->network->addActivation(*softplusLayer->getOutput(0), ActivationType::kTANH);
+      auto tanhLayerName = desc->name + "/tanh";
+      tanhLayer->setName(tanhLayerName.c_str());
+      auto mergeLayer = model->network->addElementWise(*input, *tanhLayer->getOutput(0), ElementWiseOperation::kPROD);
+      mergeLayer->setName(desc->name.c_str());
+      if(forceFP32) {
+        softplusLayer->setPrecision(DataType::kFLOAT);
+        tanhLayer->setPrecision(DataType::kFLOAT);
+        mergeLayer->setPrecision(DataType::kFLOAT);
+      }
+      return mergeLayer;
+    }
+    else {
+      ASSERT_UNREACHABLE;
+    }
   }
 
-  ILayer* applyGPoolLayer(ILayer* inputLayer, bool forceFP32 = false, bool useQuadScale = false) {
+  ILayer* applyGPoolLayer(ILayer* inputLayer, bool forceFP32 = false, bool isValueHead = false) {
     auto& network = model->network;
     string name = inputLayer->getName();
 
     ILayer* gpoolSumLayer = nullptr;
     ILayer* gpoolMeanLayer = nullptr;
     if(!model->requireExactNNLen) {
-      gpoolSumLayer = network->addReduce(*inputLayer->getOutput(0), ReduceOperation::kSUM, 1U << 1 | 1U << 2, true);
+      gpoolSumLayer = network->addReduce(*inputLayer->getOutput(0), ReduceOperation::kSUM, 1U << 2 | 1U << 3, true);
       auto gpoolSumLayerName = name + "/gpsum";
       gpoolSumLayer->setName(gpoolSumLayerName.c_str());
-      gpoolMeanLayer = network->addElementWise(
-        *gpoolSumLayer->getOutput(0), *maskExtractSumLayer->getOutput(0), ElementWiseOperation::kDIV);
+      gpoolMeanLayer =
+        network->addElementWise(*gpoolSumLayer->getOutput(0), *maskSumLayer->getOutput(0), ElementWiseOperation::kDIV);
     } else {
-      gpoolMeanLayer = network->addReduce(*inputLayer->getOutput(0), ReduceOperation::kAVG, 1U << 1 | 1U << 2, true);
+      gpoolMeanLayer = network->addReduce(*inputLayer->getOutput(0), ReduceOperation::kAVG, 1U << 2 | 1U << 3, true);
     }
     auto gpoolMeanLayerName = name + "/gpmean";
     gpoolMeanLayer->setName(gpoolMeanLayerName.c_str());
 
-    auto gpoolLinMeanLayer = network->addElementWise(
-      *gpoolMeanLayer->getOutput(0), *maskExtractLinLayer->getOutput(0), ElementWiseOperation::kPROD);
-    auto ggpoolLinMeanLayerName = name + "/gplinmean";
-    gpoolLinMeanLayer->setName(ggpoolLinMeanLayerName.c_str());
+    auto gpoolMeanScaleLayer = network->addElementWise(
+      *gpoolMeanLayer->getOutput(0), *maskScaleLayer->getOutput(0), ElementWiseOperation::kPROD);
+    auto gpoolMeanScaleLayerName = name + "/gpmeanscale";
+    gpoolMeanScaleLayer->setName(gpoolMeanScaleLayerName.c_str());
 
+    ILayer* gpoolMaskAddLayer = nullptr;
+    ILayer* gpoolMaskShiftLayer = nullptr;
     ILayer* gpoolConcatInputLayer3 = nullptr;
-    if(useQuadScale) {
-      auto gpoolQuadMeanLayer = network->addElementWise(
-        *gpoolMeanLayer->getOutput(0), *maskExtractQuadLayer->getOutput(0), ElementWiseOperation::kPROD);
-      auto gpoolQuadMeanLayerName = name + "/gpquadmean";
-      gpoolQuadMeanLayer->setName(gpoolQuadMeanLayerName.c_str());
-      gpoolConcatInputLayer3 = gpoolQuadMeanLayer;
+    if(isValueHead) {
+      auto gpoolMeanQuadLayer = network->addElementWise(
+        *gpoolMeanLayer->getOutput(0), *maskQuadLayer->getOutput(0), ElementWiseOperation::kPROD);
+      auto gpoolMeanQuadLayerName = name + "/gpmeanquad";
+      gpoolMeanQuadLayer->setName(gpoolMeanQuadLayerName.c_str());
+      gpoolConcatInputLayer3 = gpoolMeanQuadLayer;
+    } else if(!model->requireExactNNLen) {
+      // All activation functions we use right now are always greater than -1.0, and map 0 -> 0.
+      // So off-board areas will equal 0, and then this max is mask-safe if we assign -1.0 to off-board areas.
+      auto gpoolMaskShiftWeights = make_unique<float[]>(1);
+      gpoolMaskShiftWeights[0] = -1.0f;
+      gpoolMaskShiftLayer = network->addScale(
+        *inputMask,
+        ScaleMode::kUNIFORM,
+        {DataType::kFLOAT, gpoolMaskShiftWeights.get(), 1},
+        {DataType::kFLOAT, nullptr, 0},
+        {DataType::kFLOAT, nullptr, 0});
+      auto gpoolMaskShiftLayerName = name + "/gpmaskshift";
+      gpoolMaskShiftLayer->setName(gpoolMaskShiftLayerName.c_str());
+      model->extraWeights.push_back(move(gpoolMaskShiftWeights));
+      gpoolMaskAddLayer = network->addElementWise(
+        *inputLayer->getOutput(0), *gpoolMaskShiftLayer->getOutput(0), ElementWiseOperation::kSUM);
+      auto gpoolMaskAddLayerName = name + "/gpmaskadd";
+      gpoolMaskAddLayer->setName(gpoolMaskAddLayerName.c_str());
+      auto gpoolMaxLayer =
+        network->addReduce(*gpoolMaskAddLayer->getOutput(0), ReduceOperation::kMAX, 1U << 2 | 1U << 3, true);
+      auto gpoolMaxLayerName = name + "/gpmax";
+      gpoolMaxLayer->setName(gpoolMaxLayerName.c_str());
+      gpoolConcatInputLayer3 = gpoolMaxLayer;
     } else {
       auto gpoolMaxLayer =
-        network->addReduce(*inputLayer->getOutput(0), ReduceOperation::kMAX, 1U << 1 | 1U << 2, true);
+        network->addReduce(*inputLayer->getOutput(0), ReduceOperation::kMAX, 1U << 2 | 1U << 3, true);
       auto gpoolMaxLayerName = name + "/gpmax";
       gpoolMaxLayer->setName(gpoolMaxLayerName.c_str());
       gpoolConcatInputLayer3 = gpoolMaxLayer;
     }
 
     ITensor* gpoolConcatInputs[] = {
-      gpoolMeanLayer->getOutput(0), gpoolLinMeanLayer->getOutput(0), gpoolConcatInputLayer3->getOutput(0)};
+      gpoolMeanLayer->getOutput(0), gpoolMeanScaleLayer->getOutput(0), gpoolConcatInputLayer3->getOutput(0)};
     auto gpoolConcatLayer = network->addConcatenation(gpoolConcatInputs, 3);
     auto gpoolConcatLayerName = name + "/gpconcat";
+    gpoolConcatLayer->setAxis(1);
     gpoolConcatLayer->setName(gpoolConcatLayerName.c_str());
 
     if(forceFP32) {
       if(gpoolSumLayer) {
         gpoolSumLayer->setPrecision(DataType::kFLOAT);
       }
+      if(gpoolMaskAddLayer) {
+        gpoolMaskAddLayer->setPrecision(DataType::kFLOAT);
+      }
+      if(gpoolMaskShiftLayer) {
+        gpoolMaskShiftLayer->setPrecision(DataType::kFLOAT);
+      }
       gpoolMeanLayer->setPrecision(DataType::kFLOAT);
-      gpoolLinMeanLayer->setPrecision(DataType::kFLOAT);
+      gpoolMeanScaleLayer->setPrecision(DataType::kFLOAT);
       gpoolConcatInputLayer3->setPrecision(DataType::kFLOAT);
       gpoolConcatLayer->setPrecision(DataType::kFLOAT);
     }
@@ -789,8 +948,8 @@ struct ModelParser {
 
   ILayer* applyMaskLayer(ILayer* inputLayer, bool forceFP32 = false) {
     if(!model->requireExactNNLen) {
-      auto maskLayer = model->network->addElementWise(
-        *inputLayer->getOutput(0), *maskExtractLayer->getOutput(0), ElementWiseOperation::kPROD);
+      auto maskLayer =
+        model->network->addElementWise(*inputLayer->getOutput(0), *inputMask, ElementWiseOperation::kPROD);
       auto maskLayerName = string(inputLayer->getName()) + "/mask";
       maskLayer->setName(maskLayerName.c_str());
       if(forceFP32) {
@@ -803,8 +962,12 @@ struct ModelParser {
   }
 
   ILayer* applyCastLayer(ILayer* inputLayer, DataType dataType) {
+#if NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR == 5
     auto castLayer = model->network->addIdentity(*inputLayer->getOutput(0));
     castLayer->setOutputType(0, dataType);
+#else
+    auto castLayer = model->network->addCast(*inputLayer->getOutput(0), dataType);
+#endif
     auto castLayerName = string(inputLayer->getName()) + "/cast";
     castLayer->setName(castLayerName.c_str());
     return castLayer;
@@ -826,35 +989,125 @@ struct TRTLogger : ILogger {
   void log(Severity severity, const char* msg) noexcept override {
     if(logger && severity <= level)
       logger->write("TensorRT backend: " + string(msg));
+    if(severity == Severity::kERROR && logger && !logger->isLoggingToStderr() && !logger->isLoggingToStdout()) {
+      std::cerr << ("TensorRT backend: " + string(msg)) << std::endl;
+    }
+    if(severity == Severity::kERROR) {
+      if((string(msg).find("Cask convolution") != std::string::npos) ||
+         (string(msg).find("Cask Convolution") != std::string::npos) ||
+         (string(msg).find("elementWiseRunner.cpp") != std::string::npos) ||
+         (string(msg).find("convBaseRunner.cpp") != std::string::npos) ||
+         (string(msg).find("Cuda Runtime") != std::string::npos)
+      ) {
+         Global::fatalError("TensorRT backend fatal error: " + string(msg));
+      }
+    }
   }
 
   void setLogger(Logger* externalLogger) { logger = externalLogger; }
 };
 
+struct TRTErrorRecorder : IErrorRecorder {
+  mutable std::mutex mutex;
+  std::vector<std::pair<ErrorCode,std::string>> errors;
+  std::atomic<int32_t> refCount;
+  Logger* logger;
+
+  TRTErrorRecorder()
+    :mutex(),
+     errors(),
+     refCount(0),
+     logger(NULL)
+  {}
+
+  void clear() noexcept override {
+    std::lock_guard<std::mutex> lock(mutex);
+    errors.clear();
+  }
+  int32_t getNbErrors() const noexcept {
+    std::lock_guard<std::mutex> lock(mutex);
+    return (int32_t)errors.size();
+  }
+  ErrorCode getErrorCode(int32_t errorIdx) const noexcept {
+    std::lock_guard<std::mutex> lock(mutex);
+    if(errorIdx < 0 || errorIdx >= errors.size())
+      return ErrorCode::kINVALID_ARGUMENT;
+    return errors[errorIdx].first;
+  }
+  IErrorRecorder::ErrorDesc getErrorDesc(int32_t errorIdx) const noexcept {
+    std::lock_guard<std::mutex> lock(mutex);
+    if(errorIdx < 0 || errorIdx >= errors.size())
+      return "";
+    return errors[errorIdx].second.c_str();
+  }
+  bool hasOverflowed() const noexcept {
+    return false;
+  }
+  bool empty() const noexcept {
+    std::lock_guard<std::mutex> lock(mutex);
+    return errors.size() <= 0;
+  }
+  bool reportError(ErrorCode val, IErrorRecorder::ErrorDesc desc) noexcept {
+    std::lock_guard<std::mutex> lock(mutex);
+    errors.push_back(std::make_pair(val,string(desc)));
+    if(
+      (val != ErrorCode::kUNSPECIFIED_ERROR && val != ErrorCode::kSUCCESS)
+      || (errors[errors.size()-1].second.find("Cask convolution") != std::string::npos)
+      || (errors[errors.size()-1].second.find("Cask Convolution") != std::string::npos)
+      || (errors[errors.size()-1].second.find("elementWiseRunner.cpp") != std::string::npos)
+      || (errors[errors.size()-1].second.find("convBaseRunner.cpp") != std::string::npos)
+      || (errors[errors.size()-1].second.find("Cuda Runtime") != std::string::npos)
+    ) {
+      Global::fatalError("Fatal error reported from TensorRT: " + Global::intToString((int)val) + " " + std::string(desc));
+    }
+    logger->write("TensorRT error reported code: " + Global::intToString((int)val) + " " + std::string(desc));
+    return false;
+  }
+
+  void setLogger(Logger* externalLogger) { logger = externalLogger; }
+
+  IErrorRecorder::RefCount incRefCount() noexcept {
+    return ++refCount;
+  }
+  IErrorRecorder::RefCount decRefCount() noexcept {
+    return --refCount;
+  }
+};
+
+
 struct ComputeHandle {
   ComputeContext* ctx;
 
   bool usingFP16;
+  int maxBatchSize;
   int modelVersion;
-  vector<pair<string, Dims>> debugOutputs;
+  vector<pair<string, string>> debugOutputs;
 
   TRTLogger trtLogger;
+  TRTErrorRecorder trtErrorRecorder;
+  map<string, void*> buffers;
+  unique_ptr<IRuntime> runtime;
   unique_ptr<ICudaEngine> engine;
   unique_ptr<IExecutionContext> exec;
-  vector<void*> buffers;
-  vector<size_t> bufferBytes;
-  vector<size_t> bufferRowElts;
 
   ComputeHandle(
     Logger* logger,
     const cudaDeviceProp* prop,
     ComputeContext* context,
     const LoadedModel* loadedModel,
-    int maxBatchSize,
+    int maxBatchSz,
     bool requireExactNNLen) {
     ctx = context;
 
-    modelVersion = loadedModel->modelDesc.version;
+    maxBatchSize = maxBatchSz;
+    modelVersion = loadedModel->modelDesc.modelVersion;
+
+    // Certain minor versions of TensorRT uses a global logger, which is bad.
+    // Since TensorRT maintains ABI compatibility between minor versions, a dynamic library mismatch
+    // does not necessarily generate a dynamic link error, therefore, an extra check is required.
+    if(getInferLibVersion() / 100 != NV_TENSORRT_VERSION / 100) {
+      throw StringError("TensorRT backend: detected incompatible version of TensorRT library");
+    }
 
     trtLogger.setLogger(logger);
 
@@ -876,46 +1129,157 @@ struct ComputeHandle {
     } else if(ctx->useFP16Mode == enabled_t::True) {
       throw StringError("CUDA device does not support useFP16=true");
     }
-    config->setFlag(BuilderFlag::kSTRICT_TYPES);
+    config->setFlag(BuilderFlag::kPREFER_PRECISION_CONSTRAINTS);
 
-    auto network = unique_ptr<INetworkDefinition>(builder->createNetworkV2(0U));
+    auto network = unique_ptr<INetworkDefinition>(
+      builder->createNetworkV2(1U << static_cast<int>(NetworkDefinitionCreationFlag::kEXPLICIT_BATCH)));
     if(!network) {
       throw StringError("TensorRT backend: failed to create network definition");
     }
+    auto profile = builder->createOptimizationProfile();
+    if(!profile) {
+      throw StringError("TensorRT backend: failed to create optimization profile");
+    }
     auto modelParser = make_unique<ModelParser>();
-    auto model = modelParser->parse(move(network), loadedModel, ctx->nnXLen, ctx->nnYLen, requireExactNNLen);
-
+    auto model = modelParser->build(
+      move(network), profile, loadedModel, ctx->nnXLen, ctx->nnYLen, maxBatchSize, requireExactNNLen);
     debugOutputs = model->debugOutputs;
+    config->addOptimizationProfile(profile);
 
-    bool saveTimingCache;
-    string timingCacheFile;
-    unique_ptr<ITimingCache> timingCache;
+#if NV_TENSORRT_MAJOR == 8 && NV_TENSORRT_MINOR == 5
+    // This is to avoid external tactic sources and tactics that have shape switching overhead
+    if(prop->major < 8) {
+      config->setTacticSources(
+        1U << static_cast<uint32_t>(TacticSource::kJIT_CONVOLUTIONS) |
+        1U << static_cast<uint32_t>(TacticSource::kEDGE_MASK_CONVOLUTIONS));
+    } else {
+      config->setTacticSources(1U << static_cast<uint32_t>(TacticSource::kJIT_CONVOLUTIONS));
+    }
+#else
+    if(prop->major >= 8) {
+      // This is to avoid tactics that have shape switching overhead
+      config->setTacticSources(1U << static_cast<uint32_t>(TacticSource::kJIT_CONVOLUTIONS));
+      config->setBuilderOptimizationLevel(2);
+    }
+#endif
+
+    // So that there are no concurrent kernel executions probably from other parts of code while profiling
+    // See CUDA Runtime API document for more details related to NULL stream and synchronization behaviors
+    config->setProfileStream(cudaStreamLegacy);
+
+    // Typical runtime allocation is much less than the 1 GiB specified below
+    config->setMemoryPoolLimit(MemoryPoolType::kWORKSPACE, 1U << 30);
+
+    string plan;
     {
-      string cacheDir = HomeData::getHomeDataDir(true, ctx->homeDataDirOverride);
+      static mutex tuneMutex;
+      tuneMutex.lock();
+
+      auto cacheDir = HomeData::getHomeDataDir(true, ctx->homeDataDirOverride);
       cacheDir += "/trtcache";
       MakeDir::make(cacheDir);
 
-      char uuid[sizeof(prop->uuid.bytes) * 2 + 1];
-      for(int i = 0; i < sizeof(prop->uuid.bytes); i++) {
-        sprintf(uuid + i * 2, "%02x", static_cast<unsigned char>(prop->uuid.bytes[i]));
-      }
-      uuid[sizeof(uuid) - 1] = 0;
+      uint8_t deviceHash[32];
+      SHA2::get256(prop->name, deviceHash);
 
       // Truncated to 4 bytes
-      char tuneHash[4 * 2 + 1];
+      char deviceIdent[4 * 2 + 1];
       for(int i = 0; i < 4; i++) {
-        sprintf(tuneHash + i * 2, "%02x", static_cast<unsigned char>(model->tuneHash[i]));
+        sprintf(deviceIdent + i * 2, "%02x", static_cast<unsigned char>(deviceHash[i]));
       }
-      tuneHash[sizeof(tuneHash) - 1] = 0;
+      deviceIdent[sizeof(deviceIdent) - 1] = 0;
 
-      timingCacheFile = Global::strprintf(
-        "%s/gpu-%s_tune-%s_%dx%d%s_batch%d_fp%d",
+#ifdef CACHE_TENSORRT_PLAN
+      auto planCacheFile = Global::strprintf(
+        "%s/trt-%d_gpu-%s_net-%s_%d_%s%dx%d_batch%d_fp%d",
         cacheDir.c_str(),
-        uuid,
-        tuneHash,
+        getInferLibVersion(),
+        deviceIdent,
+        loadedModel->modelDesc.name.c_str(),
+        ModelParser::tuneSalt,
+        requireExactNNLen ? "exact" : "max",
         ctx->nnYLen,
         ctx->nnXLen,
-        requireExactNNLen ? "-exact" : "",
+        maxBatchSize,
+        usingFP16 ? 16 : 32);
+      string paramStr = Global::strprintf(
+        "_%d_%s_%d_%s_%d_%d_%d_%d",
+        getInferLibVersion(),
+        deviceIdent,
+        ModelParser::tuneSalt,
+        requireExactNNLen ? "exact" : "max",
+        ctx->nnYLen,
+        ctx->nnXLen,
+        maxBatchSize,
+        usingFP16 ? 16 : 32);
+      try {
+        plan = FileUtils::readFileBinary(planCacheFile);
+      } catch(const StringError& e) {
+        (void)e;
+      };
+
+      if(plan.size() > 0) {
+        if(plan.size() < 64 + paramStr.size()) {
+          logger->write("Could not parse plan, unexpected size in " + planCacheFile);
+          plan.clear();
+        } else {
+          string cachedParamStr = plan.substr(plan.size() - paramStr.size());
+          string modelHash = plan.substr(plan.size() - 64 - paramStr.size(), 64);
+          if(modelHash != loadedModel->modelDesc.sha256) {
+            logger->write("Plan cache is corrupted or is for the wrong model in " + planCacheFile);
+            plan.clear();
+          } else if(cachedParamStr != paramStr) {
+            logger->write("Plan cache is corrupted or is for the wrong parameters in " + planCacheFile);
+            plan.clear();
+          } else {
+            plan.erase(plan.size() - 64 - paramStr.size());
+          }
+        }
+      }
+
+      if(plan.size() <= 0) {
+        logger->write("Creating new plan cache");
+        auto planBuffer = unique_ptr<IHostMemory>(builder->buildSerializedNetwork(*model->network, *config));
+        if(!planBuffer) {
+          throw StringError("TensorRT backend: failed to create plan");
+        }
+        plan.insert(
+          plan.end(),
+          static_cast<char*>(planBuffer->data()),
+          static_cast<char*>(planBuffer->data()) + planBuffer->size());
+        if(loadedModel->modelDesc.sha256.size() != 64) {
+          throw StringError("Unexpected model hash size");
+        }
+        plan.insert(plan.end(), loadedModel->modelDesc.sha256.begin(), loadedModel->modelDesc.sha256.end());
+        plan.insert(plan.end(), paramStr.begin(), paramStr.end());
+        ofstream ofs;
+        FileUtils::open(ofs, planCacheFile, ios::out | ios::binary);
+        ofs.write(plan.data(), plan.size());
+        ofs.close();
+        logger->write("Saved new plan cache to " + planCacheFile);
+        plan.erase(plan.size() - 64 - paramStr.size());
+        tuneMutex.unlock();
+      } else {
+        tuneMutex.unlock();
+        logger->write("Using existing plan cache at " + planCacheFile);
+      }
+#else
+      // Truncated to 6 bytes
+      char tuneIdent[6 * 2 + 1];
+      for(int i = 0; i < 6; i++) {
+        sprintf(tuneIdent + i * 2, "%02x", static_cast<unsigned char>(model->tuneHash[i]));
+      }
+      tuneIdent[sizeof(tuneIdent) - 1] = 0;
+
+      auto timingCacheFile = Global::strprintf(
+        "%s/trt-%d_gpu-%s_tune-%s_%s%dx%d_batch%d_fp%d",
+        cacheDir.c_str(),
+        getInferLibVersion(),
+        deviceIdent,
+        tuneIdent,
+        requireExactNNLen ? "exact" : "max",
+        ctx->nnYLen,
+        ctx->nnXLen,
         maxBatchSize,
         usingFP16 ? 16 : 32);
 
@@ -928,55 +1292,52 @@ struct ComputeHandle {
       if(timingCacheBlob.size() > 0)
         logger->write("Using existing timing cache at " + timingCacheFile);
       else
-        logger->write("Creating new timing cache");
+        logger->write("Creating new timing cache (usingFP16=" + Global::boolToString(usingFP16) + " " + Global::intToString(ctx->nnXLen) + "x" + Global::intToString(ctx->nnYLen) + " maxBatchSizeLimit=" + Global::intToString(maxBatchSize) + ")");
 
-      timingCache.reset(config->createTimingCache(timingCacheBlob.data(), timingCacheBlob.size()));
-      bool invalidTimingCache = !config->setTimingCache(*timingCache, false);
+      auto timingCache =
+        unique_ptr<ITimingCache>(config->createTimingCache(timingCacheBlob.data(), timingCacheBlob.size()));
+      auto invalidTimingCache = !config->setTimingCache(*timingCache, false);
       if(invalidTimingCache) {
         logger->write("Invalid timing cache, using new one instead");
         timingCache.reset(config->createTimingCache(nullptr, 0));
         config->setTimingCache(*timingCache, false);
       }
-      saveTimingCache = invalidTimingCache || !timingCacheBlob.size();
+
+      unique_ptr<IHostMemory> planBuffer;
+      if(invalidTimingCache || !timingCacheBlob.size()) {
+        planBuffer.reset(builder->buildSerializedNetwork(*model->network, *config));
+        if(!planBuffer) {
+          throw StringError("TensorRT backend: failed to create plan");
+        }
+        auto serializedTimingCache = unique_ptr<IHostMemory>(config->getTimingCache()->serialize());
+        ofstream ofs;
+        FileUtils::open(ofs, timingCacheFile, ios::out | ios::binary);
+        ofs.write(static_cast<char*>(serializedTimingCache->data()), serializedTimingCache->size());
+        ofs.close();
+        logger->write("Saved new timing cache to " + timingCacheFile);
+        tuneMutex.unlock();
+      } else {
+        tuneMutex.unlock();
+        planBuffer.reset(builder->buildSerializedNetwork(*model->network, *config));
+        if(!planBuffer) {
+          throw StringError("TensorRT backend: failed to create plan");
+        }
+      }
+      plan.insert(
+        plan.end(),
+        static_cast<char*>(planBuffer->data()),
+        static_cast<char*>(planBuffer->data()) + planBuffer->size());
+#endif
     }
 
-    // So that there are no concurrent kernel executions probably from other parts of code while profiling
-    // See CUDA Runtime API document for more details related to NULL stream and synchronization behaviors
-    config->setProfileStream(cudaStreamLegacy);
-
-    // Typical runtime allocation is much less than the 1 GiB specified below
-    config->setMaxWorkspaceSize(1U << 30);
-
-    builder->setMaxBatchSize(maxBatchSize);
-
-    auto plan = unique_ptr<IHostMemory>(builder->buildSerializedNetwork(*model->network, *config));
-    if(!plan) {
-      throw StringError("TensorRT backend: failed to create plan");
-    }
-
-    if(saveTimingCache) {
-      auto serializedTimingCache = unique_ptr<IHostMemory>(config->getTimingCache()->serialize());
-      ofstream ofs;
-      FileUtils::open(ofs, timingCacheFile, ios::out | ios::binary);
-      ofs.write(static_cast<char*>(serializedTimingCache->data()), serializedTimingCache->size());
-      ofs.close();
-      logger->write("Saved new timing cache to " + timingCacheFile);
-    }
-
-    auto runtime = unique_ptr<IRuntime>(createInferRuntime(trtLogger));
+    runtime.reset(createInferRuntime(trtLogger));
     if(!runtime) {
       throw StringError("TensorRT backend: failed to create runtime");
     }
+    trtErrorRecorder.setLogger(logger);
+    runtime->setErrorRecorder(&trtErrorRecorder);
 
-    // Certain minor versions of TensorRT uses a global logger, which is bad.
-    // Since TensorRT maintains ABI compatibility between minor versions, a dynamic library mismatch
-    // does not necessarily generate a dynamic link error, therefore, an extra check is required.
-    // Affected version of TensorRT doesn't support the getLogger method and will fail the check below.
-    if(runtime->getLogger() != &trtLogger) {
-      throw StringError("TensorRT backend: detected incompatible version of TensorRT library");
-    }
-
-    engine.reset(runtime->deserializeCudaEngine(plan->data(), plan->size()));
+    engine.reset(runtime->deserializeCudaEngine(plan.data(), plan.size()));
     if(!engine) {
       throw StringError("TensorRT backend: failed to create cuda engine");
     }
@@ -985,23 +1346,24 @@ struct ComputeHandle {
       throw StringError("TensorRT backend: failed to create execution context");
     }
 
-    int numBindings = engine->getNbBindings();
-    buffers.resize(numBindings, nullptr);
-    bufferBytes.resize(numBindings, 0);
-    bufferRowElts.resize(numBindings, 0);
-    for(int i = 0; i < numBindings; i++) {
-      auto dims = engine->getBindingDimensions(i);
-      size_t elts = accumulate(dims.d, dims.d + dims.nbDims, 1, multiplies<int>());
-      size_t bytes = maxBatchSize * elts * sizeof(float);
-      bufferRowElts[i] = elts;
-      bufferBytes[i] = bytes;
-      CUDA_ERR("ComputeHandle", cudaMalloc(&buffers[i], bytes));
+    for(int i = 0; i < engine->getNbIOTensors(); i++) {
+      void* buffer = nullptr;
+      auto name = engine->getIOTensorName(i);
+      auto dims = engine->getTensorShape(name);
+      size_t bytes = accumulate(dims.d + 1, dims.d + dims.nbDims, maxBatchSize * sizeof(float), multiplies<size_t>());
+      CUDA_ERR("ComputeHandle", cudaMalloc(&buffer, bytes));
+      buffers.emplace(make_pair(name, buffer));
+      exec->setTensorAddress(name, buffer);
     }
+
+    exec->setOptimizationProfileAsync(0, cudaStreamPerThread);
+    cudaStreamSynchronize(cudaStreamPerThread);
+    trtErrorRecorder.clear();
   }
 
   ~ComputeHandle() {
     for(auto ptr: buffers) {
-      CUDA_ERR("~ComputeHandle", cudaFree(ptr));
+      CUDA_ERR("~ComputeHandle", cudaFree(ptr.second));
     }
   }
 
@@ -1010,36 +1372,49 @@ struct ComputeHandle {
   ComputeHandle& operator=(const ComputeHandle&) = delete;
 
   void* getBuffer(const char* name) {
-    int index = engine->getBindingIndex(name);
-    if(index == -1) {
-      throw StringError(Global::strprintf("ComputeHandle: unknown binding name %s", name));
+    auto search = buffers.find(name);
+    if(search != buffers.end()) {
+      return search->second;
+    } else {
+      throw StringError(Global::strprintf("ComputeHandle: unknown tensor name %s", name));
     }
-    return buffers[index];
   }
 
   size_t getBufferBytes(const char* name) {
-    int index = engine->getBindingIndex(name);
-    if(index == -1) {
-      throw StringError(Global::strprintf("ComputeHandle: unknown binding name %s", name));
+    auto dims = engine->getTensorShape(name);
+    if(dims.nbDims != -1) {
+      return accumulate(dims.d + 1, dims.d + dims.nbDims, maxBatchSize * sizeof(float), multiplies<size_t>());
+    } else {
+      throw StringError(Global::strprintf("ComputeHandle: unknown tensor name %s", name));
     }
-    return bufferBytes[index];
   }
 
   size_t getBufferRowElts(const char* name) {
-    int index = engine->getBindingIndex(name);
-    if(index == -1) {
-      throw StringError(Global::strprintf("ComputeHandle: unknown binding name %s", name));
+    auto dims = engine->getTensorShape(name);
+    if(dims.nbDims != -1) {
+      return accumulate(dims.d + 1, dims.d + dims.nbDims, 1, multiplies<size_t>());
+    } else {
+      throw StringError(Global::strprintf("ComputeHandle: unknown tensor name %s", name));
     }
-    return bufferRowElts[index];
+  }
+
+  Dims getBufferDynamicShape(const char* name, int batchSize) {
+    auto dims = engine->getTensorShape(name);
+    if(dims.nbDims != -1) {
+      dims.d[0] = batchSize;
+      return dims;
+    } else {
+      throw StringError(Global::strprintf("ComputeHandle: unknown tensor name %s", name));
+    }
   }
 
   void printDebugOutput(int batchSize) {
     for(auto& debugOutput: debugOutputs) {
-      Dims dims = debugOutput.second;
-      string desc = debugOutput.first;
-      string name = "DBG" + to_string(hash<string>{}(debugOutput.first));
+      auto name = debugOutput.first;
+      auto desc = debugOutput.second;
+      auto dims = getBufferDynamicShape(name.c_str(), batchSize);
 
-      vector<float> values(batchSize * getBufferRowElts(name.c_str()));
+      vector<float> values(accumulate(dims.d, dims.d + dims.nbDims, 1, multiplies<size_t>()));
       CUDA_ERR(
         "printDebugOutput",
         cudaMemcpy(values.data(), getBuffer(name.c_str()), values.size() * sizeof(float), cudaMemcpyDeviceToHost));
@@ -1047,22 +1422,22 @@ struct ComputeHandle {
       cout << "=========================================================" << endl;
       cout << desc << endl;
       int i = 0;
-      if(dims.nbDims == 1) {
-        for(int n = 0; n < batchSize; n++) {
+      if(dims.nbDims == 2) {
+        for(int n = 0; n < dims.d[0]; n++) {
           cout << "-(n=" << n << ")--------------------" << endl;
-          for(int c = 0; c < dims.d[0]; c++) {
+          for(int c = 0; c < dims.d[1]; c++) {
             cout << values[i++] << " ";
           }
           cout << endl;
         }
         cout << endl;
-      } else if(dims.nbDims == 3) {
-        for(int n = 0; n < batchSize; n++) {
+      } else if(dims.nbDims == 4) {
+        for(int n = 0; n < dims.d[0]; n++) {
           cout << "-(n=" << n << ")--------------------" << endl;
-          for(int c = 0; c < dims.d[0]; c++) {
+          for(int c = 0; c < dims.d[1]; c++) {
             cout << "(c=" << c << ")" << endl;
-            for(int y = 0; y < dims.d[1]; y++) {
-              for(int x = 0; x < dims.d[2]; x++)
+            for(int y = 0; y < dims.d[2]; y++) {
+              for(int x = 0; x < dims.d[3]; x++)
                 cout << values[i++] << " ";
               cout << endl;
             }
@@ -1083,7 +1458,8 @@ ComputeHandle* NeuralNet::createComputeHandle(
   bool requireExactNNLen,
   bool inputsUseNHWC,
   int gpuIdxForThisThread,
-  int serverThreadIdx) {
+  int serverThreadIdx
+) {
   if(inputsUseNHWC) {
     throw StringError("TensorRT backend: inputsUseNHWC = false required, other configurations not supported");
   }
@@ -1110,7 +1486,8 @@ ComputeHandle* NeuralNet::createComputeHandle(
   if(logger != NULL) {
     logger->write(
       "TensorRT backend thread " + Global::intToString(serverThreadIdx) + ": Model version " +
-      Global::intToString(loadedModel->modelDesc.version) + " useFP16 = " + Global::boolToString(handle->usingFP16));
+      Global::intToString(loadedModel->modelDesc.modelVersion) +
+      " useFP16 = " + Global::boolToString(handle->usingFP16));
     logger->write(
       "TensorRT backend thread " + Global::intToString(serverThreadIdx) +
       ": Model name: " + loadedModel->modelDesc.name);
@@ -1121,6 +1498,10 @@ ComputeHandle* NeuralNet::createComputeHandle(
 
 void NeuralNet::freeComputeHandle(ComputeHandle* gpuHandle) {
   delete gpuHandle;
+}
+
+bool NeuralNet::isUsingFP16(const ComputeHandle* gpuHandle) {
+  return gpuHandle->usingFP16;
 }
 
 void NeuralNet::printDevices() {
@@ -1136,10 +1517,16 @@ void NeuralNet::printDevices() {
 struct InputBuffers {
   int maxBatchSize;
 
+  size_t singleMaskElts;
+  size_t singleMaskBytes;
   size_t singleInputElts;
   size_t singleInputBytes;
   size_t singleInputGlobalElts;
   size_t singleInputGlobalBytes;
+  size_t singleInputMetaElts;
+  size_t singleInputMetaBytes;
+  size_t singlePolicyPassResultElts;
+  size_t singlePolicyPassResultBytes;
   size_t singlePolicyResultElts;
   size_t singlePolicyResultBytes;
   size_t singleValueResultElts;
@@ -1149,25 +1536,28 @@ struct InputBuffers {
   size_t singleOwnershipResultElts;
   size_t singleOwnershipResultBytes;
 
-  size_t inputBufferBytes;
+  size_t inputMaskBufferBytes;
+  size_t inputSpatialBufferBytes;
   size_t inputGlobalBufferBytes;
+  size_t inputMetaBufferBytes;
+  size_t policyPassResultBufferBytes;
   size_t policyResultBufferBytes;
   size_t valueResultBufferBytes;
   size_t scoreValueResultBufferBytes;
   size_t ownershipResultBufferBytes;
 
-  unique_ptr<float[]> inputBuffer;        // Host pointer
-  unique_ptr<float[]> inputGlobalBuffer;  // Host pointer
-  unique_ptr<float[]> policyResults;      // Host pointer
-  unique_ptr<float[]> valueResults;       // Host pointer
-  unique_ptr<float[]> scoreValueResults;  // Host pointer
-  unique_ptr<float[]> ownershipResults;   // Host pointer
+  unique_ptr<float[]> maskInputs;           // Host pointer
+  unique_ptr<float[]> spatialInputs;        // Host pointer
+  unique_ptr<float[]> globalInputs;  // Host pointer
+  unique_ptr<float[]> metaInputs;  // Host pointer
+  unique_ptr<float[]> policyPassResults;    // Host pointer
+  unique_ptr<float[]> policyResults;        // Host pointer
+  unique_ptr<float[]> valueResults;         // Host pointer
+  unique_ptr<float[]> scoreValueResults;    // Host pointer
+  unique_ptr<float[]> ownershipResults;     // Host pointer
 
   InputBuffers(const LoadedModel* loadedModel, int maxBatchSz, int nnXLen, int nnYLen) {
     const ModelDesc& m = loadedModel->modelDesc;
-
-    int xSize = nnXLen;
-    int ySize = nnYLen;
 
     if(nnXLen > NNPos::MAX_BOARD_LEN)
       throw StringError(
@@ -1177,31 +1567,46 @@ struct InputBuffers {
         Global::strprintf("nnYLen (%d) is greater than NNPos::MAX_BOARD_LEN (%d)", nnYLen, NNPos::MAX_BOARD_LEN));
 
     maxBatchSize = maxBatchSz;
-    singleInputElts = m.numInputChannels * xSize * ySize;
+    singleMaskElts = nnXLen * nnYLen;
+    singleMaskBytes = singleMaskElts * sizeof(float);
+    singleInputElts = m.numInputChannels * nnXLen * nnYLen;
     singleInputBytes = singleInputElts * sizeof(float);
     singleInputGlobalElts = m.numInputGlobalChannels;
     singleInputGlobalBytes = singleInputGlobalElts * sizeof(float);
-    singlePolicyResultElts = NNPos::getPolicySize(xSize, ySize);
+    singleInputMetaElts = m.numInputMetaChannels;
+    singleInputMetaBytes = singleInputMetaElts * sizeof(float);
+    singlePolicyPassResultElts = (size_t)m.numPolicyChannels;
+    singlePolicyPassResultBytes = singlePolicyPassResultElts * sizeof(float);
+    singlePolicyResultElts = (size_t)m.numPolicyChannels * nnXLen * nnYLen;
     singlePolicyResultBytes = singlePolicyResultElts * sizeof(float);
     singleValueResultElts = m.numValueChannels;
     singleValueResultBytes = singleValueResultElts * sizeof(float);
     singleScoreValueResultElts = m.numScoreValueChannels;
     singleScoreValueResultBytes = singleScoreValueResultElts * sizeof(float);
-    singleOwnershipResultElts = m.numOwnershipChannels * xSize * ySize;
+    singleOwnershipResultElts = m.numOwnershipChannels * nnXLen * nnYLen;
     singleOwnershipResultBytes = singleOwnershipResultElts * sizeof(float);
 
-    assert(NNModelVersion::getNumSpatialFeatures(m.version) == m.numInputChannels);
-    assert(NNModelVersion::getNumGlobalFeatures(m.version) == m.numInputGlobalChannels);
+    assert(NNModelVersion::getNumSpatialFeatures(m.modelVersion) == m.numInputChannels);
+    assert(NNModelVersion::getNumGlobalFeatures(m.modelVersion) == m.numInputGlobalChannels);
+    if(m.numInputMetaChannels > 0) {
+      assert(SGFMetadata::METADATA_INPUT_NUM_CHANNELS == m.numInputMetaChannels);
+    }
 
-    inputBufferBytes = maxBatchSize * singleInputBytes;
+    inputMaskBufferBytes = maxBatchSize * singleMaskBytes;
+    inputSpatialBufferBytes = maxBatchSize * singleInputBytes;
     inputGlobalBufferBytes = maxBatchSize * singleInputGlobalBytes;
+    inputMetaBufferBytes = maxBatchSize * singleInputMetaBytes;
+    policyPassResultBufferBytes = maxBatchSize * singlePolicyPassResultBytes;
     policyResultBufferBytes = maxBatchSize * singlePolicyResultBytes;
     valueResultBufferBytes = maxBatchSize * singleValueResultBytes;
     scoreValueResultBufferBytes = maxBatchSize * singleScoreValueResultBytes;
     ownershipResultBufferBytes = maxBatchSize * singleOwnershipResultBytes;
 
-    inputBuffer = make_unique<float[]>(maxBatchSize * singleInputElts);
-    inputGlobalBuffer = make_unique<float[]>(maxBatchSize * singleInputGlobalElts);
+    maskInputs = make_unique<float[]>(maxBatchSize * singleMaskElts);
+    spatialInputs = make_unique<float[]>(maxBatchSize * singleInputElts);
+    globalInputs = make_unique<float[]>(maxBatchSize * singleInputGlobalElts);
+    metaInputs = make_unique<float[]>(maxBatchSize * singleInputMetaElts);
+    policyPassResults = make_unique<float[]>(maxBatchSize * singlePolicyPassResultElts);
     policyResults = make_unique<float[]>(maxBatchSize * singlePolicyResultElts);
     valueResults = make_unique<float[]>(maxBatchSize * singleValueResultElts);
     scoreValueResults = make_unique<float[]>(maxBatchSize * singleScoreValueResultElts);
@@ -1230,57 +1635,121 @@ void NeuralNet::getOutput(
   assert(numBatchEltsFilled <= inputBuffers->maxBatchSize);
   assert(numBatchEltsFilled > 0);
 
-  int batchSize = numBatchEltsFilled;
-  int nnXLen = gpuHandle->ctx->nnXLen;
-  int nnYLen = gpuHandle->ctx->nnYLen;
-  int version = gpuHandle->modelVersion;
+  const int batchSize = numBatchEltsFilled;
+  const int nnXLen = gpuHandle->ctx->nnXLen;
+  const int nnYLen = gpuHandle->ctx->nnYLen;
+  const int modelVersion = gpuHandle->modelVersion;
 
-  int numSpatialFeatures = NNModelVersion::getNumSpatialFeatures(version);
-  int numGlobalFeatures = NNModelVersion::getNumGlobalFeatures(version);
+  const int numSpatialFeatures = NNModelVersion::getNumSpatialFeatures(modelVersion);
+  const int numGlobalFeatures = NNModelVersion::getNumGlobalFeatures(modelVersion);
+  const int numMetaFeatures = inputBuffers->singleInputMetaElts;
+  assert(numSpatialFeatures * nnXLen * nnYLen == inputBuffers->singleInputElts);
+  assert(numGlobalFeatures == inputBuffers->singleInputGlobalElts);
 
   for(int nIdx = 0; nIdx < batchSize; nIdx++) {
-    float* rowSpatialInput = &inputBuffers->inputBuffer[inputBuffers->singleInputElts * nIdx];
-    float* rowGlobalInput = &inputBuffers->inputGlobalBuffer[inputBuffers->singleInputGlobalElts * nIdx];
+    float* rowMaskInput = &inputBuffers->maskInputs[inputBuffers->singleMaskElts * nIdx];
+    float* rowSpatialInput = &inputBuffers->spatialInputs[inputBuffers->singleInputElts * nIdx];
+    float* rowGlobalInput = &inputBuffers->globalInputs[inputBuffers->singleInputGlobalElts * nIdx];
+    float* rowMetaInput = &inputBuffers->metaInputs[inputBuffers->singleInputMetaElts * nIdx];
 
-    const float* rowGlobal = inputBufs[nIdx]->rowGlobal;
-    const float* rowSpatial = inputBufs[nIdx]->rowSpatial;
+    const float* rowGlobal = inputBufs[nIdx]->rowGlobalBuf.data();
+    const float* rowSpatial = inputBufs[nIdx]->rowSpatialBuf.data();
+    const float* rowMeta = inputBufs[nIdx]->rowMetaBuf.data();
+    const bool hasRowMeta = inputBufs[nIdx]->hasRowMeta;
     copy(rowGlobal, rowGlobal + numGlobalFeatures, rowGlobalInput);
+    std::copy(rowGlobal,rowGlobal+numGlobalFeatures,rowGlobalInput);
+    if(numMetaFeatures > 0) {
+      testAssert(rowMeta != NULL);
+      testAssert(hasRowMeta);
+      std::copy(rowMeta,rowMeta+numMetaFeatures,rowMetaInput);
+    }
+    else {
+      testAssert(!hasRowMeta);
+    }
     SymmetryHelpers::copyInputsWithSymmetry(
       rowSpatial, rowSpatialInput, 1, nnYLen, nnXLen, numSpatialFeatures, false, inputBufs[nIdx]->symmetry);
+    copy(rowSpatialInput, rowSpatialInput + inputBuffers->singleMaskElts, rowMaskInput);
   }
 
-  assert(inputBuffers->singleInputElts == gpuHandle->getBufferRowElts("InputFeature"));
-  assert(inputBuffers->singleInputGlobalElts == gpuHandle->getBufferRowElts("InputGlobalFeature"));
+  assert(inputBuffers->singleMaskElts == gpuHandle->getBufferRowElts("InputMask"));
+  assert(inputBuffers->singleInputElts == gpuHandle->getBufferRowElts("InputSpatial"));
+  assert(inputBuffers->singleInputGlobalElts == gpuHandle->getBufferRowElts("InputGlobal"));
+  if(numMetaFeatures > 0)
+    assert(inputBuffers->singleInputMetaElts == gpuHandle->getBufferRowElts("InputMeta"));
+  assert(inputBuffers->singlePolicyPassResultElts == gpuHandle->getBufferRowElts("OutputPolicyPass"));
   assert(inputBuffers->singlePolicyResultElts == gpuHandle->getBufferRowElts("OutputPolicy"));
   assert(inputBuffers->singleValueResultElts == gpuHandle->getBufferRowElts("OutputValue"));
   assert(inputBuffers->singleScoreValueResultElts == gpuHandle->getBufferRowElts("OutputScoreValue"));
   assert(inputBuffers->singleOwnershipResultElts == gpuHandle->getBufferRowElts("OutputOwnership"));
 
-  assert(inputBuffers->inputBufferBytes == gpuHandle->getBufferBytes("InputFeature"));
-  assert(inputBuffers->inputGlobalBufferBytes == gpuHandle->getBufferBytes("InputGlobalFeature"));
+  assert(inputBuffers->inputMaskBufferBytes == gpuHandle->getBufferBytes("InputMask"));
+  assert(inputBuffers->inputSpatialBufferBytes == gpuHandle->getBufferBytes("InputSpatial"));
+  assert(inputBuffers->inputGlobalBufferBytes == gpuHandle->getBufferBytes("InputGlobal"));
+  if(numMetaFeatures > 0)
+    assert(inputBuffers->inputMetaBufferBytes == gpuHandle->getBufferBytes("InputMeta"));
+  assert(inputBuffers->policyPassResultBufferBytes == gpuHandle->getBufferBytes("OutputPolicyPass"));
   assert(inputBuffers->policyResultBufferBytes == gpuHandle->getBufferBytes("OutputPolicy"));
   assert(inputBuffers->valueResultBufferBytes == gpuHandle->getBufferBytes("OutputValue"));
   assert(inputBuffers->scoreValueResultBufferBytes == gpuHandle->getBufferBytes("OutputScoreValue"));
   assert(inputBuffers->ownershipResultBufferBytes == gpuHandle->getBufferBytes("OutputOwnership"));
 
+  const int numPolicyChannels = inputBuffers->singlePolicyPassResultElts;
+  assert(inputBuffers->singlePolicyResultElts == numPolicyChannels * nnXLen * nnYLen);
+
   // Transfers from host memory to device memory are asynchronous with respect to the host
   CUDA_ERR(
     "getOutput",
     cudaMemcpyAsync(
-      gpuHandle->getBuffer("InputFeature"),
-      inputBuffers->inputBuffer.get(),
+      gpuHandle->getBuffer("InputMask"),
+      inputBuffers->maskInputs.get(),
+      inputBuffers->singleMaskBytes * batchSize,
+      cudaMemcpyHostToDevice));
+  CUDA_ERR(
+    "getOutput",
+    cudaMemcpyAsync(
+      gpuHandle->getBuffer("InputSpatial"),
+      inputBuffers->spatialInputs.get(),
       inputBuffers->singleInputBytes * batchSize,
       cudaMemcpyHostToDevice));
   CUDA_ERR(
     "getOutput",
     cudaMemcpyAsync(
-      gpuHandle->getBuffer("InputGlobalFeature"),
-      inputBuffers->inputGlobalBuffer.get(),
+      gpuHandle->getBuffer("InputGlobal"),
+      inputBuffers->globalInputs.get(),
       inputBuffers->singleInputGlobalBytes * batchSize,
       cudaMemcpyHostToDevice));
+  if(numMetaFeatures > 0) {
+    CUDA_ERR(
+      "getOutput",
+      cudaMemcpyAsync(
+        gpuHandle->getBuffer("InputMeta"),
+        inputBuffers->metaInputs.get(),
+        inputBuffers->singleInputMetaBytes * batchSize,
+        cudaMemcpyHostToDevice));
+  }
 
-  gpuHandle->exec->enqueue(batchSize, gpuHandle->buffers.data(), cudaStreamPerThread, nullptr);
+  auto maskInputDims = gpuHandle->getBufferDynamicShape("InputMask", batchSize);
+  auto spatialInputDims = gpuHandle->getBufferDynamicShape("InputSpatial", batchSize);
+  auto globalInputDims = gpuHandle->getBufferDynamicShape("InputGlobal", batchSize);
 
+  gpuHandle->exec->setInputShape("InputMask", maskInputDims);
+  gpuHandle->exec->setInputShape("InputSpatial", spatialInputDims);
+  gpuHandle->exec->setInputShape("InputGlobal", globalInputDims);
+
+  if(numMetaFeatures > 0) {
+    auto metaInputDims = gpuHandle->getBufferDynamicShape("InputMeta", batchSize);
+    gpuHandle->exec->setInputShape("InputMeta", metaInputDims);
+  }
+
+  gpuHandle->exec->enqueueV3(cudaStreamPerThread);
+
+  CUDA_ERR(
+    "getOutput",
+    cudaMemcpy(
+      inputBuffers->policyPassResults.get(),
+      gpuHandle->getBuffer("OutputPolicyPass"),
+      inputBuffers->singlePolicyPassResultBytes * batchSize,
+      cudaMemcpyDeviceToHost));
   CUDA_ERR(
     "getOutput",
     cudaMemcpy(
@@ -1311,23 +1780,42 @@ void NeuralNet::getOutput(
       cudaMemcpyDeviceToHost));
 
   gpuHandle->printDebugOutput(batchSize);
+  gpuHandle->trtErrorRecorder.clear();
 
   assert(outputs.size() == batchSize);
+
+  float policyProbsTmp[NNPos::MAX_NN_POLICY_SIZE];
 
   for(int row = 0; row < batchSize; row++) {
     NNOutput* output = outputs[row];
 
     assert(output->nnXLen == nnXLen);
     assert(output->nnYLen == nnYLen);
+    float policyOptimism = (float)inputBufs[row]->policyOptimism;
 
+    const float* policyPassSrcBuf = &inputBuffers->policyPassResults[row * inputBuffers->singlePolicyPassResultElts];
     const float* policySrcBuf = &inputBuffers->policyResults[row * inputBuffers->singlePolicyResultElts];
     float* policyProbs = output->policyProbs;
 
-    // These are not actually correct, the client does the postprocessing to turn them into
+    // These are in logits, the client does the postprocessing to turn them into
     // policy probabilities and white game outcome probabilities
     // Also we don't fill in the nnHash here either
-    SymmetryHelpers::copyOutputsWithSymmetry(policySrcBuf, policyProbs, 1, nnYLen, nnXLen, inputBufs[row]->symmetry);
-    policyProbs[inputBuffers->singlePolicyResultElts - 1] = policySrcBuf[inputBuffers->singlePolicyResultElts - 1];
+    // Handle version >= 12 policy optimism
+    if(numPolicyChannels == 2 || (numPolicyChannels == 4 && modelVersion >= 16)) {
+      // TRT is all NCHW
+      for(int i = 0; i < nnXLen * nnYLen; i++) {
+        float p = policySrcBuf[i];
+        float pOpt = policySrcBuf[i + nnXLen * nnYLen];
+        policyProbsTmp[i] = p + (pOpt - p) * policyOptimism;
+      }
+      SymmetryHelpers::copyOutputsWithSymmetry(
+        policyProbsTmp, policyProbs, 1, nnYLen, nnXLen, inputBufs[row]->symmetry);
+      policyProbs[nnXLen * nnYLen] = policyPassSrcBuf[0] + (policyPassSrcBuf[1] - policyPassSrcBuf[0]) * policyOptimism;
+    } else {
+      assert(numPolicyChannels == 1);
+      SymmetryHelpers::copyOutputsWithSymmetry(policySrcBuf, policyProbs, 1, nnYLen, nnXLen, inputBufs[row]->symmetry);
+      policyProbs[nnXLen * nnYLen] = policyPassSrcBuf[0];
+    }
 
     int numValueChannels = inputBuffers->singleValueResultElts;
     assert(numValueChannels == 3);
@@ -1345,7 +1833,7 @@ void NeuralNet::getOutput(
     }
 
     int numScoreValueChannels = inputBuffers->singleScoreValueResultElts;
-    if(version >= 9) {
+    if(modelVersion >= 9) {
       assert(numScoreValueChannels == 6);
       output->whiteScoreMean = inputBuffers->scoreValueResults[row * numScoreValueChannels];
       output->whiteScoreMeanSq = inputBuffers->scoreValueResults[row * numScoreValueChannels + 1];
@@ -1353,7 +1841,7 @@ void NeuralNet::getOutput(
       output->varTimeLeft = inputBuffers->scoreValueResults[row * numScoreValueChannels + 3];
       output->shorttermWinlossError = inputBuffers->scoreValueResults[row * numScoreValueChannels + 4];
       output->shorttermScoreError = inputBuffers->scoreValueResults[row * numScoreValueChannels + 5];
-    } else if(version >= 8) {
+    } else if(modelVersion >= 8) {
       assert(numScoreValueChannels == 4);
       output->whiteScoreMean = inputBuffers->scoreValueResults[row * numScoreValueChannels];
       output->whiteScoreMeanSq = inputBuffers->scoreValueResults[row * numScoreValueChannels + 1];
@@ -1361,7 +1849,7 @@ void NeuralNet::getOutput(
       output->varTimeLeft = inputBuffers->scoreValueResults[row * numScoreValueChannels + 3];
       output->shorttermWinlossError = 0;
       output->shorttermScoreError = 0;
-    } else if(version >= 4) {
+    } else if(modelVersion >= 4) {
       assert(numScoreValueChannels == 2);
       output->whiteScoreMean = inputBuffers->scoreValueResults[row * numScoreValueChannels];
       output->whiteScoreMeanSq = inputBuffers->scoreValueResults[row * numScoreValueChannels + 1];
@@ -1369,7 +1857,7 @@ void NeuralNet::getOutput(
       output->varTimeLeft = 0;
       output->shorttermWinlossError = 0;
       output->shorttermScoreError = 0;
-    } else if(version >= 3) {
+    } else if(modelVersion >= 3) {
       assert(numScoreValueChannels == 1);
       output->whiteScoreMean = inputBuffers->scoreValueResults[row * numScoreValueChannels];
       // Version 3 neural nets don't have any second moment output, implicitly already folding it in, so we just use the

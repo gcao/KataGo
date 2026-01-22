@@ -462,7 +462,7 @@ static Rules parseRulesHelper(const string& sOrig, bool allowKomi) {
         if(!allowKomi)
           throw IOError("Could not parse rules: " + sOrig);
         int endIdx = 0;
-        while(endIdx < s.length() && !Global::isAlpha(s[endIdx] && !Global::isWhitespace(s[endIdx])))
+        while(endIdx < s.length() && !Global::isAlpha(s[endIdx]) && !Global::isWhitespace(s[endIdx]))
           endIdx++;
         float komi;
         bool suc = Global::tryStringToFloat(s.substr(0,endIdx),komi);
@@ -614,3 +614,7 @@ const Hash128 Rules::ZOBRIST_MULTI_STONE_SUICIDE_HASH =   //Based on sha256 hash
 
 const Hash128 Rules::ZOBRIST_BUTTON_HASH =   //Based on sha256 hash of Rules::ZOBRIST_BUTTON_HASH
   Hash128(0xb8b914c9234ece84ULL, 0x3d759cddebe29c14ULL);
+
+const Hash128 Rules::ZOBRIST_FRIENDLY_PASS_OK_HASH =   //Based on sha256 hash of Rules::ZOBRIST_FRIENDLY_PASS_OK_HASH
+  Hash128(0x0113655998ef0a25ULL, 0x99c9d04ecd964874ULL);
+

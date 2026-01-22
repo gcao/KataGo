@@ -70,13 +70,56 @@ int MainCmds::match(const vector<string>& args) {
   assert(paramss.size() > 0);
   int numBots = (int)paramss.size();
 
-  //Load a filter on what bots we actually want to run
-  vector<bool> excludeBot(numBots);
-  if(cfg.contains("includeBots")) {
-    vector<int> includeBots = cfg.getInts("includeBots",0,Setup::MAX_BOT_PARAMS_FROM_CFG);
+  //Figure out all pairs of bots that will be playing.
+  std::vector<std::pair<int,int>> matchupsPerRound;
+  {
+    //Load a filter on what bots we actually want to run. By default, include everything.
+    vector<bool> includeBot(numBots);
+    if(cfg.contains("includeBots")) {
+      vector<int> includeBotIdxs = cfg.getInts("includeBots",0,Setup::MAX_BOT_PARAMS_FROM_CFG);
+      for(int i = 0; i<numBots; i++) {
+        if(contains(includeBotIdxs,i))
+          includeBot[i] = true;
+      }
+    }
+    else {
+      for(int i = 0; i<numBots; i++) {
+        includeBot[i] = true;
+      }
+    }
+
+    std::vector<int> secondaryBotIdxs;
+    if(cfg.contains("secondaryBots"))
+      secondaryBotIdxs = cfg.getInts("secondaryBots",0,Setup::MAX_BOT_PARAMS_FROM_CFG);
+    for(int i = 0; i<secondaryBotIdxs.size(); i++)
+      assert(secondaryBotIdxs[i] >= 0 && secondaryBotIdxs[i] < numBots);
+
     for(int i = 0; i<numBots; i++) {
-      if(!contains(includeBots,i))
-        excludeBot[i] = true;
+      if(!includeBot[i])
+        continue;
+      for(int j = 0; j<numBots; j++) {
+        if(!includeBot[j])
+          continue;
+        if(i < j && !(contains(secondaryBotIdxs,i) && contains(secondaryBotIdxs,j))) {
+          matchupsPerRound.push_back(make_pair(i,j));
+          matchupsPerRound.push_back(make_pair(j,i));
+        }
+      }
+    }
+
+    if(cfg.contains("extraPairs")) {
+      std::vector<std::pair<int,int>> pairs = cfg.getNonNegativeIntDashedPairs("extraPairs",0,numBots-1);
+      for(const std::pair<int,int>& pair: pairs) {
+        int p0 = pair.first;
+        int p1 = pair.second;
+        if(cfg.contains("extraPairsAreOneSidedBW") && cfg.getBool("extraPairsAreOneSidedBW")) {
+          matchupsPerRound.push_back(std::make_pair(p0,p1));
+        }
+        else {
+          matchupsPerRound.push_back(std::make_pair(p0,p1));
+          matchupsPerRound.push_back(std::make_pair(p1,p0));
+        }
+      }
     }
   }
 
@@ -99,11 +142,17 @@ int MainCmds::match(const vector<string>& args) {
       nnModelFilesByBot[i] = cfg.getString("nnModelFile");
   }
 
+  vector<bool> botIsUsed(numBots);
+  for(const std::pair<int,int>& pair : matchupsPerRound) {
+    botIsUsed[pair.first] = true;
+    botIsUsed[pair.second] = true;
+  }
+
   //Dedup and load each necessary model exactly once
   vector<string> nnModelFiles;
   vector<int> whichNNModel(numBots);
   for(int i = 0; i<numBots; i++) {
-    if(excludeBot[i])
+    if(!botIsUsed[i])
       continue;
 
     const string& desiredFile = nnModelFilesByBot[i];
@@ -127,7 +176,6 @@ int MainCmds::match(const vector<string>& args) {
   const string gameSeedBase = Global::uint64ToHexString(seedRand.nextUInt64());
 
   //Work out an upper bound on how many concurrent nneval requests we could end up making.
-  int maxConcurrentEvals;
   int expectedConcurrentEvals;
   {
     //Work out the max threads any one bot uses
@@ -137,8 +185,6 @@ int MainCmds::match(const vector<string>& args) {
         maxBotThreads = paramss[i].numThreads;
     //Mutiply by the number of concurrent games we could have
     expectedConcurrentEvals = maxBotThreads * numGameThreads;
-    //Multiply by 2 and add some buffer, just so we have plenty of headroom.
-    maxConcurrentEvals = expectedConcurrentEvals * 2 + 16;
   }
 
   //Initialize object for randomizing game settings and running games
@@ -154,17 +200,18 @@ int MainCmds::match(const vector<string>& args) {
   const vector<string>& nnModelNames = nnModelFiles;
   const int defaultMaxBatchSize = -1;
   const bool defaultRequireExactNNLen = minBoardXSizeUsed == maxBoardXSizeUsed && minBoardYSizeUsed == maxBoardYSizeUsed;
+  const bool disableFP16 = false;
   const vector<string> expectedSha256s;
   vector<NNEvaluator*> nnEvals = Setup::initializeNNEvaluators(
-    nnModelNames,nnModelFiles,expectedSha256s,cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,
-    maxBoardXSizeUsed,maxBoardYSizeUsed,defaultMaxBatchSize,defaultRequireExactNNLen,
+    nnModelNames,nnModelFiles,expectedSha256s,cfg,logger,seedRand,expectedConcurrentEvals,
+    maxBoardXSizeUsed,maxBoardYSizeUsed,defaultMaxBatchSize,defaultRequireExactNNLen,disableFP16,
     Setup::SETUP_FOR_MATCH
   );
   logger.write("Loaded neural net");
 
   vector<NNEvaluator*> nnEvalsByBot(numBots);
   for(int i = 0; i<numBots; i++) {
-    if(excludeBot[i])
+    if(!botIsUsed[i])
       continue;
     nnEvalsByBot[i] = nnEvals[whichNNModel[i]];
   }
@@ -173,12 +220,16 @@ int MainCmds::match(const vector<string>& args) {
   assert(patternBonusTables.size() == numBots);
 
   //Initialize object for randomly pairing bots
-  bool forSelfPlay = false;
-  bool forGateKeeper = false;
-  MatchPairer* matchPairer = new MatchPairer(cfg,numBots,botNames,nnEvalsByBot,paramss,forSelfPlay,forGateKeeper,excludeBot);
+  int64_t numGamesTotal = cfg.getInt64("numGamesTotal",1,((int64_t)1) << 62);
+  MatchPairer* matchPairer = new MatchPairer(cfg,numBots,botNames,nnEvalsByBot,paramss,matchupsPerRound,numGamesTotal);
 
   //Check for unused config keys
   cfg.warnUnusedKeys(cerr,&logger);
+  for(int i = 0; i<numBots; i++) {
+    if(!botIsUsed[i])
+      continue;
+    Setup::maybeWarnHumanSLParams(paramss[i],nnEvalsByBot[i],NULL,cerr,&logger);
+  }
 
   //Done loading!
   //------------------------------------------------------------------------------------
@@ -211,7 +262,7 @@ int MainCmds::match(const vector<string>& args) {
       sgfOut = new ofstream();
       FileUtils::open(*sgfOut, sgfOutputDir + "/" + Global::uint64ToHexString(threadHash) + ".sgfs");
     }
-    auto shouldStopFunc = []() {
+    auto shouldStopFunc = []() noexcept {
       return shouldStop.load();
     };
     WaitableFlag* shouldPause = nullptr;

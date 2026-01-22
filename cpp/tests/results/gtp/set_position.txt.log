@@ -7,10 +7,11 @@ lagBuffer = 1.0
 logAllGTPCommunication = true
 logFile = tests/results/gtp/set_position.txt.log
 logSearchInfo = true
+logSearchInfoForChosenMove = false
 logTimeStamp = false
 logToStderr = false
 maxPlayouts = 10000
-maxTimePondering = 60
+maxTimePondering = 60.0
 maxVisits = 100
 nnRandSeed = forTesting
 nnRandomize = false
@@ -29,13 +30,13 @@ searchRandSeed = forTesting
 trtUseFP16 = false
 
 : GTP Engine starting...
-: KataGo v1.11.0
+: KataGo v1.16.4
 : Using TrompTaylor rules initially, unless GTP/GUI overrides this
 : Using 1 CPU thread(s) for search
 : nnRandSeed0 = forTesting
 : After dedups: nnModelFile0 = tests/models/g170-b6c96-s175395328-d26788732.bin.gz useFP16 false useNHWC false
 : Initializing neural net buffer to be size 19 * 19 exactly
-: Cuda backend thread 0: Found GPU NVIDIA RTX A5000 memory 25434652672 compute capability major 8 minor 6
+: Cuda backend thread 0: Found GPU NVIDIA RTX A5000 memory 25425608704 compute capability major 8 minor 6
 : Cuda backend thread 0: Model version 8 useFP16 = false useNHWC = false
 : Cuda backend thread 0: Model name: g170-b6c96-s175395328-d26788732
 : Loaded neural net with nnXLen 19 nnYLen 19
@@ -147,7 +148,7 @@ W stones captured: 0
 : nnRandSeed0 = forTesting
 : After dedups: nnModelFile0 = tests/models/g170-b6c96-s175395328-d26788732.bin.gz useFP16 false useNHWC false
 : Initializing neural net buffer to be size 13 * 13 exactly
-: Cuda backend thread 0: Found GPU NVIDIA RTX A5000 memory 25434652672 compute capability major 8 minor 6
+: Cuda backend thread 0: Found GPU NVIDIA RTX A5000 memory 25425608704 compute capability major 8 minor 6
 : Cuda backend thread 0: Model version 8 useFP16 = false useNHWC = false
 : Cuda backend thread 0: Model name: g170-b6c96-s175395328-d26788732
 : Loaded neural net with nnXLen 13 nnYLen 13
@@ -350,7 +351,7 @@ Rules: {"friendlyPassOk":false,"hasButton":false,"ko":"POSITIONAL","komi":7.5,"s
 B stones captured: 0
 W stones captured: 0
 : Controller: set_position b pass
-: ? Expected a space-separated sequence of <COLOR> <VERTEX> pairs but got 'b pass': Could not parse vertex: 'pass'
+: ? Expected a space-separated sequence of <COLOR> <VERTEX> pairs but got 'b pass': could not parse vertex: 'pass'
 : Controller: showboard
 : = MoveNum: 0 HASH: 0060C2712F9F96DF15BC0200D6BF3DFD
    A B C D E F G H J K L M N
@@ -377,7 +378,7 @@ W stones captured: 0
 : nnRandSeed0 = forTesting
 : After dedups: nnModelFile0 = tests/models/g170-b6c96-s175395328-d26788732.bin.gz useFP16 false useNHWC false
 : Initializing neural net buffer to be size 3 * 3 exactly
-: Cuda backend thread 0: Found GPU NVIDIA RTX A5000 memory 25434652672 compute capability major 8 minor 6
+: Cuda backend thread 0: Found GPU NVIDIA RTX A5000 memory 25425608704 compute capability major 8 minor 6
 : Cuda backend thread 0: Model version 8 useFP16 = false useNHWC = false
 : Cuda backend thread 0: Model name: g170-b6c96-s175395328-d26788732
 : Loaded neural net with nnXLen 3 nnYLen 3

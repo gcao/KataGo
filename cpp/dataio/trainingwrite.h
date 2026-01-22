@@ -3,10 +3,19 @@
 
 #include "../dataio/numpywrite.h"
 #include "../neuralnet/nninputs.h"
+#include "../neuralnet/sgfmetadata.h"
 #include "../neuralnet/nninterface.h"
 
 STRUCT_NAMED_PAIR(Loc,loc,int16_t,policyTarget,PolicyTargetMove);
 STRUCT_NAMED_PAIR(std::vector<PolicyTargetMove>*,policyTargets,int64_t,unreducedNumVisits,PolicyTarget);
+
+STRUCT_NAMED_QUAD(Loc,loc,float,winLoss,float,score,int64_t,visits,QValueTargetMove);
+
+struct QValueTargets {
+  std::vector<QValueTargetMove> targets;
+  QValueTargets() = default;
+  ~QValueTargets() = default;
+};
 
 //Summary of value-head-related training targets for outputted data.
 struct ValueTargets {
@@ -40,10 +49,13 @@ struct SidePosition {
   double policyEntropy;
   double searchEntropy;
   ValueTargets whiteValueTargets;
+  QValueTargets whiteQValueTargets;
   NNRawStats nnRawStats;
   float targetWeight;
   float targetWeightUnrounded;
   int numNeuralNetChangesSoFar; //Number of neural net changes this game before the creation of this side position
+  Player playoutDoublingAdvantagePla;
+  double playoutDoublingAdvantage;
 
   SidePosition();
   SidePosition(const Board& board, const BoardHistory& hist, Player pla, int numNeuralNetChangesSoFar);
@@ -89,11 +101,14 @@ struct FinishedGameData {
   std::vector<double> policyEntropyByTurn;
   std::vector<double> searchEntropyByTurn;
   std::vector<ValueTargets> whiteValueTargetsByTurn; //Except this one, we may have some of
+  std::vector<QValueTargets> whiteQValueTargetsByTurn;
   std::vector<NNRawStats> nnRawStatsByTurn;
   Color* finalFullArea;
   Color* finalOwnership;
   bool* finalSekiAreas;
   float* finalWhiteScoring;
+
+  double trainingWeight;
 
   std::vector<SidePosition*> sidePositions;
   std::vector<ChangedNeuralNet*> changedNeuralNets;
@@ -128,6 +143,8 @@ struct TrainingWriteBuffers {
   int dataYLen;
   int packedBoardArea;
 
+  bool hasMetadataInput;
+
   int curRows;
   float* binaryInputNCHWUnpacked;
 
@@ -156,7 +173,8 @@ struct TrainingWriteBuffers {
   //C20: Actual final score, from the perspective of the player to move, adjusted for draw utility, zero if C27 is zero.
   //C21: Lead in points, number of points to make the game fair, zero if C29 is zero.
   //C22: Expected arrival time of WL variance.
-  //C23-24: Unused
+  //C23: Unused
+  //C24: 1.0 minus weight assigned to td value targets
 
   //C25 Weight multiplier for row as a whole
 
@@ -169,7 +187,7 @@ struct TrainingWriteBuffers {
   //C32: Search Entropy (for statistical purposes)
   //C33: Weight assigned to the future position targets valueTargetsNCHW C1-C2
   //C34: Weight assigned to the area/territory target valueTargetsNCHW C4
-  //C35: Unused
+  //C35: 1.0 minus weight assigned to value targets
 
   //C36-40: Precomputed mask values indicating if we should use historical moves 1-5, if we desire random history masking.
   //1 means use, 0 means don't use.
@@ -203,9 +221,9 @@ struct TrainingWriteBuffers {
   //C58: Raw scoremean from neural net
   //C59: Policy prior entropy
   //C60: Number of visits in the search generating this row, prior to any reduction.
-  //C61: Number of bonus points the player to move will get onward from this point in the game
-  //C62: Unused
-  //C63: Data format version, currently always equals 1.
+  //C61: Number of bonus points the player to move will get onward from this point in the game. Reliable only if C27 and/or C62 (V2 and later), otherwise may make no sense.
+  //C62: V1: unused. V2: 1 if the game was finished and not a side position.
+  //C63: Data format version, currently always equals 2.
 
   NumpyBuffer<float> globalTargetsNC;
 
@@ -224,7 +242,23 @@ struct TrainingWriteBuffers {
   //C4: Final board area/territory [-120,120]. All 0 if C34 has weight 0. Unlike ownership, takes into account group tax and scoring rules.
   NumpyBuffer<int8_t> valueTargetsNCHW;
 
-  TrainingWriteBuffers(int inputsVersion, int maxRows, int numBinaryChannels, int numGlobalChannels, int dataXLen, int dataYLen);
+  //Spatial q-value targets, from the perspective of the player to move.
+  //C0: winloss * 32000
+  //C1: score * 60
+  //C2: visits
+  NumpyBuffer<int16_t> qValueTargetsNCMove;
+
+  NumpyBuffer<float> metadataInputNC;
+
+  TrainingWriteBuffers(
+    int inputsVersion,
+    int maxRows,
+    int numBinaryChannels,
+    int numGlobalChannels,
+    int dataXLen,
+    int dataYLen,
+    bool hasMetadataInput
+  );
   ~TrainingWriteBuffers();
 
   TrainingWriteBuffers(const TrainingWriteBuffers&) = delete;
@@ -234,6 +268,8 @@ struct TrainingWriteBuffers {
 
   void addRow(
     const Board& board, const BoardHistory& hist, Player nextPlayer,
+    const BoardHistory& startHist,
+    const BoardHistory& actualGameEndHist,
     int turnAfterStart,
     float targetWeight,
     int64_t unreducedNumVisits,
@@ -243,7 +279,11 @@ struct TrainingWriteBuffers {
     double policyEntropy,
     double searchEntropy,
     const std::vector<ValueTargets>& whiteValueTargets,
+    const std::vector<QValueTargets>& whiteQValueTargets,
     int whiteValueTargetsIdx, //index in whiteValueTargets corresponding to this turn.
+    float valueTargetWeight,
+    float tdValueTargetWeight,
+    float leadTargetWeightFactor,
     const NNRawStats& nnRawStats,
     const Board* finalBoard,
     Color* finalFullArea,
@@ -252,7 +292,15 @@ struct TrainingWriteBuffers {
     const std::vector<Board>* posHistForFutureBoards, //can be null
     bool isSidePosition,
     int numNeuralNetsBehindLatest,
-    const FinishedGameData& data,
+    double drawEquivalentWinsForWhite,
+    Player playoutDoublingAdvantagePla,
+    double playoutDoublingAdvantage,
+    Hash128 gameHash,
+    const std::vector<ChangedNeuralNet*>& changedNeuralNets,
+    bool hitTurnLimit,
+    int numExtraBlack,
+    int mode,
+    SGFMetadata* sgfMeta,
     Rand& rand
   );
 

@@ -10,6 +10,7 @@ AnalysisData::AnalysisData()
    resultUtility(0.0),
    scoreUtility(0.0),
    winLossValue(0.0),
+   noResultValue(0.0),
    policyPrior(0.0),
    scoreMean(0.0),
    scoreStdev(0.0),
@@ -20,6 +21,8 @@ AnalysisData::AnalysisData()
    weightSqSum(0.0),
    utilitySqAvg(0.0),
    scoreMeanSqAvg(0.0),
+   childVisits(0),
+   childWeightSum(0.0),
    order(0),
    isSymmetryOf(Board::NULL_LOC),
    symmetry(0),
@@ -39,6 +42,7 @@ AnalysisData::AnalysisData(const AnalysisData& other)
    resultUtility(other.resultUtility),
    scoreUtility(other.scoreUtility),
    winLossValue(other.winLossValue),
+   noResultValue(other.noResultValue),
    policyPrior(other.policyPrior),
    scoreMean(other.scoreMean),
    scoreStdev(other.scoreStdev),
@@ -49,6 +53,8 @@ AnalysisData::AnalysisData(const AnalysisData& other)
    weightSqSum(other.weightSqSum),
    utilitySqAvg(other.utilitySqAvg),
    scoreMeanSqAvg(other.scoreMeanSqAvg),
+   childVisits(other.childVisits),
+   childWeightSum(other.childWeightSum),
    order(other.order),
    isSymmetryOf(other.isSymmetryOf),
    symmetry(other.symmetry),
@@ -68,6 +74,7 @@ AnalysisData::AnalysisData(AnalysisData&& other) noexcept
    resultUtility(other.resultUtility),
    scoreUtility(other.scoreUtility),
    winLossValue(other.winLossValue),
+   noResultValue(other.noResultValue),
    policyPrior(other.policyPrior),
    scoreMean(other.scoreMean),
    scoreStdev(other.scoreStdev),
@@ -78,6 +85,8 @@ AnalysisData::AnalysisData(AnalysisData&& other) noexcept
    weightSqSum(other.weightSqSum),
    utilitySqAvg(other.utilitySqAvg),
    scoreMeanSqAvg(other.scoreMeanSqAvg),
+   childVisits(other.childVisits),
+   childWeightSum(other.childWeightSum),
    order(other.order),
    isSymmetryOf(other.isSymmetryOf),
    symmetry(other.symmetry),
@@ -102,6 +111,7 @@ AnalysisData& AnalysisData::operator=(const AnalysisData& other) {
   resultUtility = other.resultUtility;
   scoreUtility = other.scoreUtility;
   winLossValue = other.winLossValue;
+  noResultValue = other.noResultValue;
   policyPrior = other.policyPrior;
   scoreMean = other.scoreMean;
   scoreStdev = other.scoreStdev;
@@ -112,6 +122,8 @@ AnalysisData& AnalysisData::operator=(const AnalysisData& other) {
   weightSqSum = other.weightSqSum;
   utilitySqAvg = other.utilitySqAvg;
   scoreMeanSqAvg = other.scoreMeanSqAvg;
+  childVisits = other.childVisits;
+  childWeightSum = other.childWeightSum;
   order = other.order;
   isSymmetryOf = other.isSymmetryOf;
   symmetry = other.symmetry;
@@ -134,6 +146,7 @@ AnalysisData& AnalysisData::operator=(AnalysisData&& other) noexcept {
   resultUtility = other.resultUtility;
   scoreUtility = other.scoreUtility;
   winLossValue = other.winLossValue;
+  noResultValue = other.noResultValue;
   policyPrior = other.policyPrior;
   scoreMean = other.scoreMean;
   scoreStdev = other.scoreStdev;
@@ -144,6 +157,8 @@ AnalysisData& AnalysisData::operator=(AnalysisData&& other) noexcept {
   weightSqSum = other.weightSqSum;
   utilitySqAvg = other.utilitySqAvg;
   scoreMeanSqAvg = other.scoreMeanSqAvg;
+  childVisits = other.childVisits;
+  childWeightSum = other.childWeightSum;
   order = other.order;
   isSymmetryOf = other.isSymmetryOf;
   symmetry = other.symmetry;

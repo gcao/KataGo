@@ -24,7 +24,9 @@ static int getDefaultMaxExtraBlack(double sqrtBoardArea) {
 ExtraBlackAndKomi PlayUtils::chooseExtraBlackAndKomi(
   float base, float stdev, double allowIntegerProb,
   double handicapProb, int numExtraBlackFixed,
-  double bigStdevProb, float bigStdev, double sqrtBoardArea, Rand& rand
+  double bigStdevProb, float bigStdev,
+  double biggerStdevProb, float biggerStdev,
+  double sqrtBoardArea, Rand& rand
 ) {
   int extraBlack = 0;
   float komi = base;
@@ -34,6 +36,8 @@ ExtraBlackAndKomi PlayUtils::chooseExtraBlackAndKomi(
     stdevToUse = stdev;
   if(bigStdev > 0.0f && rand.nextBool(bigStdevProb))
     stdevToUse = bigStdev;
+  if(biggerStdev > 0.0f && biggerStdevProb > 0 && rand.nextBool(biggerStdevProb))
+    stdevToUse = biggerStdev;
   //Adjust for board size, so that we don't give the same massive komis on smaller boards
   stdevToUse = stdevToUse * (float)(sqrtBoardArea / 19.0);
 
@@ -52,9 +56,10 @@ ExtraBlackAndKomi PlayUtils::chooseExtraBlackAndKomi(
   ret.extraBlack = extraBlack;
   ret.komiMean = komi;
   ret.komiStdev = stdevToUse;
-  //These two are set later
+  //These are set later
   ret.makeGameFair = false;
   ret.makeGameFairForEmptyBoard = false;
+  ret.interpZero = false;
   //This is recorded for application later, since other things may adjust the komi in between.
   ret.allowInteger = allowInteger;
   return ret;
@@ -81,7 +86,7 @@ static float roundKomiWithLinearProb(float komi, Rand& rand) {
 //Also ignores allowInteger
 void PlayUtils::setKomiWithoutNoise(const ExtraBlackAndKomi& extraBlackAndKomi, BoardHistory& hist) {
   float komi = extraBlackAndKomi.komiMean;
-  komi = roundAndClipKomi(komi, hist.getRecentBoard(0), false);
+  komi = roundAndClipKomi(komi, hist.getRecentBoard(0));
   assert(Rules::komiIsIntOrHalfInt(komi));
   hist.setKomi(komi);
 }
@@ -90,8 +95,10 @@ void PlayUtils::setKomiWithNoise(const ExtraBlackAndKomi& extraBlackAndKomi, Boa
   float komi = extraBlackAndKomi.komiMean;
   if(extraBlackAndKomi.komiStdev > 0)
     komi += extraBlackAndKomi.komiStdev * (float)rand.nextGaussianTruncated(3.0);
+  if(extraBlackAndKomi.interpZero)
+    komi = komi * (float)rand.nextDouble();
   komi = roundKomiWithLinearProb(komi,rand);
-  komi = roundAndClipKomi(komi, hist.getRecentBoard(0), false);
+  komi = roundAndClipKomi(komi, hist.getRecentBoard(0));
   assert(Rules::komiIsIntOrHalfInt(komi));
   if(!extraBlackAndKomi.allowInteger && komi == (int)komi)
     komi += rand.nextBool(0.5) ? (-0.5f) : (0.5f);
@@ -102,6 +109,7 @@ void PlayUtils::setKomiWithNoise(const ExtraBlackAndKomi& extraBlackAndKomi, Boa
 Loc PlayUtils::chooseRandomLegalMove(const Board& board, const BoardHistory& hist, Player pla, Rand& gameRand, Loc banMove) {
   int numLegalMoves = 0;
   Loc locs[Board::MAX_ARR_SIZE];
+  testAssert(pla == hist.presumedNextMovePla);
   for(Loc loc = 0; loc < Board::MAX_ARR_SIZE; loc++) {
     if(hist.isLegal(board,loc,pla) && loc != banMove) {
       locs[numLegalMoves] = loc;
@@ -118,6 +126,7 @@ Loc PlayUtils::chooseRandomLegalMove(const Board& board, const BoardHistory& his
 int PlayUtils::chooseRandomLegalMoves(const Board& board, const BoardHistory& hist, Player pla, Rand& gameRand, Loc* buf, int len) {
   int numLegalMoves = 0;
   Loc locs[Board::MAX_ARR_SIZE];
+  testAssert(pla == hist.presumedNextMovePla);
   for(Loc loc = 0; loc < Board::MAX_ARR_SIZE; loc++) {
     if(hist.isLegal(board,loc,pla)) {
       locs[numLegalMoves] = loc;
@@ -144,6 +153,7 @@ Loc PlayUtils::chooseRandomPolicyMove(
   int numLegalMoves = 0;
   double relProbs[NNPos::MAX_NN_POLICY_SIZE];
   int locs[NNPos::MAX_NN_POLICY_SIZE];
+  testAssert(pla == hist.presumedNextMovePla);
   for(int pos = 0; pos<NNPos::MAX_NN_POLICY_SIZE; pos++) {
     Loc loc = NNPos::posToLoc(pos,board.x_size,board.y_size,nnXLen,nnYLen);
     if((loc == Board::PASS_LOC && !allowPass) || loc == banMove)
@@ -158,7 +168,8 @@ Loc PlayUtils::chooseRandomPolicyMove(
 
   //Just in case the policy map is somehow not consistent with the board position
   if(numLegalMoves > 0) {
-    uint32_t n = Search::chooseIndexWithTemperature(gameRand, relProbs, numLegalMoves, temperature);
+    double onlyBelowProb = 1.0;
+    uint32_t n = Search::chooseIndexWithTemperature(gameRand, relProbs, numLegalMoves, temperature, onlyBelowProb, NULL);
     return locs[n];
   }
   return Board::NULL_LOC;
@@ -184,6 +195,7 @@ Loc PlayUtils::getGameInitializationMove(
   testAssert(nnXLen > 0 && nnXLen < 100); //Just a sanity check to make sure no other crazy values have snuck in
   testAssert(nnYLen > 0 && nnYLen < 100); //Just a sanity check to make sure no other crazy values have snuck in
   int policySize = NNPos::getPolicySize(nnXLen,nnYLen);
+  testAssert(pla == hist.presumedNextMovePla);
   for(int movePos = 0; movePos<policySize; movePos++) {
     Loc moveLoc = NNPos::posToLoc(movePos,board.x_size,board.y_size,nnXLen,nnYLen);
     double policyProb = nnOutput->policyProbs[movePos];
@@ -215,12 +227,23 @@ Loc PlayUtils::getGameInitializationMove(
 void PlayUtils::initializeGameUsingPolicy(
   Search* botB, Search* botW, Board& board, BoardHistory& hist, Player& pla,
   Rand& gameRand, bool doEndGameIfAllPassAlive,
-  double proportionOfBoardArea, double temperature
+  double proportionOfBoardArea, double policyInitGammaShape, double temperature
 ) {
   NNResultBuf buf;
 
-  //This gives us about 15 moves on average for 19x19.
-  int numInitialMovesToPlay = (int)floor(gameRand.nextExponential() * (board.x_size * board.y_size * proportionOfBoardArea));
+  if(hist.isGameFinished)
+    return;
+
+  double mean = board.x_size * board.y_size * proportionOfBoardArea;
+  int numInitialMovesToPlay;
+
+  if(policyInitGammaShape != 1.0) {
+    numInitialMovesToPlay = (int)floor(gameRand.nextGamma(policyInitGammaShape) * (mean/policyInitGammaShape));
+  }
+  else {
+    numInitialMovesToPlay = (int)floor(gameRand.nextExponential() * mean);
+  }
+
   assert(numInitialMovesToPlay >= 0);
   for(int i = 0; i<numInitialMovesToPlay; i++) {
     Loc loc = getGameInitializationMove(botB, botW, board, hist, pla, buf, gameRand, temperature);
@@ -251,22 +274,24 @@ void PlayUtils::playExtraBlack(
 ) {
   Player pla = P_BLACK;
 
-  NNResultBuf buf;
-  for(int i = 0; i<numExtraBlack; i++) {
-    MiscNNInputParams nnInputParams;
-    nnInputParams.drawEquivalentWinsForWhite = bot->searchParams.drawEquivalentWinsForWhite;
-    bot->nnEvaluator->evaluate(board,hist,pla,nnInputParams,buf,false,false);
-    std::shared_ptr<NNOutput> nnOutput = std::move(buf.result);
+  if(!hist.isGameFinished) {
+    NNResultBuf buf;
+    for(int i = 0; i<numExtraBlack; i++) {
+      MiscNNInputParams nnInputParams;
+      nnInputParams.drawEquivalentWinsForWhite = bot->searchParams.drawEquivalentWinsForWhite;
+      bot->nnEvaluator->evaluate(board,hist,pla,nnInputParams,buf,false,false);
+      std::shared_ptr<NNOutput> nnOutput = std::move(buf.result);
 
-    bool allowPass = false;
-    Loc banMove = Board::NULL_LOC;
-    Loc loc = chooseRandomPolicyMove(nnOutput.get(), board, hist, pla, gameRand, temperature, allowPass, banMove);
-    if(loc == Board::NULL_LOC)
-      break;
+      bool allowPass = false;
+      Loc banMove = Board::NULL_LOC;
+      Loc loc = chooseRandomPolicyMove(nnOutput.get(), board, hist, pla, gameRand, temperature, allowPass, banMove);
+      if(loc == Board::NULL_LOC)
+        break;
 
-    assert(hist.isLegal(board,loc,pla));
-    hist.makeBoardMoveAssumeLegal(board,loc,pla,NULL);
-    hist.clear(board,pla,hist.rules,0);
+      assert(hist.isLegal(board,loc,pla));
+      hist.makeBoardMoveAssumeLegal(board,loc,pla,NULL);
+      hist.clear(board,pla,hist.rules,0);
+    }
   }
 
   bot->setPosition(pla,board,hist);
@@ -327,9 +352,9 @@ double PlayUtils::getHackedLCBForWinrate(const Search* search, const AnalysisDat
   return lcb;
 }
 
-float PlayUtils::roundAndClipKomi(double unrounded, const Board& board, bool looseClipping) {
+float PlayUtils::roundAndClipKomi(double unrounded, const Board& board) {
   //Just in case, make sure komi is reasonable
-  float range = looseClipping ? 40.0f + board.x_size * board.y_size : 40.0f + 0.5f * board.x_size * board.y_size;
+  float range = NNPos::KOMI_CLIP_RADIUS + board.x_size * board.y_size;
   if(unrounded < -range)
     unrounded = -range;
   if(unrounded > range)
@@ -351,7 +376,7 @@ static SearchParams getNoiselessParams(SearchParams oldParams, int64_t numVisits
   newParams.searchFactorAfterOnePass = 1.0;
   newParams.searchFactorAfterTwoPass = 1.0;
   if(newParams.numThreads > (numVisits+7)/8)
-    newParams.numThreads = (numVisits+7)/8;
+    newParams.numThreads = (int)((numVisits+7)/8);
   return newParams;
 }
 
@@ -426,8 +451,7 @@ static double getNaiveEvenKomiHelper(
   BoardHistory& hist,
   Player pla,
   int64_t numVisits,
-  const OtherGameProperties& otherGameProps,
-  bool looseClipping
+  const OtherGameProperties& otherGameProps
 ) {
   float oldKomi = hist.rules.komi;
 
@@ -447,7 +471,7 @@ static double getNaiveEvenKomiHelper(
          (lastWinLoss > 0 && winLoss > lastWinLoss + 0.1) ||
          (lastWinLoss < 0 && winLoss < lastWinLoss - 0.1)
       ) {
-        float fairKomi = PlayUtils::roundAndClipKomi(hist.rules.komi - lastShift * 0.5f, board, looseClipping);
+        float fairKomi = PlayUtils::roundAndClipKomi(hist.rules.komi - lastShift * 0.5f, board);
         hist.setKomi(fairKomi);
         // cout << "STOP" << endl;
         // cout << lastLead << " " << lead << " " << lastWinLoss << " " << winLoss << endl;
@@ -473,7 +497,7 @@ static double getNaiveEvenKomiHelper(
       break;
 
     // cout << "Shifting by " << shift << endl;
-    float fairKomi = PlayUtils::roundAndClipKomi(hist.rules.komi + shift, board, looseClipping);
+    float fairKomi = PlayUtils::roundAndClipKomi(hist.rules.komi + shift, board);
     hist.setKomi(fairKomi);
 
     //After a small shift, break out to the binary search.
@@ -484,7 +508,7 @@ static double getNaiveEvenKomiHelper(
   //Try a small window and do a binary search
   auto evalWinLoss = [&](double delta) {
     double newKomi = hist.rules.komi + delta;
-    double winLoss = evalKomi(scoreWLCache,botB,botW,board,hist,pla,numVisits,otherGameProps,PlayUtils::roundAndClipKomi(newKomi,board,looseClipping)).second;
+    double winLoss = evalKomi(scoreWLCache,botB,botW,board,hist,pla,numVisits,otherGameProps,PlayUtils::roundAndClipKomi(newKomi,board)).second;
     // cout << "Delta " << delta << " wr " << winLoss << endl;
     return winLoss;
   };
@@ -567,15 +591,14 @@ void PlayUtils::adjustKomiToEven(
   Rand& rand
 ) {
   map<float,std::pair<double,double>> scoreWLCache;
-  bool looseClipping = false;
-  double newKomi = getNaiveEvenKomiHelper(scoreWLCache,botB,botW,board,hist,pla,numVisits,otherGameProps,looseClipping);
+  double newKomi = getNaiveEvenKomiHelper(scoreWLCache,botB,botW,board,hist,pla,numVisits,otherGameProps);
   double lower = floor(newKomi * 2.0) * 0.5;
   double upper = lower + 0.5;
   if(rand.nextBool((newKomi - lower) / (upper - lower)))
     newKomi = upper;
   else
     newKomi = lower;
-  hist.setKomi(PlayUtils::roundAndClipKomi(newKomi,board,looseClipping));
+  hist.setKomi(PlayUtils::roundAndClipKomi(newKomi,board));
 }
 
 float PlayUtils::computeLead(
@@ -588,9 +611,8 @@ float PlayUtils::computeLead(
   const OtherGameProperties& otherGameProps
 ) {
   map<float,std::pair<double,double>> scoreWLCache;
-  bool looseClipping = true;
   float oldKomi = hist.rules.komi;
-  double naiveKomi = getNaiveEvenKomiHelper(scoreWLCache,botB,botW,board,hist,pla,numVisits,otherGameProps,looseClipping);
+  double naiveKomi = getNaiveEvenKomiHelper(scoreWLCache,botB,botW,board,hist,pla,numVisits,otherGameProps);
 
   bool granularityIsCoarse = hist.rules.scoringRule == Rules::SCORING_AREA && !hist.rules.hasButton;
   if(!granularityIsCoarse) {
@@ -599,7 +621,7 @@ float PlayUtils::computeLead(
   }
 
   auto evalWinLoss = [&](double newKomi) {
-    double winLoss = evalKomi(scoreWLCache,botB,botW,board,hist,pla,numVisits,otherGameProps,PlayUtils::roundAndClipKomi(newKomi,board,looseClipping)).second;
+    double winLoss = evalKomi(scoreWLCache,botB,botW,board,hist,pla,numVisits,otherGameProps,PlayUtils::roundAndClipKomi(newKomi,board)).second;
     // cout << "Delta " << delta << " wr " << winLoss << endl;
     return winLoss;
   };
@@ -879,7 +901,7 @@ void PlayUtils::BenchmarkResults::printEloComparison(const vector<BenchmarkResul
 
 PlayUtils::BenchmarkResults PlayUtils::benchmarkSearchOnPositionsAndPrint(
   const SearchParams& params,
-  const CompactSgf* sgf,
+  const CompactSgf& sgf,
   int numPositionsToUse,
   NNEvaluator* nnEval,
   const BenchmarkResults* baseline,
@@ -887,7 +909,7 @@ PlayUtils::BenchmarkResults PlayUtils::benchmarkSearchOnPositionsAndPrint(
   bool printElo
 ) {
   //Pick random positions from the SGF file, but deterministically
-  vector<Move> moves = sgf->moves;
+  vector<Move> moves = sgf.moves;
   if(moves.size() > 0xFFFF)
     moves.resize(0xFFFF);
   string posSeed = "benchmarkPosSeed|";
@@ -929,12 +951,12 @@ PlayUtils::BenchmarkResults PlayUtils::benchmarkSearchOnPositionsAndPrint(
   //Ignore the SGF rules, except for komi. Just use Tromp-taylor.
   Rules initialRules = Rules::getTrompTaylorish();
   //Take the komi from the sgf, otherwise ignore the rules in the sgf
-  initialRules.komi = sgf->komi;
+  initialRules.komi = sgf.getRulesOrFailAllowUnspecified(initialRules).komi;
 
   Board board;
   Player nextPla;
   BoardHistory hist;
-  sgf->setupInitialBoardAndHist(initialRules, board, nextPla, hist);
+  sgf.setupInitialBoardAndHist(initialRules, board, nextPla, hist);
 
   int moveNum = 0;
 
@@ -982,10 +1004,18 @@ PlayUtils::BenchmarkResults PlayUtils::benchmarkSearchOnPositionsAndPrint(
 }
 
 
-void PlayUtils::printGenmoveLog(ostream& out, const AsyncBot* bot, const NNEvaluator* nnEval, Loc moveLoc, double timeTaken, Player perspective) {
-  const Search* search = bot->getSearch();
-  Board::printBoard(out, bot->getRootBoard(), moveLoc, &(bot->getRootHist().moveHistory));
-  out << bot->getRootHist().rules << "\n";
+void PlayUtils::printGenmoveLog(
+  ostream& out,
+  const Search* search,
+  const NNEvaluator* nnEval,
+  Loc moveLoc,
+  double timeTaken,
+  Player perspective,
+  bool logSearchInfoForChosenMove
+) {
+  const Board& board = search->getRootBoard();
+  Board::printBoard(out, board, moveLoc, &(search->getRootHist().moveHistory));
+  out << search->getRootHist().rules << "\n";
   if(!std::isnan(timeTaken))
     out << "Time taken: " << timeTaken << "\n";
   out << "Root visits: " << search->getRootVisits() << "\n";
@@ -1001,7 +1031,10 @@ void PlayUtils::printGenmoveLog(ostream& out, const AsyncBot* bot, const NNEvalu
   search->printPV(out, search->rootNode, 25);
   out << "\n";
   out << "Tree:\n";
-  search->printTree(out, search->rootNode, PrintTreeOptions().maxDepth(1).maxChildrenToShow(10),perspective);
+  if(logSearchInfoForChosenMove && moveLoc != Board::NULL_LOC)
+    search->printTree(out, search->rootNode, PrintTreeOptions().maxDepth(1).maxChildrenToShow(10).alsoBranch(board,{Location::toString(moveLoc,board)}),perspective);
+  else
+    search->printTree(out, search->rootNode, PrintTreeOptions().maxDepth(1).maxChildrenToShow(10),perspective);
 }
 
 Rules PlayUtils::genRandomRules(Rand& rand) {
@@ -1032,6 +1065,7 @@ Loc PlayUtils::maybeCleanupBeforePass(
   if(friendlyPass == enabled_t::True)
     return moveLoc;
   const BoardHistory& hist = bot->getRootHist();
+  testAssert(pla == hist.presumedNextMovePla);
   const Rules& rules = hist.rules;
   const bool doCleanupBeforePass =
     cleanupBeforePass == enabled_t::True ? true :
@@ -1205,3 +1239,20 @@ Loc PlayUtils::maybeFriendlyPass(
   return moveLoc;
 }
 
+
+std::shared_ptr<NNOutput> PlayUtils::getFullSymmetryNNOutput(
+  const Board& board, const BoardHistory& hist, Player pla, bool includeOwnerMap, const SGFMetadata* sgfMeta, NNEvaluator* nnEval
+) {
+  vector<std::shared_ptr<NNOutput>> ptrs;
+  Board b = board;
+  for(int sym = 0; sym<SymmetryHelpers::NUM_SYMMETRIES; sym++) {
+    MiscNNInputParams nnInputParams;
+    nnInputParams.symmetry = sym;
+    NNResultBuf buf;
+    bool skipCache = true; //Always ignore cache so that we use the desired symmetry
+    nnEval->evaluate(b,hist,pla,sgfMeta,nnInputParams,buf,skipCache,includeOwnerMap);
+    ptrs.push_back(std::move(buf.result));
+  }
+  std::shared_ptr<NNOutput> result(new NNOutput(ptrs));
+  return result;
+}

@@ -6,13 +6,13 @@ set -o pipefail
 # Assumes you have the cpp directory compiled and the katago executable is there.
 
 # If using multiple machines, or even possibly many GPUs on one machine in some cases, then this is NOT the
-# recommended method, instead it is better to run all steps simultaneously and asynchronously. See README.md in
+# recommended method, instead it is better to run all steps simultaneously and asynchronously. See SelfplayTraining.md in
 # the root of the KataGo repo for more details.
 
 if [[ $# -lt 5 ]]
 then
     echo "Usage: $0 NAMEPREFIX BASEDIR TRAININGNAME MODELKIND USEGATING"
-    echo "Assumes katago is built in the 'cpp' directory of the KataGo repo and the executable is present at cpp/katago."
+    echo "Assumes katago is already built in the 'cpp' directory of the KataGo repo and the executable is present at cpp/katago."
     echo "NAMEPREFIX string prefix for this training run, try to pick something globally unique. Will be displayed to users when KataGo loads the model."
     echo "BASEDIR containing selfplay data and models and related directories"
     echo "TRANINGNAME name to prefix models with, specific to this training daemon"
@@ -32,32 +32,62 @@ USEGATING="$1"
 shift
 
 BASEDIR="$(realpath "$BASEDIRRAW")"
-
 GITROOTDIR="$(git rev-parse --show-toplevel)"
-
 LOGSDIR="$BASEDIR"/logs
 SCRATCHDIR="$BASEDIR"/shufflescratch
+
+# Create all the directories we need
 mkdir -p "$BASEDIR"
 mkdir -p "$LOGSDIR"
 mkdir -p "$SCRATCHDIR"
 mkdir -p "$BASEDIR"/selfplay
 mkdir -p "$BASEDIR"/gatekeepersgf
 
-# NOTE: You probably want to edit settings in the cpp/configs/selfplay1.cfg - what board sizes and rules, you want to learn, number of visits to use, etc.
-# NOTE: You may want to adjust these numbers.
-NUM_GAMES_PER_CYCLE=1000
-NUM_THREADS_FOR_SHUFFLING=8
-NUM_TRAIN_SAMPLES_PER_CYCLE=500000
-BATCHSIZE=128 # KataGo normally uses batch size 256, and you can do that too, but for lower-end GPUs 64 or 128 may be needed to avoid running out of memory.
-SHUFFLE_MINROWS=80000
-SHUFFLE_KEEPROWS=600000 # A little larger than NUM_TRAIN_SAMPLES_PER_CYCLE
+# Parameters for the training run
+# NOTE: You may want to adjust the below numbers.
+# NOTE: You probably want to edit settings in cpp/configs/training/selfplay1.cfg
+# NOTE: You probably want to edit settings in cpp/configs/training/gatekeeper1.cfg
+# Such as what board sizes and rules, you want to learn, number of visits to use, etc.
 
+# Also, the parameters below are relatively small, and probably
+# good for less powerful hardware and tighter turnaround during very early training, but if
+# you have strong hardware or are later into a run you may want to reduce the overhead by scaling
+# these numbers up and doing more games and training per cycle, exporting models less frequently, etc.
+
+NUM_GAMES_PER_CYCLE=500 # Every cycle, play this many games
+NUM_THREADS_FOR_SHUFFLING=8
+NUM_TRAIN_SAMPLES_PER_EPOCH=100000  # Training will proceed in chunks of this many rows, subject to MAX_TRAIN_PER_DATA.
+MAX_TRAIN_PER_DATA=8 # On average, train only this many times on each data row. Larger numbers may cause overfitting.
+NUM_TRAIN_SAMPLES_PER_SWA=80000  # Stochastic weight averaging frequency.
+BATCHSIZE=128 # For lower-end GPUs 64 or smaller may be needed to avoid running out of GPU memory.
+SHUFFLE_MINROWS=100000 # Require this many rows at the very start before beginning training.
+MAX_TRAIN_SAMPLES_PER_CYCLE=500000  # Each cycle will do at most this many training steps.
+TAPER_WINDOW_SCALE=50000 # Parameter setting the scale at which the shuffler will make the training window grow sublinearly.
+SHUFFLE_KEEPROWS=600000 # Needs to be larger than MAX_TRAIN_SAMPLES_PER_CYCLE, so the shuffler samples enough rows each cycle for the training to use.
+
+# Paths to the selfplay and gatekeeper configs that contain board sizes, rules, search parameters, etc.
+# See cpp/configs/training/README.md for some notes on other selfplay configs.
+SELFPLAY_CONFIG="$GITROOTDIR"/cpp/configs/training/selfplay1.cfg
+GATING_CONFIG="$GITROOTDIR"/cpp/configs/training/gatekeeper1.cfg
+
+# Copy all the relevant scripts and configs and the katago executable to a dated directory.
 # For archival and logging purposes - you can look back and see exactly the python code on a particular date
 DATE_FOR_FILENAME=$(date "+%Y%m%d-%H%M%S")
 DATED_ARCHIVE="$BASEDIR"/scripts/dated/"$DATE_FOR_FILENAME"
-mkdir -p "$DATED_ARCHIVE"
+mkdir -p "$DATED_ARCHIVE"/bin
 cp "$GITROOTDIR"/python/*.py "$GITROOTDIR"/python/selfplay/*.sh "$DATED_ARCHIVE"
+cp -r "$GITROOTDIR"/python/katago "$DATED_ARCHIVE"
+cp "$GITROOTDIR"/cpp/katago "$DATED_ARCHIVE"/bin
+cp "$SELFPLAY_CONFIG" "$DATED_ARCHIVE"/selfplay.cfg
+cp "$GATING_CONFIG" "$DATED_ARCHIVE"/gatekeeper.cfg
+git show --no-patch --no-color > "$DATED_ARCHIVE"/version.txt
+git diff --no-color > "$DATED_ARCHIVE"/diff.txt
+git diff --staged --no-color > "$DATED_ARCHIVE"/diffstaged.txt
 
+# Also run the code out of the archive, so that we don't unexpectedly crash or change behavior if the local repo changes.
+cd "$DATED_ARCHIVE"
+
+# Begin cycling forever, running each step in order.
 set -x
 while true
 do
@@ -67,24 +97,24 @@ do
     echo
 
     echo "Selfplay"
-    time "$GITROOTDIR"/cpp/katago selfplay -max-games-total "$NUM_GAMES_PER_CYCLE" -output-dir "$BASEDIR"/selfplay -models-dir "$BASEDIR"/models -config "$GITROOTDIR"/cpp/configs/selfplay1.cfg | tee -a "$BASEDIR"/selfplay/stdout.txt
+    time ./bin/katago selfplay -max-games-total "$NUM_GAMES_PER_CYCLE" -output-dir "$BASEDIR"/selfplay -models-dir "$BASEDIR"/models -config "$DATED_ARCHIVE"/selfplay.cfg | tee -a "$BASEDIR"/selfplay/stdout.txt
 
     echo "Sleep 10 minutes to cool down CPU & GPU etc"
     sleep 600
 
     echo "Shuffle"
     (
-        cd "$GITROOTDIR"/python
-        time ./selfplay/shuffle.sh "$BASEDIR" "$SCRATCHDIR" "$NUM_THREADS_FOR_SHUFFLING" "$BATCHSIZE" -min-rows "$SHUFFLE_MINROWS" -keep-target-rows "$SHUFFLE_KEEPROWS"
+        # Skip validate since peeling off 5% of data is actually a bit too chunky and discrete when running at a small scale, and validation data
+        # doesn't actually add much to debugging a fast-changing RL training.
+        time SKIP_VALIDATE=1 ./shuffle.sh "$BASEDIR" "$SCRATCHDIR" "$NUM_THREADS_FOR_SHUFFLING" "$BATCHSIZE" -min-rows "$SHUFFLE_MINROWS" -keep-target-rows "$SHUFFLE_KEEPROWS" -taper-window-scale "$TAPER_WINDOW_SCALE" | tee -a "$BASEDIR"/logs/outshuffle.txt
     )
 
     echo "Train"
-    time "$GITROOTDIR"/python/selfplay/train.sh "$BASEDIR" "$TRAININGNAME" "$MODELKIND" "$BATCHSIZE" main -max-epochs-this-instance 1 -samples-per-epoch "$NUM_TRAIN_SAMPLES_PER_CYCLE"
+    time ./train.sh "$BASEDIR" "$TRAININGNAME" "$MODELKIND" "$BATCHSIZE" main -samples-per-epoch "$NUM_TRAIN_SAMPLES_PER_EPOCH" -swa-period-samples "$NUM_TRAIN_SAMPLES_PER_SWA" -quit-if-no-data -stop-when-train-bucket-limited -no-repeat-files -max-train-bucket-per-new-data "$MAX_TRAIN_PER_DATA" -max-train-bucket-size "$MAX_TRAIN_SAMPLES_PER_CYCLE"
 
     echo "Export"
     (
-        cd "$GITROOTDIR"/python
-        time ./selfplay/export_model_for_selfplay.sh "$NAMEPREFIX" "$BASEDIR" "$USEGATING"
+        time ./export_model_for_selfplay.sh "$NAMEPREFIX" "$BASEDIR" "$USEGATING" | tee -a "$BASEDIR"/logs/outexport.txt
     )
 
     echo "Gatekeeper"
@@ -92,7 +122,6 @@ do
 
     echo "Sleep 5 minutes to cool down CPU & GPU etc"
     sleep 300
-
 done
 
 exit 0

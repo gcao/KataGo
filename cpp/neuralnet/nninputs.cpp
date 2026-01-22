@@ -22,6 +22,10 @@ Loc NNPos::posToLoc(int pos, int boardXSize, int boardYSize, int nnXLen, int nnY
   return Location::getLoc(x,y,boardXSize);
 }
 
+int NNPos::getPassPos(int nnXLen, int nnYLen) {
+  return nnXLen * nnYLen;
+}
+
 bool NNPos::isPassPos(int pos, int nnXLen, int nnYLen) {
   return pos == nnXLen * nnYLen;
 }
@@ -35,12 +39,20 @@ int NNPos::getPolicySize(int nnXLen, int nnYLen) {
 
 const Hash128 MiscNNInputParams::ZOBRIST_CONSERVATIVE_PASS =
   Hash128(0x0c2b96f4b8ae2da9ULL, 0x5a14dee208fec0edULL);
+const Hash128 MiscNNInputParams::ZOBRIST_FRIENDLY_PASS =
+  Hash128(0xe750505a66f7c5c2ULL, 0x7a83139bf632d6c4ULL);
+const Hash128 MiscNNInputParams::ZOBRIST_PASSING_HACKS =
+  Hash128(0x9c89f4fd3ce5a92cULL, 0x268c9aff79c64d00ULL);
 const Hash128 MiscNNInputParams::ZOBRIST_PLAYOUT_DOUBLINGS =
   Hash128(0xa5e6114d380bfc1dULL, 0x4160557f1222f4adULL);
 const Hash128 MiscNNInputParams::ZOBRIST_NN_POLICY_TEMP =
   Hash128(0xebcbdfeec6f4334bULL, 0xb85e43ee243b5ad2ULL);
 const Hash128 MiscNNInputParams::ZOBRIST_AVOID_MYTDAGGER_HACK =
   Hash128(0x612d22ec402ce054ULL, 0x0db915c49de527aeULL);
+const Hash128 MiscNNInputParams::ZOBRIST_POLICY_OPTIMISM =
+  Hash128(0x88415c85c2801955ULL, 0x39bdf76b2aaa5eb1ULL);
+const Hash128 MiscNNInputParams::ZOBRIST_ZERO_HISTORY =
+  Hash128(0x78f02afdd1aa4910ULL, 0xda78d550486fe978ULL);
 
 //-----------------------------------------------------------------------------------------------------------
 //-----------------------------------------------------------------------------------------------------------
@@ -62,30 +74,27 @@ double ScoreValue::whiteScoreDrawAdjust(double finalWhiteMinusBlackScore, double
   return finalWhiteMinusBlackScore + hist.whiteKomiAdjustmentForDraws(drawEquivalentWinsForWhite);
 }
 
-double ScoreValue::whiteScoreValueOfScoreSmooth(double finalWhiteMinusBlackScore, double center, double scale, double drawEquivalentWinsForWhite, const Board& b, const BoardHistory& hist) {
+double ScoreValue::whiteScoreValueOfScoreSmooth(
+  double finalWhiteMinusBlackScore,
+  double center,
+  double scale,
+  double drawEquivalentWinsForWhite,
+  double sqrtBoardArea,
+  const BoardHistory& hist)
+{
   double adjustedScore = finalWhiteMinusBlackScore + hist.whiteKomiAdjustmentForDraws(drawEquivalentWinsForWhite) - center;
-  if(b.x_size == b.y_size)
-    return atan(adjustedScore / (scale*b.x_size)) * twoOverPi;
-  else
-    return atan(adjustedScore / (scale*sqrt(b.x_size*b.y_size))) * twoOverPi;
+  return atan(adjustedScore / (scale * sqrtBoardArea)) * twoOverPi;
 }
 
-double ScoreValue::whiteScoreValueOfScoreSmoothNoDrawAdjust(double finalWhiteMinusBlackScore, double center, double scale, const Board& b) {
+double ScoreValue::whiteScoreValueOfScoreSmoothNoDrawAdjust(double finalWhiteMinusBlackScore, double center, double scale, double sqrtBoardArea) {
   double adjustedScore = finalWhiteMinusBlackScore - center;
-  if(b.x_size == b.y_size)
-    return atan(adjustedScore / (scale*b.x_size)) * twoOverPi;
-  else
-    return atan(adjustedScore / (scale*sqrt(b.x_size*b.y_size))) * twoOverPi;
+  return atan(adjustedScore / (scale * sqrtBoardArea)) * twoOverPi;
 }
 
-double ScoreValue::whiteDScoreValueDScoreSmoothNoDrawAdjust(double finalWhiteMinusBlackScore, double center, double scale, const Board& b) {
+double ScoreValue::whiteDScoreValueDScoreSmoothNoDrawAdjust(double finalWhiteMinusBlackScore, double center, double scale, double sqrtBoardArea) {
   double adjustedScore = finalWhiteMinusBlackScore - center;
   double scaleFactor;
-  if(b.x_size == b.y_size)
-    scaleFactor = scale*b.x_size;
-  else
-    scaleFactor = scale*sqrt(b.x_size*b.y_size);
-
+  scaleFactor = scale * sqrtBoardArea;
   return scaleFactor / (scaleFactor * scaleFactor + adjustedScore * adjustedScore) * twoOverPi;
 }
 
@@ -95,13 +104,10 @@ static double inverse_atan(double x) {
   return tan(x);
 }
 
-double ScoreValue::approxWhiteScoreOfScoreValueSmooth(double scoreValue, double center, double scale, const Board& b) {
+double ScoreValue::approxWhiteScoreOfScoreValueSmooth(double scoreValue, double center, double scale, double sqrtBoardArea) {
   assert(scoreValue >= -1 && scoreValue <= 1);
-  double scoreUnscaled = inverse_atan(scoreValue*piOverTwo);
-  if(b.x_size == b.y_size)
-    return scoreUnscaled * (scale*b.x_size) + center;
-  else
-    return scoreUnscaled * (scale*sqrt(b.x_size*b.y_size)) + center;
+  double scoreUnscaled = inverse_atan(scoreValue * piOverTwo);
+  return scoreUnscaled * (scale * sqrtBoardArea) + center;
 }
 
 double ScoreValue::whiteScoreMeanSqOfScoreGridded(double finalWhiteMinusBlackScore, double drawEquivalentWinsForWhite) {
@@ -150,13 +156,12 @@ void ScoreValue::initTables() {
     normalPDF[i-minStdevSteps] = w;
   }
   //Precompute scorevalue at increments of 1/stepsPerUnit points
-  Board board(svTableAssumedBSize,svTableAssumedBSize);
   int minSVSteps = - (svTableMeanRadius*stepsPerUnit + stepsPerUnit/2 + boundStdevs * svTableStdevLen * stepsPerUnit);
   int maxSVSteps = -minSVSteps;
   double* svPrecomp = new double[(maxSVSteps-minSVSteps)+1];
   for(int i = minSVSteps; i <= maxSVSteps; i++) {
     double mean = (double)i / stepsPerUnit;
-    double sv = whiteScoreValueOfScoreSmoothNoDrawAdjust(mean, 0.0, 1.0, board);
+    double sv = whiteScoreValueOfScoreSmoothNoDrawAdjust(mean, 0.0, 1.0, svTableAssumedBSize);
     svPrecomp[i-minSVSteps] = sv;
   }
 
@@ -183,14 +188,10 @@ void ScoreValue::initTables() {
   scoreValueTablesInitialized = true;
 }
 
-double ScoreValue::expectedWhiteScoreValue(double whiteScoreMean, double whiteScoreStdev, double center, double scale, const Board& b) {
+double ScoreValue::expectedWhiteScoreValue(double whiteScoreMean, double whiteScoreStdev, double center, double scale, double sqrtBoardArea) {
   assert(scoreValueTablesInitialized);
 
-  double scaleFactor;
-  if(b.x_size == b.y_size)
-    scaleFactor = (double)svTableAssumedBSize / (scale * b.x_size);
-  else
-    scaleFactor = (double)svTableAssumedBSize / (scale * sqrt(b.x_size*b.y_size));
+  double scaleFactor = (double)svTableAssumedBSize / (scale * sqrtBoardArea);
 
   double meanScaled = (whiteScoreMean - center) * scaleFactor;
   double stdevScaled = whiteScoreStdev * scaleFactor;
@@ -347,6 +348,7 @@ NNOutput::NNOutput(const NNOutput& other) {
     noisedPolicyProbs = NULL;
 
   std::copy(other.policyProbs, other.policyProbs+NNPos::MAX_NN_POLICY_SIZE, policyProbs);
+  policyOptimismUsed = other.policyOptimismUsed;
 }
 
 NNOutput::NNOutput(const vector<shared_ptr<NNOutput>>& others) {
@@ -441,7 +443,24 @@ NNOutput::NNOutput(const vector<shared_ptr<NNOutput>>& others) {
         policyProbs[pos] /= floatLen;
     }
   }
-
+  {
+    bool allOptimismsMatch = true;
+    for(int i = 1; i<len; i++) {
+      if(others[i]->policyOptimismUsed != others[0]->policyOptimismUsed) {
+        allOptimismsMatch = false;
+        break;
+      }
+    }
+    if(allOptimismsMatch) {
+      policyOptimismUsed = others[0]->policyOptimismUsed;
+    }
+    else {
+      policyOptimismUsed = 0.0;
+      for(int i = 0; i<len; i++) {
+        policyOptimismUsed += others[i]->policyOptimismUsed / (float)len;
+      }
+    }
+  }
 }
 
 NNOutput& NNOutput::operator=(const NNOutput& other) {
@@ -478,6 +497,7 @@ NNOutput& NNOutput::operator=(const NNOutput& other) {
     noisedPolicyProbs = NULL;
 
   std::copy(other.policyProbs, other.policyProbs+NNPos::MAX_NN_POLICY_SIZE, policyProbs);
+  policyOptimismUsed = other.policyOptimismUsed;
 
   return *this;
 }
@@ -499,14 +519,16 @@ void NNOutput::debugPrint(ostream& out, const Board& board) {
   out << "Win " << Global::strprintf("%.2fc",whiteWinProb*100) << endl;
   out << "Loss " << Global::strprintf("%.2fc",whiteLossProb*100) << endl;
   out << "NoResult " << Global::strprintf("%.2fc",whiteNoResultProb*100) << endl;
-  out << "ScoreMean " << Global::strprintf("%.1f",whiteScoreMean) << endl;
+  out << "ScoreMean " << Global::strprintf("%.2f",whiteScoreMean) << endl;
   out << "ScoreMeanSq " << Global::strprintf("%.1f",whiteScoreMeanSq) << endl;
-  out << "Lead " << Global::strprintf("%.1f",whiteLead) << endl;
+  out << "Lead " << Global::strprintf("%.2f",whiteLead) << endl;
   out << "VarTimeLeft " << Global::strprintf("%.1f",varTimeLeft) << endl;
-  out << "STWinlossError " << Global::strprintf("%.1f",shorttermWinlossError) << endl;
-  out << "STScoreError " << Global::strprintf("%.1f",shorttermScoreError) << endl;
+  out << "STWinlossError " << Global::strprintf("%.2fc",shorttermWinlossError*100) << endl;
+  out << "STScoreError " << Global::strprintf("%.2f",shorttermScoreError) << endl;
+  out << "OptimismUsed " << Global::strprintf("%.2f",policyOptimismUsed) << endl;
 
   out << "Policy" << endl;
+  out << "Pass" << Global::strprintf("%4d ", (int)round(policyProbs[NNPos::getPassPos(nnXLen,nnYLen)] * 1000)) << endl;
   for(int y = 0; y<board.y_size; y++) {
     for(int x = 0; x<board.x_size; x++) {
       int pos = NNPos::xyToPos(x,y,nnXLen);
@@ -668,12 +690,14 @@ Board SymmetryHelpers::getSymBoard(const Board& board, int symmetry) {
       if(transpose)
         std::swap(symX,symY);
       Loc symLoc = Location::getLoc(symX,symY,symBoard.x_size);
-      symBoard.setStone(symLoc,board.colors[loc]);
+      bool suc = symBoard.setStoneFailIfNoLibs(symLoc,board.colors[loc]);
+      assert(suc);
+      (void)suc;
       if(loc == board.ko_loc)
         symKoLoc = symLoc;
     }
   }
-  //Set only at the end because otherwise setStone clears it.
+  //Set only at the end because otherwise setStoneFailIfNoLibs clears it.
   if(symKoLoc != Board::NULL_LOC)
     symBoard.setSimpleKoLoc(symKoLoc);
   return symBoard;
@@ -766,6 +790,52 @@ void SymmetryHelpers::markDuplicateMoveLocs(
   }
 }
 
+static double getSymmetryDifference(const Board& board, const Board& other, int symmetry, double maxDifferenceToReport) {
+  double thisDifference = 0.0;
+  for(int y = 0; y<board.y_size; y++) {
+    for(int x = 0; x<board.x_size; x++) {
+      Loc loc = Location::getLoc(x, y, board.x_size);
+      Loc symLoc = SymmetryHelpers::getSymLoc(x, y, board, symmetry);
+      // Difference!
+      if(board.colors[loc] != other.colors[symLoc]) {
+        // One of them was empty, the other was a stone
+        if(board.colors[loc] == C_EMPTY || other.colors[symLoc] == C_EMPTY)
+          thisDifference += 1.0;
+        // Differing stones - triple the penalty
+        else
+          thisDifference += 3.0;
+
+        if(thisDifference > maxDifferenceToReport)
+          return maxDifferenceToReport;
+      }
+    }
+  }
+  return thisDifference;
+}
+
+
+// For each symmetry, return a metric about the "amount" of difference that board would have with other
+// if symmetry were applied to board.
+void SymmetryHelpers::getSymmetryDifferences(
+  const Board& board, const Board& other, double maxDifferenceToReport, double symmetryDifferences[SymmetryHelpers::NUM_SYMMETRIES]
+) {
+  for(int symmetry = 0; symmetry<SymmetryHelpers::NUM_SYMMETRIES; symmetry++)
+    symmetryDifferences[symmetry] = maxDifferenceToReport;
+
+  // Don't bother handling ultra-fancy transpose logic
+  if(board.x_size != other.x_size || board.y_size != other.y_size)
+    return;
+
+  int numSymmetries = SymmetryHelpers::NUM_SYMMETRIES;
+  if(board.x_size != board.y_size)
+    numSymmetries = SymmetryHelpers::NUM_SYMMETRIES_WITHOUT_TRANSPOSE;
+
+  for(int symmetry = 0; symmetry<numSymmetries; symmetry++) {
+    symmetryDifferences[symmetry] = getSymmetryDifference(board, other, symmetry, maxDifferenceToReport);
+  }
+}
+
+
 //-------------------------------------------------------------------------------------------------------------
 
 static void setRowBin(float* rowBin, int pos, int feature, float value, int posStride, int featureStride) {
@@ -833,19 +903,39 @@ Hash128 NNInputs::getHash(
 ) {
   Hash128 hash = BoardHistory::getSituationRulesAndKoHash(board, hist, nextPlayer, nnInputParams.drawEquivalentWinsForWhite);
 
-  //Fold in whether a pass ends this phase
-  bool passEndsPhase = hist.passWouldEndPhase(board,nextPlayer);
-  if(passEndsPhase) {
+  //Fold in whether a pass ends this phase.
+  if(hist.passWouldEndPhase(board,nextPlayer)) {
     hash ^= Board::ZOBRIST_PASS_ENDS_PHASE;
-    //And in the case that a pass ends the phase, conservativePass also affects the result
-    if(nnInputParams.conservativePass)
+    //Technically some of the below only apply when passing ends the game, but it's pretty harmless to use the more
+    //conservative hashing including them when the phase would end too.
+
+    //And in the case that a pass ends the phase, conservativePass also affects the result for the root node
+    if(nnInputParams.conservativePassAndIsRoot)
       hash ^= MiscNNInputParams::ZOBRIST_CONSERVATIVE_PASS;
+
+    //If we're in a ruleset where passing without capturing all the stones is okay, and as a result are suppressing
+    //the game end effect of a pass during search, hash this in.
+    if(hist.shouldSuppressEndGameFromFriendlyPass(board,nextPlayer))
+      hash ^= MiscNNInputParams::ZOBRIST_FRIENDLY_PASS;
+
+    //Passing hacks can also affect things at game or phase end.
+    if(nnInputParams.enablePassingHacks)
+      hash ^= MiscNNInputParams::ZOBRIST_PASSING_HACKS;
   }
   //Fold in whether the game is over or not, since this affects how we compute input features
   //but is not a function necessarily of previous hashed values.
   //If the history is in a weird prolonged state, also treat it similarly.
   if(hist.isGameFinished || hist.isPastNormalPhaseEnd)
     hash ^= Board::ZOBRIST_GAME_IS_OVER;
+
+  //Distinguish between forcing the history to always be empty and allow any nonempty amount
+  //We already tolerate caching and reusing evals across distinct transpositions with different
+  //history, for performance reasons, but the case of no history at all is probably distinct
+  //enough that we should distinguish it.
+  if(nnInputParams.maxHistory <= 0) {
+    hash.hash0 += MiscNNInputParams::ZOBRIST_ZERO_HISTORY.hash0;
+    hash.hash1 += MiscNNInputParams::ZOBRIST_ZERO_HISTORY.hash1;
+  }
 
   //Fold in asymmetric playout indicator
   if(nnInputParams.playoutDoublingAdvantage != 0) {
@@ -866,6 +956,14 @@ Hash128 NNInputs::getHash(
 
   if(nnInputParams.avoidMYTDaggerHack)
     hash ^= MiscNNInputParams::ZOBRIST_AVOID_MYTDAGGER_HACK;
+
+  //Fold in policy optimism
+  if(nnInputParams.policyOptimism > 0) {
+    hash ^= MiscNNInputParams::ZOBRIST_POLICY_OPTIMISM;
+    int64_t policyOptimismDiscretized = (int64_t)(nnInputParams.policyOptimism*1024.0);
+    hash.hash0 = Hash::rrmxmx(Hash::splitMix64(hash.hash0) + (uint64_t)policyOptimismDiscretized);
+    hash.hash1 = Hash::rrmxmx(hash.hash1 + hash.hash0 + (uint64_t)policyOptimismDiscretized);
+  }
 
   return hash;
 }
@@ -963,7 +1061,11 @@ void NNInputs::fillRowV3(
   bool hideHistory =
     hist.isGameFinished ||
     hist.isPastNormalPhaseEnd ||
-    (nnInputParams.conservativePass && hist.passWouldEndGame(board,nextPlayer));
+    (hist.passWouldEndGame(board,nextPlayer) && (
+      nnInputParams.conservativePassAndIsRoot ||
+      hist.shouldSuppressEndGameFromFriendlyPass(board,nextPlayer)
+    ));
+  int numTurnsOfHistoryIncluded = 0;
 
   //Features 9,10,11,12,13
   if(!hideHistory) {
@@ -971,6 +1073,7 @@ void NNInputs::fillRowV3(
     size_t moveHistoryLen = moveHistory.size();
     if(moveHistoryLen >= 1 && moveHistory[moveHistoryLen-1].pla == opp) {
       Loc prev1Loc = moveHistory[moveHistoryLen-1].loc;
+      numTurnsOfHistoryIncluded = 1;
       if(prev1Loc == Board::PASS_LOC)
         rowGlobal[0] = 1.0;
       else if(prev1Loc != Board::NULL_LOC) {
@@ -979,6 +1082,7 @@ void NNInputs::fillRowV3(
       }
       if(moveHistoryLen >= 2 && moveHistory[moveHistoryLen-2].pla == pla) {
         Loc prev2Loc = moveHistory[moveHistoryLen-2].loc;
+        numTurnsOfHistoryIncluded = 2;
         if(prev2Loc == Board::PASS_LOC)
           rowGlobal[1] = 1.0;
         else if(prev2Loc != Board::NULL_LOC) {
@@ -987,6 +1091,7 @@ void NNInputs::fillRowV3(
         }
         if(moveHistoryLen >= 3 && moveHistory[moveHistoryLen-3].pla == opp) {
           Loc prev3Loc = moveHistory[moveHistoryLen-3].loc;
+          numTurnsOfHistoryIncluded = 3;
           if(prev3Loc == Board::PASS_LOC)
             rowGlobal[2] = 1.0;
           else if(prev3Loc != Board::NULL_LOC) {
@@ -995,6 +1100,7 @@ void NNInputs::fillRowV3(
           }
           if(moveHistoryLen >= 4 && moveHistory[moveHistoryLen-4].pla == pla) {
             Loc prev4Loc = moveHistory[moveHistoryLen-4].loc;
+            numTurnsOfHistoryIncluded = 4;
             if(prev4Loc == Board::PASS_LOC)
               rowGlobal[3] = 1.0;
             else if(prev4Loc != Board::NULL_LOC) {
@@ -1003,6 +1109,7 @@ void NNInputs::fillRowV3(
             }
             if(moveHistoryLen >= 5 && moveHistory[moveHistoryLen-5].pla == opp) {
               Loc prev5Loc = moveHistory[moveHistoryLen-5].loc;
+              numTurnsOfHistoryIncluded = 5;
               if(prev5Loc == Board::PASS_LOC)
                 rowGlobal[4] = 1.0;
               else if(prev5Loc != Board::NULL_LOC) {
@@ -1017,7 +1124,7 @@ void NNInputs::fillRowV3(
   }
 
   //Ladder features 14,15,16,17
-  auto addLadderFeature = [&board,xSize,nnXLen,nnYLen,posStride,featureStride,rowBin,opp](Loc loc, int pos, const vector<Loc>& workingMoves){
+  auto addLadderFeature = [&board,xSize,nnXLen,nnYLen,posStride,featureStride,rowBin,opp](Loc loc, int pos, const vector<Loc>& workingMoves)  noexcept {
     assert(board.colors[loc] == P_BLACK || board.colors[loc] == P_WHITE);
     assert(pos >= 0 && pos < NNPos::MAX_BOARD_AREA);
     setRowBin(rowBin,pos,14, 1.0f, posStride, featureStride);
@@ -1031,8 +1138,8 @@ void NNInputs::fillRowV3(
 
   iterLadders(board, nnXLen, addLadderFeature);
 
-  const Board& prevBoard = hideHistory ? board : hist.getRecentBoard(1);
-  auto addPrevLadderFeature = [&prevBoard,posStride,featureStride,rowBin](Loc loc, int pos, const vector<Loc>& workingMoves){
+  const Board& prevBoard = (hideHistory || numTurnsOfHistoryIncluded < 1) ? board : hist.getRecentBoard(1);
+  auto addPrevLadderFeature = [&prevBoard,posStride,featureStride,rowBin](Loc loc, int pos, const vector<Loc>& workingMoves) noexcept {
     (void)workingMoves;
     (void)loc;
     assert(prevBoard.colors[loc] == P_BLACK || prevBoard.colors[loc] == P_WHITE);
@@ -1041,8 +1148,8 @@ void NNInputs::fillRowV3(
   };
   iterLadders(prevBoard, nnXLen, addPrevLadderFeature);
 
-  const Board& prevPrevBoard = hideHistory ? board : hist.getRecentBoard(2);
-  auto addPrevPrevLadderFeature = [&prevPrevBoard,posStride,featureStride,rowBin](Loc loc, int pos, const vector<Loc>& workingMoves){
+  const Board& prevPrevBoard = (hideHistory || numTurnsOfHistoryIncluded < 2) ? prevBoard : hist.getRecentBoard(2);
+  auto addPrevPrevLadderFeature = [&prevPrevBoard,posStride,featureStride,rowBin](Loc loc, int pos, const vector<Loc>& workingMoves) noexcept {
     (void)workingMoves;
     (void)loc;
     assert(prevPrevBoard.colors[loc] == P_BLACK || prevPrevBoard.colors[loc] == P_WHITE);
@@ -1304,7 +1411,11 @@ void NNInputs::fillRowV4(
   bool hideHistory =
     hist.isGameFinished ||
     hist.isPastNormalPhaseEnd ||
-    (nnInputParams.conservativePass && hist.passWouldEndGame(board,nextPlayer));
+    (hist.passWouldEndGame(board,nextPlayer) && (
+      nnInputParams.conservativePassAndIsRoot ||
+      hist.shouldSuppressEndGameFromFriendlyPass(board,nextPlayer)
+    ));
+  int numTurnsOfHistoryIncluded = 0;
 
   //Features 9,10,11,12,13
   if(!hideHistory) {
@@ -1312,6 +1423,7 @@ void NNInputs::fillRowV4(
     size_t moveHistoryLen = moveHistory.size();
     if(moveHistoryLen >= 1 && moveHistory[moveHistoryLen-1].pla == opp) {
       Loc prev1Loc = moveHistory[moveHistoryLen-1].loc;
+      numTurnsOfHistoryIncluded = 1;
       if(prev1Loc == Board::PASS_LOC)
         rowGlobal[0] = 1.0;
       else if(prev1Loc != Board::NULL_LOC) {
@@ -1320,6 +1432,7 @@ void NNInputs::fillRowV4(
       }
       if(moveHistoryLen >= 2 && moveHistory[moveHistoryLen-2].pla == pla) {
         Loc prev2Loc = moveHistory[moveHistoryLen-2].loc;
+        numTurnsOfHistoryIncluded = 2;
         if(prev2Loc == Board::PASS_LOC)
           rowGlobal[1] = 1.0;
         else if(prev2Loc != Board::NULL_LOC) {
@@ -1328,6 +1441,7 @@ void NNInputs::fillRowV4(
         }
         if(moveHistoryLen >= 3 && moveHistory[moveHistoryLen-3].pla == opp) {
           Loc prev3Loc = moveHistory[moveHistoryLen-3].loc;
+          numTurnsOfHistoryIncluded = 3;
           if(prev3Loc == Board::PASS_LOC)
             rowGlobal[2] = 1.0;
           else if(prev3Loc != Board::NULL_LOC) {
@@ -1336,6 +1450,7 @@ void NNInputs::fillRowV4(
           }
           if(moveHistoryLen >= 4 && moveHistory[moveHistoryLen-4].pla == pla) {
             Loc prev4Loc = moveHistory[moveHistoryLen-4].loc;
+            numTurnsOfHistoryIncluded = 4;
             if(prev4Loc == Board::PASS_LOC)
               rowGlobal[3] = 1.0;
             else if(prev4Loc != Board::NULL_LOC) {
@@ -1344,6 +1459,7 @@ void NNInputs::fillRowV4(
             }
             if(moveHistoryLen >= 5 && moveHistory[moveHistoryLen-5].pla == opp) {
               Loc prev5Loc = moveHistory[moveHistoryLen-5].loc;
+              numTurnsOfHistoryIncluded = 5;
               if(prev5Loc == Board::PASS_LOC)
                 rowGlobal[4] = 1.0;
               else if(prev5Loc != Board::NULL_LOC) {
@@ -1358,7 +1474,7 @@ void NNInputs::fillRowV4(
   }
 
   //Ladder features 14,15,16,17
-  auto addLadderFeature = [&board,xSize,nnXLen,nnYLen,posStride,featureStride,rowBin,opp](Loc loc, int pos, const vector<Loc>& workingMoves){
+  auto addLadderFeature = [&board,xSize,nnXLen,nnYLen,posStride,featureStride,rowBin,opp](Loc loc, int pos, const vector<Loc>& workingMoves) noexcept {
     assert(board.colors[loc] == P_BLACK || board.colors[loc] == P_WHITE);
     assert(pos >= 0 && pos < NNPos::MAX_BOARD_AREA);
     setRowBin(rowBin,pos,14, 1.0f, posStride, featureStride);
@@ -1372,8 +1488,8 @@ void NNInputs::fillRowV4(
 
   iterLadders(board, nnXLen, addLadderFeature);
 
-  const Board& prevBoard = hideHistory ? board : hist.getRecentBoard(1);
-  auto addPrevLadderFeature = [&prevBoard,posStride,featureStride,rowBin](Loc loc, int pos, const vector<Loc>& workingMoves){
+  const Board& prevBoard = (hideHistory || numTurnsOfHistoryIncluded < 1) ? board : hist.getRecentBoard(1);
+  auto addPrevLadderFeature = [&prevBoard,posStride,featureStride,rowBin](Loc loc, int pos, const vector<Loc>& workingMoves) noexcept {
     (void)workingMoves;
     (void)loc;
     assert(prevBoard.colors[loc] == P_BLACK || prevBoard.colors[loc] == P_WHITE);
@@ -1382,8 +1498,8 @@ void NNInputs::fillRowV4(
   };
   iterLadders(prevBoard, nnXLen, addPrevLadderFeature);
 
-  const Board& prevPrevBoard = hideHistory ? board : hist.getRecentBoard(2);
-  auto addPrevPrevLadderFeature = [&prevPrevBoard,posStride,featureStride,rowBin](Loc loc, int pos, const vector<Loc>& workingMoves){
+  const Board& prevPrevBoard = (hideHistory || numTurnsOfHistoryIncluded < 2) ? prevBoard : hist.getRecentBoard(2);
+  auto addPrevPrevLadderFeature = [&prevPrevBoard,posStride,featureStride,rowBin](Loc loc, int pos, const vector<Loc>& workingMoves) noexcept {
     (void)workingMoves;
     (void)loc;
     assert(prevPrevBoard.colors[loc] == P_BLACK || prevPrevBoard.colors[loc] == P_WHITE);
@@ -1627,7 +1743,10 @@ void NNInputs::fillRowV5(
   bool hideHistory =
     hist.isGameFinished ||
     hist.isPastNormalPhaseEnd ||
-    (nnInputParams.conservativePass && hist.passWouldEndGame(board,nextPlayer));
+    (hist.passWouldEndGame(board,nextPlayer) && (
+      nnInputParams.conservativePassAndIsRoot ||
+      hist.shouldSuppressEndGameFromFriendlyPass(board,nextPlayer)
+    ));
 
   //Features 6,7,8,9,10
   if(!hideHistory) {
@@ -1829,106 +1948,10 @@ void NNInputs::fillRowV6(
     }
   }
 
-  //Hide history from the net if a pass would end things and we're behaving as if a pass won't.
-  //Or if the game is in fact over right now!
-  bool hideHistory =
-    hist.isGameFinished ||
-    hist.isPastNormalPhaseEnd ||
-    (nnInputParams.conservativePass && hist.passWouldEndGame(board,nextPlayer));
-
-  //Features 9,10,11,12,13
-  if(!hideHistory) {
-    const vector<Move>& moveHistory = hist.moveHistory;
-    size_t moveHistoryLen = moveHistory.size();
-    //Also effectively wipe history as we change phase
-    assert(moveHistoryLen >= hist.numTurnsThisPhase);
-    int numTurnsThisPhase = hist.numTurnsThisPhase;
-
-    if(numTurnsThisPhase >= 1 && moveHistory[moveHistoryLen-1].pla == opp) {
-      Loc prev1Loc = moveHistory[moveHistoryLen-1].loc;
-      if(prev1Loc == Board::PASS_LOC)
-        rowGlobal[0] = 1.0;
-      else if(prev1Loc != Board::NULL_LOC) {
-        int pos = NNPos::locToPos(prev1Loc,xSize,nnXLen,nnYLen);
-        setRowBin(rowBin,pos,9, 1.0f, posStride, featureStride);
-      }
-      if(numTurnsThisPhase >= 2 && moveHistory[moveHistoryLen-2].pla == pla) {
-        Loc prev2Loc = moveHistory[moveHistoryLen-2].loc;
-        if(prev2Loc == Board::PASS_LOC)
-          rowGlobal[1] = 1.0;
-        else if(prev2Loc != Board::NULL_LOC) {
-          int pos = NNPos::locToPos(prev2Loc,xSize,nnXLen,nnYLen);
-          setRowBin(rowBin,pos,10, 1.0f, posStride, featureStride);
-        }
-        if(numTurnsThisPhase >= 3 && moveHistory[moveHistoryLen-3].pla == opp) {
-          Loc prev3Loc = moveHistory[moveHistoryLen-3].loc;
-          if(prev3Loc == Board::PASS_LOC)
-            rowGlobal[2] = 1.0;
-          else if(prev3Loc != Board::NULL_LOC) {
-            int pos = NNPos::locToPos(prev3Loc,xSize,nnXLen,nnYLen);
-            setRowBin(rowBin,pos,11, 1.0f, posStride, featureStride);
-          }
-          if(numTurnsThisPhase >= 4 && moveHistory[moveHistoryLen-4].pla == pla) {
-            Loc prev4Loc = moveHistory[moveHistoryLen-4].loc;
-            if(prev4Loc == Board::PASS_LOC)
-              rowGlobal[3] = 1.0;
-            else if(prev4Loc != Board::NULL_LOC) {
-              int pos = NNPos::locToPos(prev4Loc,xSize,nnXLen,nnYLen);
-              setRowBin(rowBin,pos,12, 1.0f, posStride, featureStride);
-            }
-            if(numTurnsThisPhase >= 5 && moveHistory[moveHistoryLen-5].pla == opp) {
-              Loc prev5Loc = moveHistory[moveHistoryLen-5].loc;
-              if(prev5Loc == Board::PASS_LOC)
-                rowGlobal[4] = 1.0;
-              else if(prev5Loc != Board::NULL_LOC) {
-                int pos = NNPos::locToPos(prev5Loc,xSize,nnXLen,nnYLen);
-                setRowBin(rowBin,pos,13, 1.0f, posStride, featureStride);
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  //Ladder features 14,15,16,17
-  auto addLadderFeature = [&board,xSize,nnXLen,nnYLen,posStride,featureStride,rowBin,opp](Loc loc, int pos, const vector<Loc>& workingMoves){
-    assert(board.colors[loc] == P_BLACK || board.colors[loc] == P_WHITE);
-    assert(pos >= 0 && pos < NNPos::MAX_BOARD_AREA);
-    setRowBin(rowBin,pos,14, 1.0f, posStride, featureStride);
-    if(board.colors[loc] == opp && board.getNumLiberties(loc) > 1) {
-      for(size_t j = 0; j < workingMoves.size(); j++) {
-        int workingPos = NNPos::locToPos(workingMoves[j],xSize,nnXLen,nnYLen);
-        setRowBin(rowBin,workingPos,17, 1.0f, posStride, featureStride);
-      }
-    }
-  };
-
-  iterLadders(board, nnXLen, addLadderFeature);
-
-  const Board& prevBoard = hideHistory ? board : hist.getRecentBoard(1);
-  auto addPrevLadderFeature = [&prevBoard,posStride,featureStride,rowBin](Loc loc, int pos, const vector<Loc>& workingMoves){
-    (void)workingMoves;
-    (void)loc;
-    assert(prevBoard.colors[loc] == P_BLACK || prevBoard.colors[loc] == P_WHITE);
-    assert(pos >= 0 && pos < NNPos::MAX_BOARD_AREA);
-    setRowBin(rowBin,pos,15, 1.0f, posStride, featureStride);
-  };
-  iterLadders(prevBoard, nnXLen, addPrevLadderFeature);
-
-  const Board& prevPrevBoard = hideHistory ? board : hist.getRecentBoard(2);
-  auto addPrevPrevLadderFeature = [&prevPrevBoard,posStride,featureStride,rowBin](Loc loc, int pos, const vector<Loc>& workingMoves){
-    (void)workingMoves;
-    (void)loc;
-    assert(prevPrevBoard.colors[loc] == P_BLACK || prevPrevBoard.colors[loc] == P_WHITE);
-    assert(pos >= 0 && pos < NNPos::MAX_BOARD_AREA);
-    setRowBin(rowBin,pos,16, 1.0f, posStride, featureStride);
-  };
-  iterLadders(prevPrevBoard, nnXLen, addPrevPrevLadderFeature);
-
   //Features 18,19 - current territory, not counting group tax
   Color area[Board::MAX_ARR_SIZE];
   bool hasAreaFeature = false;
+  int groupTaxAdjustmentForPla = 0;
   if(hist.rules.scoringRule == Rules::SCORING_AREA && hist.rules.taxRule == Rules::TAX_NONE) {
     hasAreaFeature = true;
     bool nonPassAliveStones = true;
@@ -1972,30 +1995,168 @@ void NNInputs::fillRowV6(
         keepStones,
         hist.rules.multiStoneSuicideLegal
       );
+      if(hist.rules.taxRule == Rules::TAX_ALL)
+        groupTaxAdjustmentForPla = pla == P_WHITE ? -2 * whiteMinusBlackIndependentLifeRegionCount : 2 * whiteMinusBlackIndependentLifeRegionCount;
     }
   }
 
+  bool finalPhaseAndGameEndWouldNotBeWin = false;
   if(hasAreaFeature) {
+    int boardScoreForPla = groupTaxAdjustmentForPla;
     for(int y = 0; y<ySize; y++) {
       for(int x = 0; x<xSize; x++) {
         Loc loc = Location::getLoc(x,y,xSize);
         int pos = NNPos::locToPos(loc,xSize,nnXLen,nnYLen);
-        if(area[loc] == pla)
+        if(area[loc] == pla) {
           setRowBin(rowBin,pos,18, 1.0f, posStride, featureStride);
-        else if(area[loc] == opp)
+          boardScoreForPla += 1;
+        }
+        else if(area[loc] == opp) {
           setRowBin(rowBin,pos,19, 1.0f, posStride, featureStride);
+          boardScoreForPla -= 1;
+        }
         else {
           if(hist.rules.scoringRule == Rules::SCORING_TERRITORY) {
             //Also we must be in the second encore phase, based on the logic above.
-            if(board.colors[loc] == pla && hist.secondEncoreStartColors[loc] == pla)
+            if(board.colors[loc] == pla && hist.secondEncoreStartColors[loc] == pla) {
               setRowBin(rowBin,pos,18, 1.0f, posStride, featureStride);
-            else if(board.colors[loc] == opp && hist.secondEncoreStartColors[loc] == opp)
+              boardScoreForPla += 1;
+            }
+            else if(board.colors[loc] == opp && hist.secondEncoreStartColors[loc] == opp) {
               setRowBin(rowBin,pos,19, 1.0f, posStride, featureStride);
+              boardScoreForPla -= 1;
+            }
+          }
+        }
+      }
+    }
+    float selfKomi = hist.currentSelfKomi(pla, nnInputParams.drawEquivalentWinsForWhite);
+    float finalScorePla = (float)boardScoreForPla + selfKomi;
+    // If the game ended here, and was scored instantly, it would be a loss or a draw?
+    if(finalScorePla <= 0.0)
+      finalPhaseAndGameEndWouldNotBeWin = true;
+  }
+
+  //Hide history from the net if a pass would end things and we're behaving as if a pass won't.
+  //Or if the game is in fact over right now!
+  int maxTurnsOfHistoryToInclude = 5;
+  bool suppressPassWouldEndPhase = false;
+  if(hist.passWouldEndGame(board,nextPlayer) && (
+       //At the root, if assuming passing doesn't end the game, and it would, then need to mask that out.
+       nnInputParams.conservativePassAndIsRoot ||
+       //Deeper in the tree, we might not assume passes end the game in a friendly pass setting.
+       hist.shouldSuppressEndGameFromFriendlyPass(board,nextPlayer) ||
+       //Passing hacks suppress the net to end the game when losing if it thinks a premature pass will lose by less.
+       (nnInputParams.enablePassingHacks && finalPhaseAndGameEndWouldNotBeWin)
+     )
+  ) {
+    maxTurnsOfHistoryToInclude = 0;
+    suppressPassWouldEndPhase = true;
+  }
+  else if(hist.isGameFinished || hist.isPastNormalPhaseEnd) {
+    // Include one of the passes, at the end of that sequence
+    maxTurnsOfHistoryToInclude = 1;
+  }
+  maxTurnsOfHistoryToInclude = std::min(maxTurnsOfHistoryToInclude, nnInputParams.maxHistory);
+
+  int numTurnsOfHistoryIncluded = 0;
+
+  //Features 9,10,11,12,13
+  if(maxTurnsOfHistoryToInclude > 0) {
+    const vector<Move>& moveHistory = hist.moveHistory;
+    size_t moveHistoryLen = moveHistory.size();
+    assert(moveHistoryLen >= hist.numApproxValidTurnsThisPhase);
+    assert(moveHistoryLen >= hist.numConsecValidTurnsThisGame);
+
+    //Effectively wipe history as we change phase by also capping it, and also on any historical rules violations
+    int amountOfHistoryToTryToUse = std::min(maxTurnsOfHistoryToInclude, std::min(hist.numApproxValidTurnsThisPhase,hist.numConsecValidTurnsThisGame));
+
+    if(amountOfHistoryToTryToUse >= 1 && moveHistory[moveHistoryLen-1].pla == opp) {
+      Loc prev1Loc = moveHistory[moveHistoryLen-1].loc;
+      numTurnsOfHistoryIncluded = 1;
+      if(prev1Loc == Board::PASS_LOC)
+        rowGlobal[0] = 1.0;
+      else if(prev1Loc != Board::NULL_LOC) {
+        int pos = NNPos::locToPos(prev1Loc,xSize,nnXLen,nnYLen);
+        setRowBin(rowBin,pos,9, 1.0f, posStride, featureStride);
+      }
+      if(amountOfHistoryToTryToUse >= 2 && moveHistory[moveHistoryLen-2].pla == pla) {
+        Loc prev2Loc = moveHistory[moveHistoryLen-2].loc;
+        numTurnsOfHistoryIncluded = 2;
+        if(prev2Loc == Board::PASS_LOC)
+          rowGlobal[1] = 1.0;
+        else if(prev2Loc != Board::NULL_LOC) {
+          int pos = NNPos::locToPos(prev2Loc,xSize,nnXLen,nnYLen);
+          setRowBin(rowBin,pos,10, 1.0f, posStride, featureStride);
+        }
+        if(amountOfHistoryToTryToUse >= 3 && moveHistory[moveHistoryLen-3].pla == opp) {
+          Loc prev3Loc = moveHistory[moveHistoryLen-3].loc;
+          numTurnsOfHistoryIncluded = 3;
+          if(prev3Loc == Board::PASS_LOC)
+            rowGlobal[2] = 1.0;
+          else if(prev3Loc != Board::NULL_LOC) {
+            int pos = NNPos::locToPos(prev3Loc,xSize,nnXLen,nnYLen);
+            setRowBin(rowBin,pos,11, 1.0f, posStride, featureStride);
+          }
+          if(amountOfHistoryToTryToUse >= 4 && moveHistory[moveHistoryLen-4].pla == pla) {
+            Loc prev4Loc = moveHistory[moveHistoryLen-4].loc;
+            numTurnsOfHistoryIncluded = 4;
+            if(prev4Loc == Board::PASS_LOC)
+              rowGlobal[3] = 1.0;
+            else if(prev4Loc != Board::NULL_LOC) {
+              int pos = NNPos::locToPos(prev4Loc,xSize,nnXLen,nnYLen);
+              setRowBin(rowBin,pos,12, 1.0f, posStride, featureStride);
+            }
+            if(amountOfHistoryToTryToUse >= 5 && moveHistory[moveHistoryLen-5].pla == opp) {
+              Loc prev5Loc = moveHistory[moveHistoryLen-5].loc;
+              numTurnsOfHistoryIncluded = 5;
+              if(prev5Loc == Board::PASS_LOC)
+                rowGlobal[4] = 1.0;
+              else if(prev5Loc != Board::NULL_LOC) {
+                int pos = NNPos::locToPos(prev5Loc,xSize,nnXLen,nnYLen);
+                setRowBin(rowBin,pos,13, 1.0f, posStride, featureStride);
+              }
+            }
           }
         }
       }
     }
   }
+
+  //Ladder features 14,15,16,17
+  auto addLadderFeature = [&board,xSize,nnXLen,nnYLen,posStride,featureStride,rowBin,opp](Loc loc, int pos, const vector<Loc>& workingMoves) noexcept {
+    assert(board.colors[loc] == P_BLACK || board.colors[loc] == P_WHITE);
+    assert(pos >= 0 && pos < NNPos::MAX_BOARD_AREA);
+    setRowBin(rowBin,pos,14, 1.0f, posStride, featureStride);
+    if(board.colors[loc] == opp && board.getNumLiberties(loc) > 1) {
+      for(size_t j = 0; j < workingMoves.size(); j++) {
+        int workingPos = NNPos::locToPos(workingMoves[j],xSize,nnXLen,nnYLen);
+        setRowBin(rowBin,workingPos,17, 1.0f, posStride, featureStride);
+      }
+    }
+  };
+
+  iterLadders(board, nnXLen, addLadderFeature);
+
+  const Board& prevBoard = (numTurnsOfHistoryIncluded < 1) ? board : hist.getRecentBoard(1);
+  auto addPrevLadderFeature = [&prevBoard,posStride,featureStride,rowBin](Loc loc, int pos, const vector<Loc>& workingMoves) noexcept {
+    (void)workingMoves;
+    (void)loc;
+    assert(prevBoard.colors[loc] == P_BLACK || prevBoard.colors[loc] == P_WHITE);
+    assert(pos >= 0 && pos < NNPos::MAX_BOARD_AREA);
+    setRowBin(rowBin,pos,15, 1.0f, posStride, featureStride);
+  };
+  iterLadders(prevBoard, nnXLen, addPrevLadderFeature);
+
+  const Board& prevPrevBoard = (numTurnsOfHistoryIncluded < 2) ? prevBoard : hist.getRecentBoard(2);
+  auto addPrevPrevLadderFeature = [&prevPrevBoard,posStride,featureStride,rowBin](Loc loc, int pos, const vector<Loc>& workingMoves) noexcept {
+    (void)workingMoves;
+    (void)loc;
+    assert(prevPrevBoard.colors[loc] == P_BLACK || prevPrevBoard.colors[loc] == P_WHITE);
+    assert(pos >= 0 && pos < NNPos::MAX_BOARD_AREA);
+    setRowBin(rowBin,pos,16, 1.0f, posStride, featureStride);
+  };
+  iterLadders(prevPrevBoard, nnXLen, addPrevPrevLadderFeature);
 
   //Features 20, 21 - second encore starting stones
   if(hist.encorePhase >= 2) {
@@ -2066,7 +2227,7 @@ void NNInputs::fillRowV6(
     rowGlobal[13] = 1.0f;
 
   //Does a pass end the current phase given the ruleset and history?
-  bool passWouldEndPhase = hideHistory ? false : hist.passWouldEndPhase(board,nextPlayer);
+  bool passWouldEndPhase = suppressPassWouldEndPhase ? false : hist.passWouldEndPhase(board,nextPlayer);
   rowGlobal[14] = passWouldEndPhase ? 1.0f : 0.0f;
 
   //Provide parity information about the board size and komi
@@ -2224,106 +2385,11 @@ void NNInputs::fillRowV7(
     }
   }
 
-  //Hide history from the net if a pass would end things and we're behaving as if a pass won't.
-  //Or if the game is in fact over right now!
-  bool hideHistory =
-    hist.isGameFinished ||
-    hist.isPastNormalPhaseEnd ||
-    (nnInputParams.conservativePass && hist.passWouldEndGame(board,nextPlayer));
-
-  //Features 9,10,11,12,13
-  if(!hideHistory) {
-    const vector<Move>& moveHistory = hist.moveHistory;
-    size_t moveHistoryLen = moveHistory.size();
-    //Also effectively wipe history as we change phase
-    assert(moveHistoryLen >= hist.numTurnsThisPhase);
-    int numTurnsThisPhase = hist.numTurnsThisPhase;
-
-    if(numTurnsThisPhase >= 1 && moveHistory[moveHistoryLen-1].pla == opp) {
-      Loc prev1Loc = moveHistory[moveHistoryLen-1].loc;
-      if(prev1Loc == Board::PASS_LOC)
-        rowGlobal[0] = 1.0;
-      else if(prev1Loc != Board::NULL_LOC) {
-        int pos = NNPos::locToPos(prev1Loc,xSize,nnXLen,nnYLen);
-        setRowBin(rowBin,pos,9, 1.0f, posStride, featureStride);
-      }
-      if(numTurnsThisPhase >= 2 && moveHistory[moveHistoryLen-2].pla == pla) {
-        Loc prev2Loc = moveHistory[moveHistoryLen-2].loc;
-        if(prev2Loc == Board::PASS_LOC)
-          rowGlobal[1] = 1.0;
-        else if(prev2Loc != Board::NULL_LOC) {
-          int pos = NNPos::locToPos(prev2Loc,xSize,nnXLen,nnYLen);
-          setRowBin(rowBin,pos,10, 1.0f, posStride, featureStride);
-        }
-        if(numTurnsThisPhase >= 3 && moveHistory[moveHistoryLen-3].pla == opp) {
-          Loc prev3Loc = moveHistory[moveHistoryLen-3].loc;
-          if(prev3Loc == Board::PASS_LOC)
-            rowGlobal[2] = 1.0;
-          else if(prev3Loc != Board::NULL_LOC) {
-            int pos = NNPos::locToPos(prev3Loc,xSize,nnXLen,nnYLen);
-            setRowBin(rowBin,pos,11, 1.0f, posStride, featureStride);
-          }
-          if(numTurnsThisPhase >= 4 && moveHistory[moveHistoryLen-4].pla == pla) {
-            Loc prev4Loc = moveHistory[moveHistoryLen-4].loc;
-            if(prev4Loc == Board::PASS_LOC)
-              rowGlobal[3] = 1.0;
-            else if(prev4Loc != Board::NULL_LOC) {
-              int pos = NNPos::locToPos(prev4Loc,xSize,nnXLen,nnYLen);
-              setRowBin(rowBin,pos,12, 1.0f, posStride, featureStride);
-            }
-            if(numTurnsThisPhase >= 5 && moveHistory[moveHistoryLen-5].pla == opp) {
-              Loc prev5Loc = moveHistory[moveHistoryLen-5].loc;
-              if(prev5Loc == Board::PASS_LOC)
-                rowGlobal[4] = 1.0;
-              else if(prev5Loc != Board::NULL_LOC) {
-                int pos = NNPos::locToPos(prev5Loc,xSize,nnXLen,nnYLen);
-                setRowBin(rowBin,pos,13, 1.0f, posStride, featureStride);
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  //Ladder features 14,15,16,17
-  auto addLadderFeature = [&board,xSize,nnXLen,nnYLen,posStride,featureStride,rowBin,opp](Loc loc, int pos, const vector<Loc>& workingMoves){
-    assert(board.colors[loc] == P_BLACK || board.colors[loc] == P_WHITE);
-    assert(pos >= 0 && pos < NNPos::MAX_BOARD_AREA);
-    setRowBin(rowBin,pos,14, 1.0f, posStride, featureStride);
-    if(board.colors[loc] == opp && board.getNumLiberties(loc) > 1) {
-      for(size_t j = 0; j < workingMoves.size(); j++) {
-        int workingPos = NNPos::locToPos(workingMoves[j],xSize,nnXLen,nnYLen);
-        setRowBin(rowBin,workingPos,17, 1.0f, posStride, featureStride);
-      }
-    }
-  };
-
-  iterLadders(board, nnXLen, addLadderFeature);
-
-  const Board& prevBoard = hideHistory ? board : hist.getRecentBoard(1);
-  auto addPrevLadderFeature = [&prevBoard,posStride,featureStride,rowBin](Loc loc, int pos, const vector<Loc>& workingMoves){
-    (void)workingMoves;
-    (void)loc;
-    assert(prevBoard.colors[loc] == P_BLACK || prevBoard.colors[loc] == P_WHITE);
-    assert(pos >= 0 && pos < NNPos::MAX_BOARD_AREA);
-    setRowBin(rowBin,pos,15, 1.0f, posStride, featureStride);
-  };
-  iterLadders(prevBoard, nnXLen, addPrevLadderFeature);
-
-  const Board& prevPrevBoard = hideHistory ? board : hist.getRecentBoard(2);
-  auto addPrevPrevLadderFeature = [&prevPrevBoard,posStride,featureStride,rowBin](Loc loc, int pos, const vector<Loc>& workingMoves){
-    (void)workingMoves;
-    (void)loc;
-    assert(prevPrevBoard.colors[loc] == P_BLACK || prevPrevBoard.colors[loc] == P_WHITE);
-    assert(pos >= 0 && pos < NNPos::MAX_BOARD_AREA);
-    setRowBin(rowBin,pos,16, 1.0f, posStride, featureStride);
-  };
-  iterLadders(prevPrevBoard, nnXLen, addPrevPrevLadderFeature);
 
   //Features 18,19 - current territory, not counting group tax
   Color area[Board::MAX_ARR_SIZE];
   bool hasAreaFeature = false;
+  int groupTaxAdjustmentForPla = 0;
   if(hist.rules.scoringRule == Rules::SCORING_AREA && hist.rules.taxRule == Rules::TAX_NONE) {
     hasAreaFeature = true;
     bool nonPassAliveStones = true;
@@ -2362,35 +2428,173 @@ void NNInputs::fillRowV7(
 
     if(hasAreaFeature) {
       board.calculateIndependentLifeArea(
-        area,whiteMinusBlackIndependentLifeRegionCount,
+        area,
+        whiteMinusBlackIndependentLifeRegionCount,
         keepTerritories,
         keepStones,
         hist.rules.multiStoneSuicideLegal
       );
+      if(hist.rules.taxRule == Rules::TAX_ALL)
+        groupTaxAdjustmentForPla = pla == P_WHITE ? -2 * whiteMinusBlackIndependentLifeRegionCount : 2 * whiteMinusBlackIndependentLifeRegionCount;
     }
   }
 
+  bool finalPhaseAndGameEndWouldNotBeWin = false;
   if(hasAreaFeature) {
+    int boardScoreForPla = groupTaxAdjustmentForPla;
     for(int y = 0; y<ySize; y++) {
       for(int x = 0; x<xSize; x++) {
         Loc loc = Location::getLoc(x,y,xSize);
         int pos = NNPos::locToPos(loc,xSize,nnXLen,nnYLen);
-        if(area[loc] == pla)
+        if(area[loc] == pla) {
           setRowBin(rowBin,pos,18, 1.0f, posStride, featureStride);
-        else if(area[loc] == opp)
+          boardScoreForPla += 1;
+        }
+        else if(area[loc] == opp) {
           setRowBin(rowBin,pos,19, 1.0f, posStride, featureStride);
+          boardScoreForPla -= 1;
+        }
         else {
           if(hist.rules.scoringRule == Rules::SCORING_TERRITORY) {
             //Also we must be in the second encore phase, based on the logic above.
-            if(board.colors[loc] == pla && hist.secondEncoreStartColors[loc] == pla)
+            if(board.colors[loc] == pla && hist.secondEncoreStartColors[loc] == pla) {
               setRowBin(rowBin,pos,18, 1.0f, posStride, featureStride);
-            else if(board.colors[loc] == opp && hist.secondEncoreStartColors[loc] == opp)
+              boardScoreForPla += 1;
+            }
+            else if(board.colors[loc] == opp && hist.secondEncoreStartColors[loc] == opp) {
               setRowBin(rowBin,pos,19, 1.0f, posStride, featureStride);
+              boardScoreForPla -= 1;
+            }
+          }
+        }
+      }
+    }
+    float selfKomi = hist.currentSelfKomi(pla, nnInputParams.drawEquivalentWinsForWhite);
+    float finalScorePla = (float)boardScoreForPla + selfKomi;
+    // If the game ended here, and was scored instantly, it would be a loss or a draw?
+    if(finalScorePla <= 0.0)
+      finalPhaseAndGameEndWouldNotBeWin = true;
+  }
+
+  //Hide history from the net if a pass would end things and we're behaving as if a pass won't.
+  //Or if the game is in fact over right now!
+  int maxTurnsOfHistoryToInclude = 5;
+  bool suppressPassWouldEndPhase = false;
+  if(hist.passWouldEndGame(board,nextPlayer) && (
+       //At the root, if assuming passing doesn't end the game, and it would, then need to mask that out.
+       nnInputParams.conservativePassAndIsRoot ||
+       //Deeper in the tree, we might not assume passes end the game in a friendly pass setting.
+       hist.shouldSuppressEndGameFromFriendlyPass(board,nextPlayer) ||
+       //Passing hacks suppress the net to end the game when losing if it thinks a premature pass will lose by less.
+       (nnInputParams.enablePassingHacks && finalPhaseAndGameEndWouldNotBeWin)
+     )
+  ) {
+    maxTurnsOfHistoryToInclude = 0;
+    suppressPassWouldEndPhase = true;
+  }
+  else if(hist.isGameFinished || hist.isPastNormalPhaseEnd) {
+    // Include one of the passes, at the end of that sequence
+    maxTurnsOfHistoryToInclude = 1;
+  }
+  maxTurnsOfHistoryToInclude = std::min(maxTurnsOfHistoryToInclude, nnInputParams.maxHistory);
+
+  int numTurnsOfHistoryIncluded = 0;
+
+  //Features 9,10,11,12,13
+  if(maxTurnsOfHistoryToInclude > 0) {
+    const vector<Move>& moveHistory = hist.moveHistory;
+    size_t moveHistoryLen = moveHistory.size();
+    assert(moveHistoryLen >= hist.numApproxValidTurnsThisPhase);
+
+    //Effectively wipe history as we change phase by also capping it
+    int amountOfHistoryToTryToUse = std::min(maxTurnsOfHistoryToInclude, hist.numApproxValidTurnsThisPhase);
+
+    if(amountOfHistoryToTryToUse >= 1 && moveHistory[moveHistoryLen-1].pla == opp) {
+      Loc prev1Loc = moveHistory[moveHistoryLen-1].loc;
+      numTurnsOfHistoryIncluded = 1;
+      if(prev1Loc == Board::PASS_LOC)
+        rowGlobal[0] = 1.0;
+      else if(prev1Loc != Board::NULL_LOC) {
+        int pos = NNPos::locToPos(prev1Loc,xSize,nnXLen,nnYLen);
+        setRowBin(rowBin,pos,9, 1.0f, posStride, featureStride);
+      }
+      if(amountOfHistoryToTryToUse >= 2 && moveHistory[moveHistoryLen-2].pla == pla) {
+        Loc prev2Loc = moveHistory[moveHistoryLen-2].loc;
+        numTurnsOfHistoryIncluded = 2;
+        if(prev2Loc == Board::PASS_LOC)
+          rowGlobal[1] = 1.0;
+        else if(prev2Loc != Board::NULL_LOC) {
+          int pos = NNPos::locToPos(prev2Loc,xSize,nnXLen,nnYLen);
+          setRowBin(rowBin,pos,10, 1.0f, posStride, featureStride);
+        }
+        if(amountOfHistoryToTryToUse >= 3 && moveHistory[moveHistoryLen-3].pla == opp) {
+          Loc prev3Loc = moveHistory[moveHistoryLen-3].loc;
+          numTurnsOfHistoryIncluded = 3;
+          if(prev3Loc == Board::PASS_LOC)
+            rowGlobal[2] = 1.0;
+          else if(prev3Loc != Board::NULL_LOC) {
+            int pos = NNPos::locToPos(prev3Loc,xSize,nnXLen,nnYLen);
+            setRowBin(rowBin,pos,11, 1.0f, posStride, featureStride);
+          }
+          if(amountOfHistoryToTryToUse >= 4 && moveHistory[moveHistoryLen-4].pla == pla) {
+            Loc prev4Loc = moveHistory[moveHistoryLen-4].loc;
+            numTurnsOfHistoryIncluded = 4;
+            if(prev4Loc == Board::PASS_LOC)
+              rowGlobal[3] = 1.0;
+            else if(prev4Loc != Board::NULL_LOC) {
+              int pos = NNPos::locToPos(prev4Loc,xSize,nnXLen,nnYLen);
+              setRowBin(rowBin,pos,12, 1.0f, posStride, featureStride);
+            }
+            if(amountOfHistoryToTryToUse >= 5 && moveHistory[moveHistoryLen-5].pla == opp) {
+              Loc prev5Loc = moveHistory[moveHistoryLen-5].loc;
+              numTurnsOfHistoryIncluded = 5;
+              if(prev5Loc == Board::PASS_LOC)
+                rowGlobal[4] = 1.0;
+              else if(prev5Loc != Board::NULL_LOC) {
+                int pos = NNPos::locToPos(prev5Loc,xSize,nnXLen,nnYLen);
+                setRowBin(rowBin,pos,13, 1.0f, posStride, featureStride);
+              }
+            }
           }
         }
       }
     }
   }
+
+  //Ladder features 14,15,16,17
+  auto addLadderFeature = [&board,xSize,nnXLen,nnYLen,posStride,featureStride,rowBin,opp](Loc loc, int pos, const vector<Loc>& workingMoves) noexcept {
+    assert(board.colors[loc] == P_BLACK || board.colors[loc] == P_WHITE);
+    assert(pos >= 0 && pos < NNPos::MAX_BOARD_AREA);
+    setRowBin(rowBin,pos,14, 1.0f, posStride, featureStride);
+    if(board.colors[loc] == opp && board.getNumLiberties(loc) > 1) {
+      for(size_t j = 0; j < workingMoves.size(); j++) {
+        int workingPos = NNPos::locToPos(workingMoves[j],xSize,nnXLen,nnYLen);
+        setRowBin(rowBin,workingPos,17, 1.0f, posStride, featureStride);
+      }
+    }
+  };
+
+  iterLadders(board, nnXLen, addLadderFeature);
+
+  const Board& prevBoard = (numTurnsOfHistoryIncluded < 1) ? board : hist.getRecentBoard(1);
+  auto addPrevLadderFeature = [&prevBoard,posStride,featureStride,rowBin](Loc loc, int pos, const vector<Loc>& workingMoves) noexcept {
+    (void)workingMoves;
+    (void)loc;
+    assert(prevBoard.colors[loc] == P_BLACK || prevBoard.colors[loc] == P_WHITE);
+    assert(pos >= 0 && pos < NNPos::MAX_BOARD_AREA);
+    setRowBin(rowBin,pos,15, 1.0f, posStride, featureStride);
+  };
+  iterLadders(prevBoard, nnXLen, addPrevLadderFeature);
+
+  const Board& prevPrevBoard = (numTurnsOfHistoryIncluded < 2) ? prevBoard : hist.getRecentBoard(2);
+  auto addPrevPrevLadderFeature = [&prevPrevBoard,posStride,featureStride,rowBin](Loc loc, int pos, const vector<Loc>& workingMoves) noexcept {
+    (void)workingMoves;
+    (void)loc;
+    assert(prevPrevBoard.colors[loc] == P_BLACK || prevPrevBoard.colors[loc] == P_WHITE);
+    assert(pos >= 0 && pos < NNPos::MAX_BOARD_AREA);
+    setRowBin(rowBin,pos,16, 1.0f, posStride, featureStride);
+  };
+  iterLadders(prevPrevBoard, nnXLen, addPrevPrevLadderFeature);
 
   //Features 20, 21 - second encore starting stones
   if(hist.encorePhase >= 2) {
@@ -2414,10 +2618,10 @@ void NNInputs::fillRowV7(
   float selfKomi = hist.currentSelfKomi(nextPlayer,nnInputParams.drawEquivalentWinsForWhite);
   float bArea = (float)(xSize * ySize);
   //Bound komi just in case
-  if(selfKomi > bArea+1.0f)
-    selfKomi = bArea+1.0f;
-  if(selfKomi < -bArea-1.0f)
-    selfKomi = -bArea-1.0f;
+  if(selfKomi > bArea+NNPos::KOMI_CLIP_RADIUS)
+    selfKomi = bArea+NNPos::KOMI_CLIP_RADIUS;
+  if(selfKomi < -bArea-NNPos::KOMI_CLIP_RADIUS)
+    selfKomi = -bArea-NNPos::KOMI_CLIP_RADIUS;
   rowGlobal[5] = selfKomi/20.0f;
 
   //Ko rule
@@ -2461,7 +2665,7 @@ void NNInputs::fillRowV7(
     rowGlobal[13] = 1.0f;
 
   //Does a pass end the current phase given the ruleset and history?
-  bool passWouldEndPhase = hideHistory ? false : hist.passWouldEndPhase(board,nextPlayer);
+  bool passWouldEndPhase = suppressPassWouldEndPhase ? false : hist.passWouldEndPhase(board,nextPlayer);
   rowGlobal[14] = passWouldEndPhase ? 1.0f : 0.0f;
 
   //Used for handicap play

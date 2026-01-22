@@ -2,11 +2,13 @@
 
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <zlib.h>
 #include <ghc/filesystem.hpp>
 
 #include "../core/global.h"
 #include "../core/sha2.h"
+#include "../core/test.h"
 
 namespace gfs = ghc::filesystem;
 
@@ -55,6 +57,37 @@ void FileUtils::open(ofstream& out, const string& filename, std::ios_base::openm
   open(out, filename.c_str(), mode);
 }
 
+std::string FileUtils::weaklyCanonical(const std::string& path) {
+  gfs::path srcPath(gfs::u8path(path));
+  try {
+    return gfs::weakly_canonical(srcPath).u8string();
+  }
+  catch(const gfs::filesystem_error&) {
+    return path;
+  }
+}
+
+bool FileUtils::isDirectory(const std::string& filename) {
+  gfs::path srcPath(gfs::u8path(filename));
+  try {
+    return gfs::is_directory(srcPath);
+  }
+  catch(const gfs::filesystem_error&) {
+    return false;
+  }
+}
+
+bool FileUtils::tryRemoveFile(const std::string& filename) {
+  gfs::path srcPath(gfs::u8path(filename));
+  try {
+    gfs::remove(srcPath);
+  }
+  catch(const gfs::filesystem_error&) {
+    return false;
+  }
+  return true;
+}
+
 bool FileUtils::tryRename(const std::string& src, const std::string& dst) {
   gfs::path srcPath(gfs::u8path(src));
   gfs::path dstPath(gfs::u8path(dst));
@@ -77,8 +110,11 @@ void FileUtils::rename(const std::string& src, const std::string& dst) {
   }
 }
 
-
 void FileUtils::loadFileIntoString(const string& filename, const string& expectedSha256, string& str) {
+  loadFileIntoString(filename, expectedSha256, str, NULL);
+}
+
+void FileUtils::loadFileIntoString(const string& filename, const string& expectedSha256, string& str, string* actualSha256Buf) {
   ifstream in;
   open(in, filename, std::ios::in | std::ios::binary | std::ios::ate);
 
@@ -91,19 +127,27 @@ void FileUtils::loadFileIntoString(const string& filename, const string& expecte
   in.read(&str[0], fileSize);
   in.close();
 
-  if(expectedSha256 != "") {
+  if(expectedSha256 != "" || actualSha256Buf != NULL) {
     char hashResultBuf[65];
     SHA2::get256((const uint8_t*)str.data(), str.size(), hashResultBuf);
     string hashResult(hashResultBuf);
-    bool matching = Global::toLower(expectedSha256) == Global::toLower(hashResult);
-    if(!matching)
-      throw StringError("File " + filename + " sha256 was " + hashResult + " which does not match the expected sha256 " + expectedSha256);
+    if(expectedSha256 != "") {
+      bool matching = Global::toLower(expectedSha256) == Global::toLower(hashResult);
+      if(!matching)
+        throw StringError("File " + filename + " sha256 was " + hashResult + " which does not match the expected sha256 " + expectedSha256);
+    }
+    if(actualSha256Buf != NULL)
+      *actualSha256Buf = hashResult;
   }
 }
 
 void FileUtils::uncompressAndLoadFileIntoString(const string& filename, const string& expectedSha256, string& uncompressed) {
+  uncompressAndLoadFileIntoString(filename, expectedSha256, uncompressed, NULL);
+}
+
+void FileUtils::uncompressAndLoadFileIntoString(const string& filename, const string& expectedSha256, string& uncompressed, string* actualSha256Buf) {
   std::unique_ptr<string> compressed = std::make_unique<string>();
-  loadFileIntoString(filename,expectedSha256,*compressed);
+  loadFileIntoString(filename,expectedSha256,*compressed,actualSha256Buf);
 
   static constexpr size_t CHUNK_SIZE = 262144;
 
@@ -121,15 +165,28 @@ void FileUtils::uncompressAndLoadFileIntoString(const string& filename, const st
     throw StringError("Error while ungzipping file. Invalid file? File: " + filename);
   }
 
-  //TODO zs.avail_in is 32 bit, may fail with files larger than 4GB.
-  zs.avail_in = compressed->size();
+  //zlib can only process input chunks of size unsigned int at a time, generally 32 bit or 4 GB.
+  //We pick a max that is a a little bit smaller than that.
+  constexpr size_t INPUT_CHUNK_SIZE = 1073741824;
+  testAssert(std::numeric_limits<unsigned int>::max() > INPUT_CHUNK_SIZE);
+  size_t totalSizeLeft = compressed->size();
+  size_t totalAmountOfOutputProduced = 0;
+  zs.avail_in = 0;
+
+  {
+    size_t amountMoreInputToProvide = std::min(INPUT_CHUNK_SIZE - zs.avail_in, totalSizeLeft);
+    zs.avail_in += (unsigned int)amountMoreInputToProvide;
+    totalSizeLeft -= amountMoreInputToProvide;
+  }
+
   zs.next_in = (Bytef*)(&(*compressed)[0]);
   while(true) {
-    size_t uncompressedSoFar = uncompressed.size();
-    uncompressed.resize(uncompressedSoFar + CHUNK_SIZE);
-    zs.next_out = (Bytef*)(&uncompressed[uncompressedSoFar]);
+    uncompressed.resize(totalAmountOfOutputProduced + CHUNK_SIZE);
+    zs.next_out = (Bytef*)(&uncompressed[totalAmountOfOutputProduced]);
     zs.avail_out = CHUNK_SIZE;
-    zret = inflate(&zs,Z_FINISH);
+
+    zret = inflate(&zs,(totalSizeLeft > 0 ? Z_SYNC_FLUSH : Z_FINISH));
+
     assert(zret != Z_STREAM_ERROR);
     switch(zret) {
     case Z_NEED_DICT:
@@ -144,19 +201,44 @@ void FileUtils::uncompressAndLoadFileIntoString(const string& filename, const st
     default:
       break;
     }
-    //Output buffer space remaining?
-    if(zs.avail_out != 0) {
-      assert(zs.avail_out > 0);
-      //It must be the case that we're done
-      if(zret == Z_STREAM_END)
-        break;
-      //Otherwise, we're in trouble
-      (void)inflateEnd(&zs);
-      throw StringError("Error while ungzipping file, reached unexpected end of input. File: " + filename);
+
+    //Still more input to consume?
+    if(totalSizeLeft > 0) {
+      size_t amountMoreInputToProvide = std::min(INPUT_CHUNK_SIZE - zs.avail_in, totalSizeLeft);
+      assert(amountMoreInputToProvide > 0);
+      zs.avail_in += (unsigned int)amountMoreInputToProvide;
+      totalSizeLeft -= amountMoreInputToProvide;
+      assert(zs.avail_out < CHUNK_SIZE);
+      size_t amountOfOutputProduced = CHUNK_SIZE - zs.avail_out;
+      assert(amountOfOutputProduced > 0);
+      totalAmountOfOutputProduced += amountOfOutputProduced;
+      continue;
     }
+
+    //Accumulate the output we produced, if any.
+    assert(zs.avail_out <= CHUNK_SIZE);
+    size_t amountOfOutputProduced = CHUNK_SIZE - zs.avail_out;
+    totalAmountOfOutputProduced += amountOfOutputProduced;
+
+    //No room for output? We must have filled up the entire CHUNK_SIZE we said we had space for in avail_out,
+    //so loop again in case there's more.
+    if(zs.avail_out == 0) {
+      continue;
+    }
+
+    assert(zs.avail_out > 0);
+    //It must be the case that we're done
+    if(zret == Z_STREAM_END) {
+      assert(zs.next_in == (Bytef*)(&(*compressed)[0]) + compressed->size());
+      break;
+    }
+    //Otherwise, we're in trouble
+    (void)inflateEnd(&zs);
+    throw StringError("Error while ungzipping file, reached unexpected end of input. File: " + filename);
   }
-  //Prune string down to just what we need
-  uncompressed.resize(uncompressed.size()-zs.avail_out);
+  //Prune string down to just what we need.
+  assert(totalAmountOfOutputProduced <= uncompressed.size());
+  uncompressed.resize(totalAmountOfOutputProduced);
   //Clean up
   (void)inflateEnd(&zs);
 }
@@ -208,16 +290,32 @@ vector<string> FileUtils::readFileLines(const string& filename, char delimiter)
   return readFileLines(filename.c_str(), delimiter);
 }
 
+vector<string> FileUtils::listFiles(const std::string& dirname) {
+  vector<string> collected;
+  try {
+    for(const gfs::directory_entry& entry: gfs::directory_iterator(gfs::u8path(dirname))) {
+      const gfs::path& path = entry.path();
+      string fileName = path.filename().u8string();
+      collected.push_back(fileName);
+    }
+  }
+  catch(const gfs::filesystem_error& e) {
+    cerr << "Error listing files: " << e.what() << endl;
+    throw StringError(string("Error listing files: ") + e.what());
+  }
+  return collected;
+}
+
 void FileUtils::collectFiles(const string& dirname, std::function<bool(const string&)> fileFilter, vector<string>& collected)
 {
   namespace gfs = ghc::filesystem;
   try {
-    for(const gfs::directory_entry& entry: gfs::recursive_directory_iterator(dirname)) {
+    for(const gfs::directory_entry& entry: gfs::recursive_directory_iterator(gfs::u8path(dirname))) {
       if(!gfs::is_directory(entry.status())) {
         const gfs::path& path = entry.path();
-        string fileName = path.filename().string();
+        string fileName = path.filename().u8string();
         if(fileFilter(fileName)) {
-          collected.push_back(path.string());
+          collected.push_back(path.u8string());
         }
       }
     }

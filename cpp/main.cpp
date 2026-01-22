@@ -12,7 +12,7 @@
 #include <sstream>
 
 //------------------------
-#include "../core/using.h"
+#include "core/using.h"
 //------------------------
 
 static void printHelp(const vector<string>& args) {
@@ -45,6 +45,9 @@ gatekeeper : Poll directory for new nets and match them against the latest net s
 
 ---Testing/debugging subcommands-------------
 evalsgf : Utility/debug tool, analyze a single position of a game from an SGF file.
+searchentropyanalysis : Analyze search entropy across test datasets.
+
+testgpuerror : Print the average error of the neural net between current config and fp32 config.
 
 runtests : Test important board algorithms and datastructures
 runnnlayertests : Test a few subcomponents of the current neural net backend
@@ -68,11 +71,11 @@ static int handleSubcommand(const string& subcommand, const vector<string>& args
   vector<string> subArgs(args.begin()+1,args.end());
   if(subcommand == "analysis")
     return MainCmds::analysis(subArgs);
-  if(subcommand == "benchmark")
+  else if(subcommand == "benchmark")
     return MainCmds::benchmark(subArgs);
-  if(subcommand == "contribute")
+  else if(subcommand == "contribute")
     return MainCmds::contribute(subArgs);
-  if(subcommand == "evalsgf")
+  else if(subcommand == "evalsgf")
     return MainCmds::evalsgf(subArgs);
   else if(subcommand == "gatekeeper")
     return MainCmds::gatekeeper(subArgs);
@@ -84,10 +87,10 @@ static int handleSubcommand(const string& subcommand, const vector<string>& args
     return MainCmds::tuner(subArgs);
   else if(subcommand == "match")
     return MainCmds::match(subArgs);
-  else if(subcommand == "matchauto")
-    return MainCmds::matchauto(subArgs);
   else if(subcommand == "selfplay")
     return MainCmds::selfplay(subArgs);
+  else if(subcommand == "testgpuerror")
+    return MainCmds::testgpuerror(subArgs);
   else if(subcommand == "runtests")
     return MainCmds::runtests(subArgs);
   else if(subcommand == "runnnlayertests")
@@ -130,16 +133,34 @@ static int handleSubcommand(const string& subcommand, const vector<string>& args
     return MainCmds::dataminesgfs(subArgs);
   else if(subcommand == "genbook")
     return MainCmds::genbook(subArgs);
+  else if(subcommand == "writebook")
+    return MainCmds::writebook(subArgs);
   else if(subcommand == "checkbook")
     return MainCmds::checkbook(subArgs);
+  else if(subcommand == "booktoposes")
+    return MainCmds::booktoposes(subArgs);
+  else if(subcommand == "comparebooks")
+    return MainCmds::comparebooks(subArgs);
+  else if(subcommand == "findbookbottlenecks")
+    return MainCmds::findbookbottlenecks(subArgs);
   else if(subcommand == "trystartposes")
     return MainCmds::trystartposes(subArgs);
   else if(subcommand == "viewstartposes")
     return MainCmds::viewstartposes(subArgs);
+  else if(subcommand == "checksgfhintpolicy")
+    return MainCmds::checksgfhintpolicy(subArgs);
+  else if(subcommand == "genposesfromselfplayinit")
+    return MainCmds::genposesfromselfplayinit(subArgs);
   else if(subcommand == "demoplay")
     return MainCmds::demoplay(subArgs);
+  else if(subcommand == "writetrainingdata")
+    return MainCmds::writetrainingdata(subArgs);
   else if(subcommand == "sampleinitializations")
     return MainCmds::sampleinitializations(subArgs);
+  else if(subcommand == "evalrandominits")
+    return MainCmds::evalrandominits(subArgs);
+  else if(subcommand == "searchentropyanalysis")
+    return MainCmds::searchentropyanalysis(subArgs);
   else if(subcommand == "runbeginsearchspeedtest")
     return MainCmds::runbeginsearchspeedtest(subArgs);
   else if(subcommand == "runownershipspeedtest")
@@ -200,11 +221,11 @@ int main(int argc, const char* const* argv) {
 
 
 string Version::getKataGoVersion() {
-  return string("1.11.0");
+  return string("1.16.4");
 }
 
 string Version::getKataGoVersionForHelp() {
-  return string("KataGo v1.11.0");
+  return string("KataGo v1.16.4");
 }
 
 string Version::getKataGoVersionFullInfo() {
@@ -221,6 +242,8 @@ string Version::getKataGoVersionFullInfo() {
 #endif
 #elif defined(USE_TENSORRT_BACKEND)
   out << "Using TensorRT backend" << endl;
+#elif defined(USE_METAL_BACKEND)
+  out << "Using Metal backend" << endl;
 #elif defined(USE_OPENCL_BACKEND)
   out << "Using OpenCL backend" << endl;
 #elif defined(USE_EIGEN_BACKEND)
@@ -235,7 +258,9 @@ string Version::getKataGoVersionFullInfo() {
 #if defined(COMPILE_MAX_BOARD_LEN)
   out << "Compiled to allow boards of size up to " << COMPILE_MAX_BOARD_LEN << endl;
 #endif
-#if defined(BUILD_DISTRIBUTED)
+#if defined(CACHE_TENSORRT_PLAN) && defined(USE_TENSORRT_BACKEND)
+  out << "Compiled with TensorRT plan cache" << endl;
+#elif defined(BUILD_DISTRIBUTED)
   out << "Compiled to support contributing to online distributed selfplay" << endl;
 #endif
 
@@ -253,6 +278,8 @@ string Version::getGitRevisionWithBackend() {
   s += "-cuda";
 #elif defined(USE_TENSORRT_BACKEND)
   s += "-trt";
+#elif defined(USE_METAL_BACKEND)
+  s += "-metal";
 #elif defined(USE_OPENCL_BACKEND)
   s += "-opencl";
 #elif defined(USE_EIGEN_BACKEND)

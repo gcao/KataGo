@@ -23,17 +23,17 @@ cpp/mainopencl
 cpp/katago
 cpp/configs
 cpp/evalsgf
-cpp/runmatch.sh
-cpp/runmatchauto.sh
-cpp/runstuff.sh
-cpp/runwrite.sh
+cpp/run*.sh
 cpp/tests/scratch
-
 cpp/program/gitinfo.h
+
+cpp/tests/results/matchsgfs/games.sgfs
+cpp/tests/results/matchsgfs2/games.sgfs
 
 cpp/data/
 versions/
 cpp/build
+cpp/out
 
 export_model_cuda.sh
 mixmodels.sh
@@ -56,6 +56,10 @@ out.txt
 # For vscode
 .vscode
 
+# For VS
+.vs
+cpp/CMakeSettings.json
+
 # For cmake
 CMakeCache.txt
 CMakeFiles/
@@ -75,3 +79,14 @@ tmpsgf/
 watchgame.txt
 models/
 python/startposesupload.txt
+for_release/
+
+tests/results/matchsgfs/
+tests/results/matchsgfs2/
+
+# For Metal Backend
+cpp/.ninja_deps
+cpp/.ninja_log
+cpp/build.ninja
+cpp/KataGoSwift.*
+cpp/include/KataGoSwift/KataGoSwift-swift.h

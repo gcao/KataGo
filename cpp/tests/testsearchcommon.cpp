@@ -20,13 +20,17 @@ TestSearchCommon::TestSearchOptions::TestSearchOptions()
    printOwnership(false),
    printEndingScoreValueBonus(false),
    printPlaySelectionValues(false),
+   printRootValues(false),
+   printPrunedRootValues(false),
+   printSharpScoreAndError(false),
    noClearBot(false),
    noClearCache(false),
    printMore(false),
    printMoreMoreMore(false),
    printAfterBegun(false),
    ignorePosition(false),
-   printPostOrderNodeCount(false)
+   printPostOrderNodeCount(false),
+   rootHintLoc(Board::NULL_LOC)
 {}
 
 void TestSearchCommon::printPolicyValueOwnership(const Board& board, const NNResultBuf& buf) {
@@ -37,6 +41,7 @@ void TestSearchCommon::printPolicyValueOwnership(const Board& board, const NNRes
 
 void TestSearchCommon::printBasicStuffAfterSearch(const Board& board, const BoardHistory& hist, const Search* search, PrintTreeOptions options) {
   Board::printBoard(cout, board, Board::NULL_LOC, &(hist.moveHistory));
+  cout << hist.rules << " " << hist.encorePhase << "\n";
   cout << "Root visits: " << search->getRootVisits() << "\n";
   cout << "New playouts: " << search->lastSearchNumPlayouts << "\n";
   cout << "NN rows: " << search->nnEvaluator->numRowsProcessed() << endl;
@@ -63,8 +68,10 @@ void TestSearchCommon::runBotOnPosition(AsyncBot* bot, Board board, Player nextP
   if(opts.printOwnership)
     bot->setAlwaysIncludeOwnerMap(true);
 
-  for(int i = 0; i<opts.numMovesInARow; i++) {
+  if(opts.rootHintLoc != Board::NULL_LOC)
+    bot->setRootHintLoc(opts.rootHintLoc);
 
+  for(int i = 0; i<opts.numMovesInARow; i++) {
     Loc move;
     if(opts.printAfterBegun) {
       cout << "Just after begun" << endl;
@@ -120,6 +127,31 @@ void TestSearchCommon::runBotOnPosition(AsyncBot* bot, Board board, Player nextP
         cout << Location::toString(locsBuf[j],board) << " " << playSelectionValuesBuf[j] << endl;
       }
     }
+    if(opts.printRootValues) {
+      ReportedSearchValues values;
+      bool suc = search->getRootValues(values);
+      if(!suc)
+        cout << "Unsuccessful getting root values" << endl;
+      else
+        cout << values << endl;
+    }
+    if(opts.printPrunedRootValues) {
+      ReportedSearchValues values;
+      bool suc = search->getPrunedRootValues(values);
+      if(!suc)
+        cout << "Unsuccessful getting pruned root values" << endl;
+      else
+        cout << values << endl;
+    }
+    if(opts.printSharpScoreAndError) {
+      double sharpScore = 0.0;
+      bool suc = search->getSharpScore(search->rootNode,sharpScore);
+      testAssert(suc);
+      std::pair<double,double> errors = search->getShallowAverageShorttermWLAndScoreError(search->rootNode);
+      cout << "getSharpScore " << sharpScore << endl;
+      cout << "avg WL error " << errors.first << endl;
+      cout << "avg score error " << errors.second << endl;
+    }
 
     if(opts.printPostOrderNodeCount)
       verifyTreePostOrder(bot->getSearchStopAndWait(),-1);
@@ -127,7 +159,7 @@ void TestSearchCommon::runBotOnPosition(AsyncBot* bot, Board board, Player nextP
     if(i < opts.numMovesInARow-1) {
       bot->makeMove(move, nextPla);
       hist.makeBoardMoveAssumeLegal(board,move,nextPla,NULL);
-      cout << "Just after move" << endl;
+      cout << "Just after move" << Location::toString(move,board) << endl;
       search->printTree(cout, search->rootNode, options, P_WHITE);
       nextPla = getOpp(nextPla);
 
@@ -146,7 +178,7 @@ void TestSearchCommon::runBotOnPosition(AsyncBot* bot, Board board, Player nextP
 }
 
 void TestSearchCommon::runBotOnSgf(AsyncBot* bot, const string& sgfStr, const Rules& defaultRules, int turnIdx, float overrideKomi, TestSearchOptions opts) {
-  CompactSgf* sgf = CompactSgf::parse(sgfStr);
+  std::unique_ptr<CompactSgf> sgf = CompactSgf::parse(sgfStr);
 
   Board board;
   Player nextPla;
@@ -155,7 +187,6 @@ void TestSearchCommon::runBotOnSgf(AsyncBot* bot, const string& sgfStr, const Ru
   sgf->setupBoardAndHistAssumeLegal(initialRules, board, nextPla, hist, turnIdx);
   hist.setKomi(overrideKomi);
   runBotOnPosition(bot,board,nextPla,hist,opts);
-  delete sgf;
 }
 
 NNEvaluator* TestSearchCommon::startNNEval(
@@ -167,7 +198,6 @@ NNEvaluator* TestSearchCommon::startNNEval(
   int maxBatchSize = 16;
   int nnCacheSizePowerOfTwo = 16;
   int nnMutexPoolSizePowerOfTwo = 12;
-  int maxConcurrentEvals = 1024;
   //bool debugSkipNeuralNet = false;
   bool openCLReTunePerBoardSize = false;
   const string& modelName = modelFile;
@@ -189,7 +219,6 @@ NNEvaluator* TestSearchCommon::startNNEval(
     expectedSha256,
     &logger,
     maxBatchSize,
-    maxConcurrentEvals,
     nnXLen,
     nnYLen,
     requireExactNNLen,
@@ -227,8 +256,8 @@ void TestSearchCommon::verifyTreePostOrder(Search* search, int onlyRequireAtLeas
     idxOfNode[node] = i;
   }
   for(size_t i = 0; i<nodes.size(); i++) {
-    int childrenCapacity;
-    const SearchChildPointer* children = nodes[i]->getChildren(childrenCapacity);
+    ConstSearchNodeChildrenReference children = nodes[i]->getChildren();
+    int childrenCapacity = children.getCapacity();
     for(int j = 0; j<childrenCapacity; j++) {
       const SearchNode* child = children[j].getIfAllocated();
       if(child == NULL)

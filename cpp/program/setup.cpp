@@ -2,6 +2,7 @@
 
 #include "../core/datetime.h"
 #include "../core/makedir.h"
+#include "../core/fileutils.h"
 #include "../neuralnet/nninterface.h"
 #include "../search/patternbonustable.h"
 
@@ -12,6 +13,17 @@ void Setup::initializeSession(ConfigParser& cfg) {
   NeuralNet::globalInitialize();
 }
 
+std::vector<std::string> Setup::getBackendPrefixes() {
+  std::vector<std::string> prefixes;
+  prefixes.push_back("cuda");
+  prefixes.push_back("trt");
+  prefixes.push_back("metal");
+  prefixes.push_back("opencl");
+  prefixes.push_back("eigen");
+  prefixes.push_back("dummybackend");
+  return prefixes;
+}
+
 NNEvaluator* Setup::initializeNNEvaluator(
   const string& nnModelName,
   const string& nnModelFile,
@@ -19,18 +31,29 @@ NNEvaluator* Setup::initializeNNEvaluator(
   ConfigParser& cfg,
   Logger& logger,
   Rand& seedRand,
-  int maxConcurrentEvals,
   int expectedConcurrentEvals,
   int defaultNNXLen,
   int defaultNNYLen,
   int defaultMaxBatchSize,
   bool defaultRequireExactNNLen,
+  bool disableFP16,
   setup_for_t setupFor
 ) {
   vector<NNEvaluator*> nnEvals =
     initializeNNEvaluators(
-      {nnModelName},{nnModelFile},{expectedSha256},
-      cfg,logger,seedRand,maxConcurrentEvals,expectedConcurrentEvals,defaultNNXLen,defaultNNYLen,defaultMaxBatchSize,defaultRequireExactNNLen,setupFor
+      {nnModelName},
+      {nnModelFile},
+      {expectedSha256},
+      cfg,
+      logger,
+      seedRand,
+      expectedConcurrentEvals,
+      defaultNNXLen,
+      defaultNNYLen,
+      defaultMaxBatchSize,
+      defaultRequireExactNNLen,
+      disableFP16,
+      setupFor
     );
   assert(nnEvals.size() == 1);
   return nnEvals[0];
@@ -43,12 +66,12 @@ vector<NNEvaluator*> Setup::initializeNNEvaluators(
   ConfigParser& cfg,
   Logger& logger,
   Rand& seedRand,
-  int maxConcurrentEvals,
   int expectedConcurrentEvals,
   int defaultNNXLen,
   int defaultNNYLen,
   int defaultMaxBatchSize,
   bool defaultRequireExactNNLen,
+  bool disableFP16,
   setup_for_t setupFor
 ) {
   vector<NNEvaluator*> nnEvals;
@@ -59,6 +82,8 @@ vector<NNEvaluator*> Setup::initializeNNEvaluators(
   string backendPrefix = "cuda";
   #elif defined(USE_TENSORRT_BACKEND)
   string backendPrefix = "trt";
+  #elif defined(USE_METAL_BACKEND)
+  string backendPrefix = "metal";
   #elif defined(USE_OPENCL_BACKEND)
   string backendPrefix = "opencl";
   #elif defined(USE_EIGEN_BACKEND)
@@ -69,16 +94,10 @@ vector<NNEvaluator*> Setup::initializeNNEvaluators(
 
   //Automatically flag keys that are for other backends as used so that we don't warn about unused keys
   //for those options
-  if(backendPrefix != "cuda")
-    cfg.markAllKeysUsedWithPrefix("cuda");
-  if(backendPrefix != "trt")
-    cfg.markAllKeysUsedWithPrefix("trt");
-  if(backendPrefix != "opencl")
-    cfg.markAllKeysUsedWithPrefix("opencl");
-  if(backendPrefix != "eigen")
-    cfg.markAllKeysUsedWithPrefix("eigen");
-  if(backendPrefix != "dummybackend")
-    cfg.markAllKeysUsedWithPrefix("dummybackend");
+  for(const string& prefix: getBackendPrefixes()) {
+    if(prefix != backendPrefix)
+      cfg.markAllKeysUsedWithPrefix(prefix);
+  }
 
   for(size_t i = 0; i<nnModelFiles.size(); i++) {
     string idxStr = Global::uint64ToString(i);
@@ -122,7 +141,7 @@ vector<NNEvaluator*> Setup::initializeNNEvaluators(
         requireExactNNLen = cfg.getBool("requireMaxBoardSize");
     }
 
-    bool inputsUseNHWC = backendPrefix == "opencl" || backendPrefix == "trt" ? false : true;
+    bool inputsUseNHWC = backendPrefix == "opencl" || backendPrefix == "trt" || backendPrefix == "metal" ? false : true;
     if(cfg.contains(backendPrefix+"InputsUseNHWC"+idxStr))
       inputsUseNHWC = cfg.getBool(backendPrefix+"InputsUseNHWC"+idxStr);
     else if(cfg.contains("inputsUseNHWC"+idxStr))
@@ -155,22 +174,9 @@ vector<NNEvaluator*> Setup::initializeNNEvaluators(
       cfg.contains("numNNServerThreadsPerModel") ? cfg.getInt("numNNServerThreadsPerModel",1,1024) : 1;
 #else
     cfg.markAllKeysUsedWithPrefix("numNNServerThreadsPerModel");
-    auto getNumCores = [&logger]() {
-      int numCores = (int)std::thread::hardware_concurrency();
-      if(numCores <= 0) {
-        logger.write("Could not determine number of cores on this machine, choosing default parameters as if it were 8");
-        numCores = 8;
-      }
-      return numCores;
-    };
     int numNNServerThreadsPerModel =
       cfg.contains("numEigenThreadsPerModel") ? cfg.getInt("numEigenThreadsPerModel",1,1024) :
-      setupFor == SETUP_FOR_DISTRIBUTED ? std::min(expectedConcurrentEvals,getNumCores()) :
-      setupFor == SETUP_FOR_MATCH ? std::min(expectedConcurrentEvals,getNumCores()) :
-      setupFor == SETUP_FOR_ANALYSIS ? std::min(expectedConcurrentEvals,getNumCores()) :
-      setupFor == SETUP_FOR_GTP ? expectedConcurrentEvals :
-      setupFor == SETUP_FOR_BENCHMARK ? expectedConcurrentEvals :
-      cfg.getInt("numEigenThreadsPerModel",1,1024);
+      computeDefaultEigenBackendThreads(expectedConcurrentEvals,logger);
 #endif
 
     vector<int> gpuIdxByServerThread;
@@ -287,12 +293,14 @@ vector<NNEvaluator*> Setup::initializeNNEvaluators(
     //and doesn't greatly benefit from having a bigger chunk of parallelizable work to do on the large scale.
     //So we just fix a size here that isn't crazy and saves memory, completely ignore what the user would have
     //specified for GPUs.
-    int nnMaxBatchSize = 4;
+    int nnMaxBatchSize = 2;
     cfg.markAllKeysUsedWithPrefix("nnMaxBatchSize");
     (void)defaultMaxBatchSize;
 #endif
 
     int defaultSymmetry = forcedSymmetry >= 0 ? forcedSymmetry : 0;
+    if(disableFP16)
+      useFP16Mode = enabled_t::False;
 
     NNEvaluator* nnEval = new NNEvaluator(
       nnModelName,
@@ -300,7 +308,6 @@ vector<NNEvaluator*> Setup::initializeNNEvaluators(
       expectedSha256,
       &logger,
       nnMaxBatchSize,
-      maxConcurrentEvals,
       nnXLen,
       nnYLen,
       requireExactNNLen,
@@ -328,6 +335,18 @@ vector<NNEvaluator*> Setup::initializeNNEvaluators(
   return nnEvals;
 }
 
+int Setup::computeDefaultEigenBackendThreads(int expectedConcurrentEvals, Logger& logger) {
+  auto getNumCores = [&logger]() {
+    int numCores = (int)std::thread::hardware_concurrency();
+    if(numCores <= 0) {
+      logger.write("Could not determine number of cores on this machine, choosing eigen backend threads as if it were 8");
+      numCores = 8;
+    }
+    return numCores;
+  };
+  return std::min(expectedConcurrentEvals,getNumCores());
+}
+
 string Setup::loadHomeDataDirOverride(
   ConfigParser& cfg
 ){
@@ -341,7 +360,16 @@ SearchParams Setup::loadSingleParams(
   ConfigParser& cfg,
   setup_for_t setupFor
 ) {
-  vector<SearchParams> paramss = loadParams(cfg, setupFor);
+  const bool hasHumanModel = false;
+  return loadSingleParams(cfg,setupFor,hasHumanModel);
+}
+SearchParams Setup::loadSingleParams(
+  ConfigParser& cfg,
+  setup_for_t setupFor,
+  bool hasHumanModel
+) {
+  const bool loadSingleConfigOnly = true;
+  vector<SearchParams> paramss = loadParams(cfg, setupFor, hasHumanModel, loadSingleConfigOnly);
   if(paramss.size() != 1)
     throw StringError("Config contains parameters for multiple bot configurations, but this KataGo command only supports a single configuration");
   return paramss[0];
@@ -359,16 +387,41 @@ vector<SearchParams> Setup::loadParams(
   ConfigParser& cfg,
   setup_for_t setupFor
 ) {
+  const bool hasHumanModel = false;
+  const bool loadSingleConfigOnly = false;
+  return loadParams(cfg,setupFor,hasHumanModel,loadSingleConfigOnly);
+}
+
+vector<SearchParams> Setup::loadParams(
+  ConfigParser& cfg,
+  setup_for_t setupFor,
+  bool hasHumanModel
+) {
+  const bool loadSingleConfigOnly = false;
+  return loadParams(cfg,setupFor,hasHumanModel,loadSingleConfigOnly);
+}
+
+vector<SearchParams> Setup::loadParams(
+  ConfigParser& cfg,
+  setup_for_t setupFor,
+  bool hasHumanModel,
+  bool loadSingleConfigOnly
+) {
 
   vector<SearchParams> paramss;
   int numBots = 1;
   if(cfg.contains("numBots"))
     numBots = cfg.getInt("numBots",1,MAX_BOT_PARAMS_FROM_CFG);
 
+  if(loadSingleConfigOnly) {
+    if(numBots != 1)
+      throw ConfigParsingError("The config for this command cannot have numBots > 0");
+  }
+
   for(int i = 0; i<numBots; i++) {
     SearchParams params;
 
-    string idxStr = Global::intToString(i);
+    string idxStr = loadSingleConfigOnly ? "" : Global::intToString(i);
 
     if(cfg.contains("maxPlayouts"+idxStr)) params.maxPlayouts = cfg.getInt64("maxPlayouts"+idxStr, (int64_t)1, (int64_t)1 << 50);
     else if(cfg.contains("maxPlayouts"))   params.maxPlayouts = cfg.getInt64("maxPlayouts",        (int64_t)1, (int64_t)1 << 50);
@@ -398,6 +451,10 @@ vector<SearchParams> Setup::loadParams(
 
     if(cfg.contains("numSearchThreads"+idxStr)) params.numThreads = cfg.getInt("numSearchThreads"+idxStr, 1, 4096);
     else                                        params.numThreads = cfg.getInt("numSearchThreads",        1, 4096);
+
+    if(cfg.contains("minPlayoutsPerThread"+idxStr)) params.minPlayoutsPerThread = cfg.getDouble("minPlayoutsPerThread"+idxStr, 0.0, 1.0e20);
+    else if(cfg.contains("minPlayoutsPerThread"))   params.minPlayoutsPerThread = cfg.getDouble("minPlayoutsPerThread",        0.0, 1.0e20);
+    else                                            params.minPlayoutsPerThread = (setupFor == SETUP_FOR_ANALYSIS || setupFor == SETUP_FOR_GTP) ? 8.0 : 0.0;
 
     if(cfg.contains("winLossUtilityFactor"+idxStr)) params.winLossUtilityFactor = cfg.getDouble("winLossUtilityFactor"+idxStr, 0.0, 1.0);
     else if(cfg.contains("winLossUtilityFactor"))   params.winLossUtilityFactor = cfg.getDouble("winLossUtilityFactor",        0.0, 1.0);
@@ -462,6 +519,10 @@ vector<SearchParams> Setup::loadParams(
       else if(cfg.contains("fpuParentWeight"))   params.fpuParentWeight = cfg.getDouble("fpuParentWeight",        0.0, 1.0);
       else                                       params.fpuParentWeight = 0.0;
     }
+
+    if(cfg.contains("policyOptimism"+idxStr)) params.policyOptimism = cfg.getDouble("policyOptimism"+idxStr, 0.0, 1.0);
+    else if(cfg.contains("policyOptimism"))   params.policyOptimism = cfg.getDouble("policyOptimism",        0.0, 1.0);
+    else params.policyOptimism = (setupFor != SETUP_FOR_DISTRIBUTED && setupFor != SETUP_FOR_OTHER) ? 1.0 : 0.0;
 
     if(cfg.contains("valueWeightExponent"+idxStr)) params.valueWeightExponent = cfg.getDouble("valueWeightExponent"+idxStr, 0.0, 1.0);
     else if(cfg.contains("valueWeightExponent")) params.valueWeightExponent = cfg.getDouble("valueWeightExponent", 0.0, 1.0);
@@ -539,6 +600,10 @@ vector<SearchParams> Setup::loadParams(
     else if(cfg.contains("rootDesiredPerChildVisitsCoeff"))   params.rootDesiredPerChildVisitsCoeff = cfg.getDouble("rootDesiredPerChildVisitsCoeff",        0.0, 100.0);
     else                                                      params.rootDesiredPerChildVisitsCoeff = 0.0;
 
+    if(cfg.contains("rootPolicyOptimism"+idxStr)) params.rootPolicyOptimism = cfg.getDouble("rootPolicyOptimism"+idxStr, 0.0, 1.0);
+    else if(cfg.contains("rootPolicyOptimism"))   params.rootPolicyOptimism = cfg.getDouble("rootPolicyOptimism",        0.0, 1.0);
+    else params.rootPolicyOptimism = (setupFor != SETUP_FOR_DISTRIBUTED && setupFor != SETUP_FOR_OTHER) ? std::min(params.policyOptimism, 0.2) : 0.0;
+
     if(cfg.contains("chosenMoveTemperature"+idxStr)) params.chosenMoveTemperature = cfg.getDouble("chosenMoveTemperature"+idxStr, 0.0, 5.0);
     else if(cfg.contains("chosenMoveTemperature"))   params.chosenMoveTemperature = cfg.getDouble("chosenMoveTemperature",        0.0, 5.0);
     else                                             params.chosenMoveTemperature = 0.1;
@@ -554,6 +619,9 @@ vector<SearchParams> Setup::loadParams(
       params.chosenMoveTemperatureHalflife = cfg.getDouble("chosenMoveTemperatureHalflife",        0.1, 100000.0);
     else
       params.chosenMoveTemperatureHalflife = 19;
+    if(cfg.contains("chosenMoveTemperatureOnlyBelowProb"+idxStr)) params.chosenMoveTemperatureOnlyBelowProb = cfg.getDouble("chosenMoveTemperatureOnlyBelowProb"+idxStr, 0.0, 1.0);
+    else if(cfg.contains("chosenMoveTemperatureOnlyBelowProb"))   params.chosenMoveTemperatureOnlyBelowProb = cfg.getDouble("chosenMoveTemperatureOnlyBelowProb",        0.0, 1.0);
+    else                                                          params.chosenMoveTemperatureOnlyBelowProb = 1.0;
     if(cfg.contains("chosenMoveSubtract"+idxStr)) params.chosenMoveSubtract = cfg.getDouble("chosenMoveSubtract"+idxStr, 0.0, 1.0e10);
     else if(cfg.contains("chosenMoveSubtract"))   params.chosenMoveSubtract = cfg.getDouble("chosenMoveSubtract",        0.0, 1.0e10);
     else                                          params.chosenMoveSubtract = 0.0;
@@ -594,6 +662,14 @@ vector<SearchParams> Setup::loadParams(
     else if(cfg.contains("wideRootNoise"))   params.wideRootNoise = cfg.getDouble("wideRootNoise", 0.0, 5.0);
     else                                     params.wideRootNoise = (setupFor == SETUP_FOR_ANALYSIS ? Setup::DEFAULT_ANALYSIS_WIDE_ROOT_NOISE : 0.00);
 
+    if(cfg.contains("enablePassingHacks"+idxStr)) params.enablePassingHacks = cfg.getBool("enablePassingHacks"+idxStr);
+    else if(cfg.contains("enablePassingHacks")) params.enablePassingHacks = cfg.getBool("enablePassingHacks");
+    else params.enablePassingHacks = (setupFor == SETUP_FOR_GTP || setupFor == SETUP_FOR_ANALYSIS) ? true : false;
+
+    if(cfg.contains("enableMorePassingHacks"+idxStr)) params.enableMorePassingHacks = cfg.getBool("enableMorePassingHacks"+idxStr);
+    else if(cfg.contains("enableMorePassingHacks")) params.enableMorePassingHacks = cfg.getBool("enableMorePassingHacks");
+    else params.enableMorePassingHacks = (setupFor == SETUP_FOR_GTP || setupFor == SETUP_FOR_ANALYSIS) ? true : false;
+
     if(cfg.contains("playoutDoublingAdvantage"+idxStr)) params.playoutDoublingAdvantage = cfg.getDouble("playoutDoublingAdvantage"+idxStr,-3.0,3.0);
     else if(cfg.contains("playoutDoublingAdvantage"))   params.playoutDoublingAdvantage = cfg.getDouble("playoutDoublingAdvantage",-3.0,3.0);
     else                                                params.playoutDoublingAdvantage = 0.0;
@@ -616,6 +692,13 @@ vector<SearchParams> Setup::loadParams(
     else if(cfg.contains("antiMirror"))   params.antiMirror = cfg.getBool("antiMirror");
     else                                  params.antiMirror = false;
 
+    if(cfg.contains("ignorePreRootHistory"+idxStr)) params.ignorePreRootHistory = cfg.getBool("ignorePreRootHistory"+idxStr);
+    else if(cfg.contains("ignorePreRootHistory"))   params.ignorePreRootHistory = cfg.getBool("ignorePreRootHistory");
+    else                                            params.ignorePreRootHistory = (setupFor == SETUP_FOR_ANALYSIS ? Setup::DEFAULT_ANALYSIS_IGNORE_PRE_ROOT_HISTORY : false);
+    if(cfg.contains("ignoreAllHistory"+idxStr)) params.ignoreAllHistory = cfg.getBool("ignoreAllHistory"+idxStr);
+    else if(cfg.contains("ignoreAllHistory"))   params.ignoreAllHistory = cfg.getBool("ignoreAllHistory");
+    else                                        params.ignoreAllHistory = false;
+
     if(cfg.contains("subtreeValueBiasFactor"+idxStr)) params.subtreeValueBiasFactor = cfg.getDouble("subtreeValueBiasFactor"+idxStr, 0.0, 1.0);
     else if(cfg.contains("subtreeValueBiasFactor")) params.subtreeValueBiasFactor = cfg.getDouble("subtreeValueBiasFactor", 0.0, 1.0);
     else params.subtreeValueBiasFactor = 0.45;
@@ -625,6 +708,14 @@ vector<SearchParams> Setup::loadParams(
     if(cfg.contains("subtreeValueBiasWeightExponent"+idxStr)) params.subtreeValueBiasWeightExponent = cfg.getDouble("subtreeValueBiasWeightExponent"+idxStr, 0.0, 1.0);
     else if(cfg.contains("subtreeValueBiasWeightExponent")) params.subtreeValueBiasWeightExponent = cfg.getDouble("subtreeValueBiasWeightExponent", 0.0, 1.0);
     else params.subtreeValueBiasWeightExponent = 0.85;
+
+    if(cfg.contains("useEvalCache"+idxStr)) params.useEvalCache = cfg.getBool("useEvalCache"+idxStr);
+    else if(cfg.contains("useEvalCache"))   params.useEvalCache = cfg.getBool("useEvalCache");
+    else                                    params.useEvalCache = false;
+
+    if(cfg.contains("evalCacheMinVisits"+idxStr)) params.evalCacheMinVisits = cfg.getInt64("evalCacheMinVisits"+idxStr, (int64_t)1, (int64_t)1 << 50);
+    else if(cfg.contains("evalCacheMinVisits"))   params.evalCacheMinVisits = cfg.getInt64("evalCacheMinVisits",        (int64_t)1, (int64_t)1 << 50);
+    else                                          params.evalCacheMinVisits = 100;
 
     if(cfg.contains("nodeTableShardsPowerOfTwo"+idxStr)) params.nodeTableShardsPowerOfTwo = cfg.getInt("nodeTableShardsPowerOfTwo"+idxStr, 8, 24);
     else if(cfg.contains("nodeTableShardsPowerOfTwo"))   params.nodeTableShardsPowerOfTwo = cfg.getInt("nodeTableShardsPowerOfTwo",        8, 24);
@@ -661,6 +752,78 @@ vector<SearchParams> Setup::loadParams(
     else if(cfg.contains("futileVisitsThreshold"))   params.futileVisitsThreshold = cfg.getDouble("futileVisitsThreshold",0.01,1.0);
     else                                             params.futileVisitsThreshold = 0.0;
 
+    // This does NOT report an error under throwHumanParsingError like the parameters below that expect a second model
+    // because the user might be providing the human model as the MAIN model. In which case humanSLProfile is still a
+    // valid param but the others are not.
+    if(setupFor != SETUP_FOR_DISTRIBUTED) {
+      string humanSLProfileName;
+      if(cfg.contains("humanSLProfile"+idxStr)) humanSLProfileName = cfg.getString("humanSLProfile"+idxStr);
+      else if(cfg.contains("humanSLProfile"))   humanSLProfileName = cfg.getString("humanSLProfile");
+      params.humanSLProfile = SGFMetadata::getProfile(humanSLProfileName);
+    }
+
+    auto throwHumanParsingError = [](const string& param) {
+      throw ConfigParsingError(
+        string("Provided parameter ") + param + string(" but no human model was specified (e.g -human-model b18c384nbt-humanv0.bin.gz)")
+      );
+    };
+
+    if(!hasHumanModel && cfg.contains("humanSLCpuctExploration"+idxStr)) throwHumanParsingError("humanSLCpuctExploration"+idxStr);
+    else if(!hasHumanModel && cfg.contains("humanSLCpuctExploration")) throwHumanParsingError("humanSLCpuctExploration");
+    else if(cfg.contains("humanSLCpuctExploration"+idxStr)) params.humanSLCpuctExploration = cfg.getDouble("humanSLCpuctExploration"+idxStr, 0.0, 1000.0);
+    else if(cfg.contains("humanSLCpuctExploration"))   params.humanSLCpuctExploration = cfg.getDouble("humanSLCpuctExploration",        0.0, 1000.0);
+    else                                               params.humanSLCpuctExploration = 1.0;
+    if(!hasHumanModel && cfg.contains("humanSLCpuctPermanent"+idxStr)) throwHumanParsingError("humanSLCpuctPermanent"+idxStr);
+    else if(!hasHumanModel && cfg.contains("humanSLCpuctPermanent")) throwHumanParsingError("humanSLCpuctPermanent");
+    else if(cfg.contains("humanSLCpuctPermanent"+idxStr)) params.humanSLCpuctPermanent = cfg.getDouble("humanSLCpuctPermanent"+idxStr, 0.0, 1000.0);
+    else if(cfg.contains("humanSLCpuctPermanent"))   params.humanSLCpuctPermanent = cfg.getDouble("humanSLCpuctPermanent",        0.0, 1000.0);
+    else                                             params.humanSLCpuctPermanent = 0.0;
+    if(!hasHumanModel && cfg.contains("humanSLRootExploreProbWeightless"+idxStr)) throwHumanParsingError("humanSLRootExploreProbWeightless"+idxStr);
+    else if(!hasHumanModel && cfg.contains("humanSLRootExploreProbWeightless")) throwHumanParsingError("humanSLRootExploreProbWeightless");
+    else if(cfg.contains("humanSLRootExploreProbWeightless"+idxStr)) params.humanSLRootExploreProbWeightless = cfg.getDouble("humanSLRootExploreProbWeightless"+idxStr, 0.0, 1.0);
+    else if(cfg.contains("humanSLRootExploreProbWeightless"))   params.humanSLRootExploreProbWeightless = cfg.getDouble("humanSLRootExploreProbWeightless",        0.0, 1.0);
+    else                                                        params.humanSLRootExploreProbWeightless = 0.0;
+    if(!hasHumanModel && cfg.contains("humanSLRootExploreProbWeightful"+idxStr)) throwHumanParsingError("humanSLRootExploreProbWeightful"+idxStr);
+    else if(!hasHumanModel && cfg.contains("humanSLRootExploreProbWeightful")) throwHumanParsingError("humanSLRootExploreProbWeightful");
+    else if(cfg.contains("humanSLRootExploreProbWeightful"+idxStr)) params.humanSLRootExploreProbWeightful = cfg.getDouble("humanSLRootExploreProbWeightful"+idxStr, 0.0, 1.0);
+    else if(cfg.contains("humanSLRootExploreProbWeightful"))   params.humanSLRootExploreProbWeightful = cfg.getDouble("humanSLRootExploreProbWeightful",        0.0, 1.0);
+    else                                                       params.humanSLRootExploreProbWeightful = 0.0;
+    if(!hasHumanModel && cfg.contains("humanSLPlaExploreProbWeightless"+idxStr)) throwHumanParsingError("humanSLPlaExploreProbWeightless"+idxStr);
+    else if(!hasHumanModel && cfg.contains("humanSLPlaExploreProbWeightless")) throwHumanParsingError("humanSLPlaExploreProbWeightless");
+    else if(cfg.contains("humanSLPlaExploreProbWeightless"+idxStr)) params.humanSLPlaExploreProbWeightless = cfg.getDouble("humanSLPlaExploreProbWeightless"+idxStr, 0.0, 1.0);
+    else if(cfg.contains("humanSLPlaExploreProbWeightless"))   params.humanSLPlaExploreProbWeightless = cfg.getDouble("humanSLPlaExploreProbWeightless",        0.0, 1.0);
+    else                                                       params.humanSLPlaExploreProbWeightless = 0.0;
+    if(!hasHumanModel && cfg.contains("humanSLPlaExploreProbWeightful"+idxStr)) throwHumanParsingError("humanSLPlaExploreProbWeightful"+idxStr);
+    else if(!hasHumanModel && cfg.contains("humanSLPlaExploreProbWeightful")) throwHumanParsingError("humanSLPlaExploreProbWeightful");
+    else if(cfg.contains("humanSLPlaExploreProbWeightful"+idxStr)) params.humanSLPlaExploreProbWeightful = cfg.getDouble("humanSLPlaExploreProbWeightful"+idxStr, 0.0, 1.0);
+    else if(cfg.contains("humanSLPlaExploreProbWeightful"))   params.humanSLPlaExploreProbWeightful = cfg.getDouble("humanSLPlaExploreProbWeightful",        0.0, 1.0);
+    else                                                      params.humanSLPlaExploreProbWeightful = 0.0;
+    if(!hasHumanModel && cfg.contains("humanSLOppExploreProbWeightless"+idxStr)) throwHumanParsingError("humanSLOppExploreProbWeightless"+idxStr);
+    else if(!hasHumanModel && cfg.contains("humanSLOppExploreProbWeightless")) throwHumanParsingError("humanSLOppExploreProbWeightless");
+    else if(cfg.contains("humanSLOppExploreProbWeightless"+idxStr)) params.humanSLOppExploreProbWeightless = cfg.getDouble("humanSLOppExploreProbWeightless"+idxStr, 0.0, 1.0);
+    else if(cfg.contains("humanSLOppExploreProbWeightless"))   params.humanSLOppExploreProbWeightless = cfg.getDouble("humanSLOppExploreProbWeightless",        0.0, 1.0);
+    else                                                       params.humanSLOppExploreProbWeightless = 0.0;
+    if(!hasHumanModel && cfg.contains("humanSLOppExploreProbWeightful"+idxStr)) throwHumanParsingError("humanSLOppExploreProbWeightful"+idxStr);
+    else if(!hasHumanModel && cfg.contains("humanSLOppExploreProbWeightful")) throwHumanParsingError("humanSLOppExploreProbWeightful");
+    else if(cfg.contains("humanSLOppExploreProbWeightful"+idxStr)) params.humanSLOppExploreProbWeightful = cfg.getDouble("humanSLOppExploreProbWeightful"+idxStr, 0.0, 1.0);
+    else if(cfg.contains("humanSLOppExploreProbWeightful"))   params.humanSLOppExploreProbWeightful = cfg.getDouble("humanSLOppExploreProbWeightful",        0.0, 1.0);
+    else                                                      params.humanSLOppExploreProbWeightful = 0.0;
+    if(!hasHumanModel && cfg.contains("humanSLChosenMoveProp"+idxStr)) throwHumanParsingError("humanSLChosenMoveProp"+idxStr);
+    else if(!hasHumanModel && cfg.contains("humanSLChosenMoveProp")) throwHumanParsingError("humanSLChosenMoveProp");
+    else if(cfg.contains("humanSLChosenMoveProp"+idxStr)) params.humanSLChosenMoveProp = cfg.getDouble("humanSLChosenMoveProp"+idxStr, 0.0, 1.0);
+    else if(cfg.contains("humanSLChosenMoveProp"))   params.humanSLChosenMoveProp = cfg.getDouble("humanSLChosenMoveProp",        0.0, 1.0);
+    else                                             params.humanSLChosenMoveProp = 0.0;
+    if(!hasHumanModel && cfg.contains("humanSLChosenMoveIgnorePass"+idxStr)) throwHumanParsingError("humanSLChosenMoveIgnorePass"+idxStr);
+    else if(!hasHumanModel && cfg.contains("humanSLChosenMoveIgnorePass")) throwHumanParsingError("humanSLChosenMoveIgnorePass");
+    else if(cfg.contains("humanSLChosenMoveIgnorePass"+idxStr)) params.humanSLChosenMoveIgnorePass = cfg.getBool("humanSLChosenMoveIgnorePass"+idxStr);
+    else if(cfg.contains("humanSLChosenMoveIgnorePass"))   params.humanSLChosenMoveIgnorePass = cfg.getBool("humanSLChosenMoveIgnorePass");
+    else                                                   params.humanSLChosenMoveIgnorePass = false;
+    if(!hasHumanModel && cfg.contains("humanSLChosenMovePiklLambda"+idxStr)) throwHumanParsingError("humanSLChosenMovePiklLambda"+idxStr);
+    else if(!hasHumanModel && cfg.contains("humanSLChosenMovePiklLambda")) throwHumanParsingError("humanSLChosenMovePiklLambda");
+    else if(cfg.contains("humanSLChosenMovePiklLambda"+idxStr)) params.humanSLChosenMovePiklLambda = cfg.getDouble("humanSLChosenMovePiklLambda"+idxStr, 0.0, 1000000000.0);
+    else if(cfg.contains("humanSLChosenMovePiklLambda"))   params.humanSLChosenMovePiklLambda = cfg.getDouble("humanSLChosenMovePiklLambda",        0.0, 1000000000.0);
+    else                                                   params.humanSLChosenMovePiklLambda = 1000000000.0;
+
     //On distributed, tolerate reading mutexPoolSize since older version configs use it.
     if(setupFor == SETUP_FOR_DISTRIBUTED)
       cfg.markAllKeysUsedWithPrefix("mutexPoolSize");
@@ -670,6 +833,37 @@ vector<SearchParams> Setup::loadParams(
 
   return paramss;
 }
+
+
+bool Setup::maybeWarnHumanSLParams(
+  const SearchParams& params,
+  const NNEvaluator* nnEval,
+  const NNEvaluator* humanEval,
+  std::ostream& out,
+  Logger* logger
+) {
+  if(params.humanSLProfile.initialized) {
+    bool hasAnySGFMetaUse =
+      (nnEval != NULL && nnEval->requiresSGFMetadata()) ||
+      (humanEval != NULL && humanEval->requiresSGFMetadata());
+    if(!hasAnySGFMetaUse) {
+      string modelNames;
+      if(nnEval != NULL)
+        modelNames += nnEval->getModelName();
+      if(humanEval != NULL) {
+        if(modelNames.size() > 0)
+          modelNames += " and ";
+        modelNames += humanEval->getModelName();
+      }
+      if(logger != NULL)
+        logger->write("WARNING: humanSLProfile is specified as config param but model(s) don't use it: " + modelNames);
+      out << "WARNING: humanSLProfile is specified as config param but model(s) don't use it: " << modelNames << endl;
+      return true;
+    }
+  }
+  return false;
+}
+
 
 Player Setup::parseReportAnalysisWinrates(
   ConfigParser& cfg, Player defaultPerspective
@@ -799,7 +993,6 @@ vector<pair<set<string>,set<string>>> Setup::getMutexKeySets() {
 }
 
 std::vector<std::unique_ptr<PatternBonusTable>> Setup::loadAvoidSgfPatternBonusTables(ConfigParser& cfg, Logger& logger) {
-  vector<SearchParams> paramss;
   int numBots = 1;
   if(cfg.contains("numBots"))
     numBots = cfg.getInt("numBots",1,MAX_BOT_PARAMS_FROM_CFG);
@@ -840,4 +1033,116 @@ std::vector<std::unique_ptr<PatternBonusTable>> Setup::loadAvoidSgfPatternBonusT
     tables.push_back(std::move(patternBonusTable));
   }
   return tables;
+}
+
+static string boardSizeToStr(int boardXSize, int boardYSize) {
+  return Global::intToString(boardXSize) + "x" + Global::intToString(boardYSize);
+}
+
+static int getAutoPatternIntParam(ConfigParser& cfg, const string& param, int boardXSize, int boardYSize, int min, int max) {
+  if(cfg.contains(param + boardSizeToStr(boardXSize,boardYSize)))
+    return cfg.getInt(param + boardSizeToStr(boardXSize,boardYSize), min, max);
+  if(!cfg.contains(param))
+    throw ConfigParsingError(param + " was not specified in the config");
+  return cfg.getInt(param, min, max);
+}
+static int64_t getAutoPatternInt64Param(ConfigParser& cfg, const string& param, int boardXSize, int boardYSize, int64_t min, int64_t max) {
+  if(cfg.contains(param + boardSizeToStr(boardXSize,boardYSize)))
+    return cfg.getInt64(param + boardSizeToStr(boardXSize,boardYSize), min, max);
+  if(!cfg.contains(param))
+    throw ConfigParsingError(param + " was not specified in the config");
+  return cfg.getInt64(param, min, max);
+}
+static double getAutoPatternDoubleParam(ConfigParser& cfg, const string& param, int boardXSize, int boardYSize, double min, double max) {
+  if(cfg.contains(param + boardSizeToStr(boardXSize,boardYSize)))
+    return cfg.getDouble(param + boardSizeToStr(boardXSize,boardYSize), min, max);
+  if(!cfg.contains(param))
+    throw ConfigParsingError(param + " was not specified in the config");
+  return cfg.getDouble(param, min, max);
+}
+
+bool Setup::saveAutoPatternBonusData(const std::vector<Sgf::PositionSample>& genmoveSamples, ConfigParser& cfg, Logger& logger, Rand& rand) {
+  if(genmoveSamples.size() <= 0)
+    return false;
+  if(!cfg.contains("autoAvoidRepeatDir"))
+    return false;
+
+  string autoAvoidPatternsDir = cfg.getString("autoAvoidRepeatDir");
+  MakeDir::make(autoAvoidPatternsDir);
+
+  std::map<std::pair<int,int>, std::unique_ptr<ofstream>> outByBoardSize;
+  string fileName = Global::uint64ToHexString(rand.nextUInt64()) + "_poses.txt";
+  for(const Sgf::PositionSample& sampleToWrite : genmoveSamples) {
+    int boardXSize = sampleToWrite.board.x_size;
+    int boardYSize = sampleToWrite.board.y_size;
+    std::pair<int,int> boardSize = std::make_pair(boardXSize, boardYSize);
+
+    int minTurnNumber = getAutoPatternIntParam(cfg,"autoAvoidRepeatMinTurnNumber",boardXSize,boardYSize,0,1000000);
+    int maxTurnNumber = getAutoPatternIntParam(cfg,"autoAvoidRepeatMaxTurnNumber",boardXSize,boardYSize,0,1000000);
+    if(sampleToWrite.initialTurnNumber < minTurnNumber || sampleToWrite.initialTurnNumber > maxTurnNumber)
+      continue;
+    assert(sampleToWrite.moves.size() == 0);
+    if(!contains(outByBoardSize,boardSize)) {
+      MakeDir::make(autoAvoidPatternsDir + "/" + boardSizeToStr(boardXSize, boardYSize));
+      outByBoardSize[boardSize] = std::make_unique<ofstream>();
+      string filePath = autoAvoidPatternsDir + "/" + boardSizeToStr(boardXSize, boardYSize) + "/" + fileName;
+      bool suc = FileUtils::tryOpen(*(outByBoardSize[boardSize]), filePath);
+      if(!suc) {
+        logger.write("ERROR: could not open " + filePath);
+        return false;
+      }
+    }
+    *(outByBoardSize[boardSize]) << Sgf::PositionSample::toJsonLine(sampleToWrite) << "\n";
+  }
+  for(auto iter = outByBoardSize.begin(); iter != outByBoardSize.end(); ++iter) {
+    iter->second->close();
+  }
+  logger.write("Saved " + Global::uint64ToString(genmoveSamples.size()) + " avoid poses to " + autoAvoidPatternsDir);
+  return true;
+}
+
+std::unique_ptr<PatternBonusTable> Setup::loadAndPruneAutoPatternBonusTables(ConfigParser& cfg, Logger& logger) {
+  std::unique_ptr<PatternBonusTable> patternBonusTable = nullptr;
+
+  if(cfg.contains("autoAvoidRepeatDir")) {
+    string baseDir = cfg.getString("autoAvoidRepeatDir");
+    std::vector<string> boardSizeDirs = FileUtils::listFiles(baseDir);
+
+    patternBonusTable = std::make_unique<PatternBonusTable>();
+
+    for(const string& dirName: boardSizeDirs) {
+      std::vector<string> pieces = Global::split(dirName,'x');
+      if(pieces.size() != 2)
+        continue;
+      int boardXSize;
+      int boardYSize;
+      bool suc = Global::tryStringToInt(pieces[0],boardXSize) && Global::tryStringToInt(pieces[1],boardYSize);
+      if(!suc)
+        continue;
+      if(boardXSize < 2 || boardXSize > Board::MAX_LEN || boardYSize < 2 || boardYSize > Board::MAX_LEN)
+        continue;
+
+      string dirPath = baseDir + "/" + dirName;
+      if(!FileUtils::isDirectory(dirPath))
+        continue;
+
+      double penalty = getAutoPatternDoubleParam(cfg,"autoAvoidRepeatUtility",boardXSize,boardYSize,-3.0,3.0);
+      double lambda = getAutoPatternDoubleParam(cfg,"autoAvoidRepeatLambda",boardXSize,boardYSize,0.0,1.0);
+      int minTurnNumber = getAutoPatternIntParam(cfg,"autoAvoidRepeatMinTurnNumber",boardXSize,boardYSize,0,1000000);
+      int maxTurnNumber = getAutoPatternIntParam(cfg,"autoAvoidRepeatMaxTurnNumber",boardXSize,boardYSize,0,1000000);
+      size_t maxPoses = getAutoPatternInt64Param(cfg,"autoAvoidRepeatMaxPoses",boardXSize,boardYSize,0,(int64_t)1000000000000LL);
+
+      string logSource = dirPath;
+      patternBonusTable->avoidRepeatedPosMovesAndDeleteExcessFiles({baseDir + "/" + dirName},penalty,lambda,minTurnNumber,maxTurnNumber,maxPoses,logger,logSource);
+    }
+
+
+    cfg.markAllKeysUsedWithPrefix("autoAvoidRepeatUtility");
+    cfg.markAllKeysUsedWithPrefix("autoAvoidRepeatLambda");
+    cfg.markAllKeysUsedWithPrefix("autoAvoidRepeatMinTurnNumber");
+    cfg.markAllKeysUsedWithPrefix("autoAvoidRepeatMaxTurnNumber");
+    cfg.markAllKeysUsedWithPrefix("autoAvoidRepeatMaxPoses");
+    cfg.markAllKeysUsedWithPrefix("autoAvoidRepeatSaveChunkSize");
+  }
+  return patternBonusTable;
 }

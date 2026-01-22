@@ -11,23 +11,41 @@ static double cpuctExploration(double totalChildWeight, const SearchParams& sear
     searchParams.cpuctExplorationLog * log((totalChildWeight + searchParams.cpuctExplorationBase) / searchParams.cpuctExplorationBase);
 }
 
+static double cpuctExplorationHuman(double totalChildWeight, const SearchParams& searchParams) {
+  return searchParams.humanSLCpuctExploration + searchParams.humanSLCpuctPermanent * sqrt(totalChildWeight);
+}
+
 //Tiny constant to add to numerator of puct formula to make it positive
 //even when visits = 0.
 static constexpr double TOTALCHILDWEIGHT_PUCT_OFFSET = 0.01;
 
+double Search::getExploreScaling(
+  double totalChildWeight, double parentUtilityStdevFactor
+) const {
+  return
+    cpuctExploration(totalChildWeight, searchParams)
+    * sqrt(totalChildWeight + TOTALCHILDWEIGHT_PUCT_OFFSET)
+    * parentUtilityStdevFactor;
+}
+double Search::getExploreScalingHuman(
+  double totalChildWeight
+) const {
+  return
+    cpuctExplorationHuman(totalChildWeight, searchParams)
+    * sqrt(totalChildWeight + TOTALCHILDWEIGHT_PUCT_OFFSET);
+}
+
 double Search::getExploreSelectionValue(
-  double nnPolicyProb, double totalChildWeight, double childWeight,
-  double childUtility, double parentUtilityStdevFactor, Player pla
+  double exploreScaling,
+  double nnPolicyProb,
+  double childWeight,
+  double childUtility,
+  Player pla
 ) const {
   if(nnPolicyProb < 0)
     return POLICY_ILLEGAL_SELECTION_VALUE;
 
-  double exploreComponent =
-    cpuctExploration(totalChildWeight,searchParams)
-    * parentUtilityStdevFactor
-    * nnPolicyProb
-    * sqrt(totalChildWeight + TOTALCHILDWEIGHT_PUCT_OFFSET)
-    / (1.0 + childWeight);
+  double exploreComponent = exploreScaling * nnPolicyProb / (1.0 + childWeight);
 
   //At the last moment, adjust value to be from the player's perspective, so that players prefer values in their favor
   //rather than in white's favor
@@ -38,19 +56,18 @@ double Search::getExploreSelectionValue(
 //Return the childWeight that would make Search::getExploreSelectionValue return the given explore selection value.
 //Or return 0, if it would be less than 0.
 double Search::getExploreSelectionValueInverse(
-  double exploreSelectionValue, double nnPolicyProb, double totalChildWeight,
-  double childUtility, double parentUtilityStdevFactor, Player pla
+  double exploreSelectionValue,
+  double exploreScaling,
+  double nnPolicyProb,
+  double childUtility,
+  Player pla
 ) const {
   if(nnPolicyProb < 0)
     return 0;
   double valueComponent = pla == P_WHITE ? childUtility : -childUtility;
 
   double exploreComponent = exploreSelectionValue - valueComponent;
-  double exploreComponentScaling =
-    cpuctExploration(totalChildWeight,searchParams)
-    * parentUtilityStdevFactor
-    * nnPolicyProb
-    * sqrt(totalChildWeight + TOTALCHILDWEIGHT_PUCT_OFFSET);
+  double exploreComponentScaling = exploreScaling * nnPolicyProb;
 
   //Guard against float weirdness
   if(exploreComponent <= 0)
@@ -84,9 +101,12 @@ static void maybeApplyWideRootNoise(
 double Search::getExploreSelectionValueOfChild(
   const SearchNode& parent, const float* parentPolicyProbs, const SearchNode* child,
   Loc moveLoc,
+  double exploreScaling,
   double totalChildWeight, int64_t childEdgeVisits, double fpuValue,
-  double parentUtility, double parentWeightPerVisit, double parentUtilityStdevFactor,
-  bool isDuringSearch, bool antiMirror, double maxChildWeight, SearchThread* thread
+  double parentUtility, double parentWeightPerVisit,
+  bool isDuringSearch, bool antiMirror, double maxChildWeight,
+  bool countEdgeVisit,
+  SearchThread* thread
 ) const {
   (void)parentUtility;
   int movePos = getPos(moveLoc);
@@ -97,7 +117,11 @@ double Search::getExploreSelectionValueOfChild(
   double utilityAvg = child->stats.utilityAvg.load(std::memory_order_acquire);
   double scoreMeanAvg = child->stats.scoreMeanAvg.load(std::memory_order_acquire);
   double scoreMeanSqAvg = child->stats.scoreMeanSqAvg.load(std::memory_order_acquire);
-  double childWeight = child->stats.getChildWeight(childEdgeVisits,childVisits);
+  double childWeight;
+  if(countEdgeVisit)
+    childWeight = child->stats.getChildWeight(childEdgeVisits,childVisits);
+  else
+    childWeight = child->stats.weightSum.load(std::memory_order_acquire);
 
   //It's possible that childVisits is actually 0 here with multithreading because we're visiting this node while a child has
   //been expanded but its thread not yet finished its first visit.
@@ -115,10 +139,6 @@ double Search::getExploreSelectionValueOfChild(
       childUtility += getScoreUtilityDiff(scoreMeanAvg, scoreMeanSqAvg, endingScoreBonus);
   }
 
-  //When multithreading, totalChildWeight could be out of sync with childWeight, so if they provably are, then fix that up
-  if(totalChildWeight < childWeight)
-    totalChildWeight = childWeight;
-
   //Virtual losses to direct threads down different paths
   if(childVirtualLosses > 0) {
     double virtualLossWeight = childVirtualLosses * searchParams.numVirtualLossesPerThread;
@@ -130,7 +150,7 @@ double Search::getExploreSelectionValueOfChild(
     childWeight += virtualLossWeight;
   }
 
-  if(isDuringSearch && (&parent == rootNode)) {
+  if(isDuringSearch && (&parent == rootNode) && countEdgeVisit) {
     //Futile visits pruning - skip this move if the amount of time we have left to search is too small, assuming
     //its average weight per visit is maintained.
     //We use childVisits rather than childEdgeVisits for the final estimate since when childEdgeVisits < childVisits, adding new visits is instant.
@@ -144,47 +164,52 @@ double Search::getExploreSelectionValueOfChild(
     }
     //Hack to get the root to funnel more visits down child branches
     if(searchParams.rootDesiredPerChildVisitsCoeff > 0.0) {
-      if(childWeight < sqrt(nnPolicyProb * totalChildWeight * searchParams.rootDesiredPerChildVisitsCoeff)) {
+      if(nnPolicyProb > 0 && childWeight < sqrt(nnPolicyProb * totalChildWeight * searchParams.rootDesiredPerChildVisitsCoeff)) {
         return 1e20;
       }
     }
     //Hack for hintloc - must search this move almost as often as the most searched move
     if(rootHintLoc != Board::NULL_LOC && moveLoc == rootHintLoc) {
       double averageWeightPerVisit = (childWeight + parentWeightPerVisit) / (childVisits + 1.0);
-      int childrenCapacity;
-      const SearchChildPointer* children = parent.getChildren(childrenCapacity);
+      ConstSearchNodeChildrenReference children = parent.getChildren();
+      int childrenCapacity = children.getCapacity();
       for(int i = 0; i<childrenCapacity; i++) {
-        const SearchNode* c = children[i].getIfAllocated();
+        const SearchChildPointer& childPointer = children[i];
+        const SearchNode* c = childPointer.getIfAllocated();
         if(c == NULL)
           break;
-        int64_t cEdgeVisits = children[i].getEdgeVisits();
+        int64_t cEdgeVisits = childPointer.getEdgeVisits();
         double cWeight = c->stats.getChildWeight(cEdgeVisits);
         if(childWeight + averageWeightPerVisit < cWeight * 0.8)
           return 1e20;
       }
     }
 
-    if(searchParams.wideRootNoise > 0.0) {
+    if(searchParams.wideRootNoise > 0.0 && nnPolicyProb >= 0) {
       maybeApplyWideRootNoise(childUtility, nnPolicyProb, searchParams, thread, parent);
     }
   }
-  if(isDuringSearch && antiMirror) {
+  if(isDuringSearch && antiMirror && nnPolicyProb >= 0 && countEdgeVisit) {
     maybeApplyAntiMirrorPolicy(nnPolicyProb, moveLoc, parentPolicyProbs, parent.nextPla, thread);
     maybeApplyAntiMirrorForcedExplore(childUtility, parentUtility, moveLoc, parentPolicyProbs, childWeight, totalChildWeight, parent.nextPla, thread, parent);
   }
 
-  return getExploreSelectionValue(nnPolicyProb,totalChildWeight,childWeight,childUtility,parentUtilityStdevFactor,parent.nextPla);
+  return getExploreSelectionValue(exploreScaling,nnPolicyProb,childWeight,childUtility,parent.nextPla);
 }
 
 double Search::getNewExploreSelectionValue(
-  const SearchNode& parent, float nnPolicyProb,
-  double totalChildWeight, double fpuValue,
-  double parentWeightPerVisit, double parentUtilityStdevFactor,
-  double maxChildWeight, SearchThread* thread
+  const SearchNode& parent,
+  double exploreScaling,
+  float nnPolicyProb,
+  double fpuValue,
+  double parentWeightPerVisit,
+  double maxChildWeight,
+  bool countEdgeVisit,
+  SearchThread* thread
 ) const {
   double childWeight = 0;
   double childUtility = fpuValue;
-  if(&parent == rootNode) {
+  if(&parent == rootNode && countEdgeVisit) {
     //Futile visits pruning - skip this move if the amount of time we have left to search is too small
     if(searchParams.futileVisitsThreshold > 0) {
       //Avoid divide by 0 by adding a prior equal to the parent's weight per visit
@@ -198,14 +223,15 @@ double Search::getNewExploreSelectionValue(
       maybeApplyWideRootNoise(childUtility, nnPolicyProb, searchParams, thread, parent);
     }
   }
-  return getExploreSelectionValue(nnPolicyProb,totalChildWeight,childWeight,childUtility,parentUtilityStdevFactor,parent.nextPla);
+  return getExploreSelectionValue(exploreScaling,nnPolicyProb,childWeight,childUtility,parent.nextPla);
 }
 
 double Search::getReducedPlaySelectionWeight(
   const SearchNode& parent, const float* parentPolicyProbs, const SearchNode* child,
   Loc moveLoc,
-  double totalChildWeight, int64_t childEdgeVisits,
-  double parentUtilityStdevFactor, double bestChildExploreSelectionValue
+  double exploreScaling,
+  int64_t childEdgeVisits,
+  double bestChildExploreSelectionValue
 ) const {
   assert(&parent == rootNode);
   int movePos = getPos(moveLoc);
@@ -229,7 +255,7 @@ double Search::getReducedPlaySelectionWeight(
     childUtility += getScoreUtilityDiff(scoreMeanAvg, scoreMeanSqAvg, endingScoreBonus);
 
   double childWeightWeRetrospectivelyWanted = getExploreSelectionValueInverse(
-    bestChildExploreSelectionValue, nnPolicyProb, totalChildWeight, childUtility, parentUtilityStdevFactor, parent.nextPla
+    bestChildExploreSelectionValue, exploreScaling, nnPolicyProb, childUtility, parent.nextPla
   );
   if(childWeight > childWeightWeRetrospectivelyWanted)
     return childWeightWeRetrospectivelyWanted;
@@ -296,9 +322,8 @@ double Search::getFpuValueForChildrenAssumeVisited(
 
 
 void Search::selectBestChildToDescend(
-  SearchThread& thread, const SearchNode& node, int nodeState,
-  int& numChildrenFound, int& bestChildIdx, Loc& bestChildMoveLoc,
-  bool posesWithChildBuf[NNPos::MAX_NN_POLICY_SIZE],
+  SearchThread& thread, const SearchNode& node, SearchNodeState nodeState,
+  int& numChildrenFound, int& bestChildIdx, Loc& bestChildMoveLoc, bool& countEdgeVisit,
   bool isRoot) const
 {
   assert(thread.pla == node.nextPla);
@@ -306,35 +331,113 @@ void Search::selectBestChildToDescend(
   double maxSelectionValue = POLICY_ILLEGAL_SELECTION_VALUE;
   bestChildIdx = -1;
   bestChildMoveLoc = Board::NULL_LOC;
+  countEdgeVisit = true;
 
-  int childrenCapacity;
-  const SearchChildPointer* children = node.getChildren(nodeState,childrenCapacity);
+  ConstSearchNodeChildrenReference children = node.getChildren(nodeState);
+  int childrenCapacity = children.getCapacity();
 
   double policyProbMassVisited = 0.0;
   double maxChildWeight = 0.0;
   double totalChildWeight = 0.0;
+  int64_t totalChildEdgeVisits = 0;
   const NNOutput* nnOutput = node.getNNOutput();
   assert(nnOutput != NULL);
   const float* policyProbs = nnOutput->getPolicyProbsMaybeNoised();
   for(int i = 0; i<childrenCapacity; i++) {
-    const SearchNode* child = children[i].getIfAllocated();
+    const SearchChildPointer& childPointer = children[i];
+    const SearchNode* child = childPointer.getIfAllocated();
     if(child == NULL)
       break;
-    Loc moveLoc = children[i].getMoveLocRelaxed();
+    Loc moveLoc = childPointer.getMoveLocRelaxed();
     int movePos = getPos(moveLoc);
     float nnPolicyProb = policyProbs[movePos];
+    if(nnPolicyProb < 0)
+      continue;
     policyProbMassVisited += nnPolicyProb;
 
-    int64_t edgeVisits = children[i].getEdgeVisits();
+    int64_t edgeVisits = childPointer.getEdgeVisits();
     double childWeight = child->stats.getChildWeight(edgeVisits);
 
     totalChildWeight += childWeight;
     if(childWeight > maxChildWeight)
       maxChildWeight = childWeight;
+    totalChildEdgeVisits += edgeVisits;
   }
+
+  bool useHumanSL = false;
+  if(humanEvaluator != NULL &&
+     (searchParams.humanSLProfile.initialized || !humanEvaluator->requiresSGFMetadata())
+  ) {
+    const NNOutput* humanOutput = node.getHumanOutput();
+    if(humanOutput != NULL) {
+      double weightlessProb;
+      double weightfulProb;
+      if(isRoot) {
+        weightlessProb = searchParams.humanSLRootExploreProbWeightless;
+        weightfulProb = searchParams.humanSLRootExploreProbWeightful;
+      }
+      else if(thread.pla == rootPla) {
+        weightlessProb = searchParams.humanSLPlaExploreProbWeightless;
+        weightfulProb = searchParams.humanSLPlaExploreProbWeightful;
+      }
+      else {
+        weightlessProb = searchParams.humanSLOppExploreProbWeightless;
+        weightfulProb = searchParams.humanSLOppExploreProbWeightful;
+      }
+
+      double totalHumanProb = weightlessProb + weightfulProb;
+      if(totalHumanProb > 0.0) {
+        double r = thread.rand.nextDouble();
+        if(r < weightlessProb) {
+          useHumanSL = true;
+          countEdgeVisit = false;
+        }
+        else if(r < totalHumanProb) {
+          useHumanSL = true;
+        }
+      }
+    }
+
+    // Swap out policy and also recompute policy prob mass visited
+    if(useHumanSL) {
+      nnOutput = humanOutput;
+      policyProbMassVisited = 0.0;
+      assert(nnOutput != NULL);
+      policyProbs = nnOutput->getPolicyProbsMaybeNoised();
+      for(int i = 0; i<childrenCapacity; i++) {
+        const SearchChildPointer& childPointer = children[i];
+        const SearchNode* child = childPointer.getIfAllocated();
+        if(child == NULL)
+          break;
+        Loc moveLoc = childPointer.getMoveLocRelaxed();
+        int movePos = getPos(moveLoc);
+        float nnPolicyProb = policyProbs[movePos];
+        if(nnPolicyProb < 0)
+          continue;
+        policyProbMassVisited += nnPolicyProb;
+      }
+    }
+  }
+
   //Probability mass should not sum to more than 1, giving a generous allowance
   //for floating point error.
   assert(policyProbMassVisited <= 1.0001);
+
+  //If we're doing a weightless visit, then we should redo PUCT to operate on child node weight, not child edge weight
+  if(!countEdgeVisit) {
+    totalChildWeight = 0.0;
+    maxChildWeight = 0.0;
+    for(int i = 0; i<childrenCapacity; i++) {
+      const SearchChildPointer& childPointer = children[i];
+      const SearchNode* child = childPointer.getIfAllocated();
+      if(child == NULL)
+        break;
+      double childWeight = child->stats.weightSum.load(std::memory_order_acquire);
+      totalChildWeight += childWeight;
+      if(childWeight > maxChildWeight)
+        maxChildWeight = childWeight;
+    }
+  }
 
   //First play urgency
   double parentUtility;
@@ -345,27 +448,37 @@ void Search::selectBestChildToDescend(
     parentUtility, parentWeightPerVisit, parentUtilityStdevFactor
   );
 
-  std::fill(posesWithChildBuf,posesWithChildBuf+NNPos::MAX_NN_POLICY_SIZE,false);
+  bool posesWithChildBuf[NNPos::MAX_NN_POLICY_SIZE] = { }; // Initialize all to false
   bool antiMirror = searchParams.antiMirror && mirroringPla != C_EMPTY && isMirroringSinceSearchStart(thread.history,0);
+
+  double exploreScaling;
+  if(useHumanSL)
+    exploreScaling = getExploreScalingHuman(totalChildWeight);
+  else
+    exploreScaling = getExploreScaling(totalChildWeight, parentUtilityStdevFactor);
 
   //Try all existing children
   //Also count how many children we actually find
   numChildrenFound = 0;
   for(int i = 0; i<childrenCapacity; i++) {
-    const SearchNode* child = children[i].getIfAllocated();
+    const SearchChildPointer& childPointer = children[i];
+    const SearchNode* child = childPointer.getIfAllocated();
     if(child == NULL)
       break;
     numChildrenFound++;
-    int64_t childEdgeVisits = children[i].getEdgeVisits();
+    int64_t childEdgeVisits = childPointer.getEdgeVisits();
 
-    Loc moveLoc = children[i].getMoveLocRelaxed();
+    Loc moveLoc = childPointer.getMoveLocRelaxed();
     bool isDuringSearch = true;
     double selectionValue = getExploreSelectionValueOfChild(
       node,policyProbs,child,
       moveLoc,
+      exploreScaling,
       totalChildWeight,childEdgeVisits,fpuValue,
-      parentUtility,parentWeightPerVisit,parentUtilityStdevFactor,
-      isDuringSearch,antiMirror,maxChildWeight,&thread
+      parentUtility,parentWeightPerVisit,
+      isDuringSearch,antiMirror,maxChildWeight,
+      countEdgeVisit,
+      &thread
     );
     if(selectionValue > maxSelectionValue) {
       // if(child->state.load(std::memory_order_seq_cst) == SearchNode::STATE_EVALUATING) {
@@ -383,6 +496,58 @@ void Search::selectBestChildToDescend(
   }
 
   const std::vector<int>& avoidMoveUntilByLoc = thread.pla == P_BLACK ? avoidMoveUntilByLocBlack : avoidMoveUntilByLocWhite;
+
+  //Try all the things in the eval cache that are moves we haven't visited yet.
+  //Use the normal new explore selection value for them but with their eval cache utility instead of FPU.
+  //Might explore things out of descending policy order!
+  if(searchParams.useEvalCache && searchParams.useGraphSearch && node.evalCacheEntry != nullptr && mirroringPla == C_EMPTY && !node.forceNonTerminal) {
+    for(const auto& pair: node.evalCacheEntry->firstExploreEvals) {
+      Loc moveLoc = pair.first;
+      int movePos = getPos(moveLoc);
+      bool alreadyTried = posesWithChildBuf[movePos];
+      if(alreadyTried)
+        continue;
+
+      //Special logic for the root
+      if(isRoot) {
+        assert(thread.board.pos_hash == rootBoard.pos_hash);
+        assert(thread.pla == rootPla);
+        if(!isAllowedRootMove(moveLoc))
+          continue;
+      }
+      if(avoidMoveUntilByLoc.size() > 0) {
+        assert(avoidMoveUntilByLoc.size() >= Board::MAX_ARR_SIZE);
+        int untilDepth = avoidMoveUntilByLoc[moveLoc];
+        if(thread.history.moveHistory.size() - rootHistory.moveHistory.size() < untilDepth)
+          continue;
+      }
+
+      //Quit immediately for illegal moves
+      float nnPolicyProb = policyProbs[movePos];
+      if(nnPolicyProb < 0)
+        continue;
+
+      FirstExploreEval eval = pair.second;
+      double cacheAvgUtility =
+        getResultUtility(eval.avgWinLoss,0.0)
+        + getScoreUtility(eval.avgScoreMean, eval.avgScoreMean * eval.avgScoreMean);
+
+      double selectionValue = getNewExploreSelectionValue(
+        node,
+        exploreScaling,
+        nnPolicyProb,cacheAvgUtility,
+        parentWeightPerVisit,
+        maxChildWeight,
+        countEdgeVisit,
+        &thread
+      );
+      if(selectionValue > maxSelectionValue) {
+        maxSelectionValue = selectionValue;
+        bestChildIdx = numChildrenFound;
+        bestChildMoveLoc = moveLoc;
+      }
+    }
+  }
 
   //Try the new child with the best policy value
   Loc bestNewMoveLoc = Board::NULL_LOC;
@@ -410,7 +575,11 @@ void Search::selectBestChildToDescend(
         continue;
     }
 
+    //Quit immediately for illegal moves
     float nnPolicyProb = policyProbs[movePos];
+    if(nnPolicyProb < 0)
+      continue;
+
     if(antiMirror) {
       maybeApplyAntiMirrorPolicy(nnPolicyProb, moveLoc, policyProbs, node.nextPla, &thread);
     }
@@ -422,9 +591,13 @@ void Search::selectBestChildToDescend(
   }
   if(bestNewMoveLoc != Board::NULL_LOC) {
     double selectionValue = getNewExploreSelectionValue(
-      node,bestNewNNPolicyProb,totalChildWeight,fpuValue,
-      parentWeightPerVisit,parentUtilityStdevFactor,
-      maxChildWeight,&thread
+      node,
+      exploreScaling,
+      bestNewNNPolicyProb,fpuValue,
+      parentWeightPerVisit,
+      maxChildWeight,
+      countEdgeVisit,
+      &thread
     );
     if(selectionValue > maxSelectionValue) {
       maxSelectionValue = selectionValue;
@@ -432,4 +605,39 @@ void Search::selectBestChildToDescend(
       bestChildMoveLoc = bestNewMoveLoc;
     }
   }
+
+  if(totalChildEdgeVisits >= 2 &&
+     searchParams.enableMorePassingHacks &&
+     thread.history.passWouldEndPhase(thread.board,thread.pla) &&
+     avoidMoveUntilByLoc.size() == 0 // Don't force playouts if there's any chance we're specifying specific moves since we don't want to force an avoided move
+  ) {
+    bool hasPassMove = false;
+    bool hasNonPassMove = false;
+    for(int i = 0; i<childrenCapacity; i++) {
+      const SearchChildPointer& childPointer = children[i];
+      const SearchNode* child = childPointer.getIfAllocated();
+      if(child == NULL)
+        break;
+      Loc moveLoc = childPointer.getMoveLocRelaxed();
+      if(moveLoc == Board::PASS_LOC)
+        hasPassMove = true;
+      else
+        hasNonPassMove = true;
+    }
+    if(!hasPassMove && bestChildMoveLoc != Board::PASS_LOC && bestChildMoveLoc != Board::NULL_LOC) {
+      bestChildIdx = numChildrenFound;
+      bestChildMoveLoc = Board::PASS_LOC;
+      countEdgeVisit = false;
+      // Specifically for these special extra-pass search playouts, we don't count them for the purpose of visit/playout limits.
+      thread.shouldCountPlayout = false;
+    }
+    else if(!hasNonPassMove && bestChildMoveLoc == Board::PASS_LOC && bestNewMoveLoc != Board::PASS_LOC && bestNewMoveLoc != Board::NULL_LOC) {
+      bestChildIdx = numChildrenFound;
+      bestChildMoveLoc = bestNewMoveLoc;
+      countEdgeVisit = false;
+      // Specifically for these special extra-pass search playouts, we don't count them for the purpose of visit/playout limits.
+      thread.shouldCountPlayout = false;
+    }
+  }
+
 }

@@ -74,9 +74,9 @@ void Search::respawnThreads() {
   spawnThreadsIfNeeded();
 }
 
-void Search::performTaskWithThreads(std::function<void(int)>* task) {
+void Search::performTaskWithThreads(std::function<void(int)>* task, int capThreads) {
   spawnThreadsIfNeeded();
-  int numAdditionalThreadsToUse = numAdditionalThreadsToUseForTasks();
+  int numAdditionalThreadsToUse = std::min(capThreads-1, numAdditionalThreadsToUseForTasks());
   if(numAdditionalThreadsToUse <= 0) {
     (*task)(0);
   }
@@ -135,7 +135,7 @@ void Search::applyRecursivelyPostOrderMulithreaded(const vector<SearchNode*>& no
     }
     randBuf.resize(randBufStart);
   };
-  performTaskWithThreads(&g);
+  performTaskWithThreads(&g, 0x3fffFFFF);
   for(int threadIdx = 1; threadIdx<numAdditionalThreads+1; threadIdx++)
     delete rands[threadIdx];
 }
@@ -151,9 +151,8 @@ void Search::applyRecursivelyPostOrderMulithreadedHelper(
     return;
 
   //Recurse on all children
-  int childrenCapacity;
-  SearchChildPointer* children = node->getChildren(childrenCapacity);
-  int numChildren = SearchNode::iterateAndCountChildrenInArray(children,childrenCapacity);
+  SearchNodeChildrenReference children = node->getChildren();
+  int numChildren = children.iterateAndCountChildren();
 
   if(numChildren > 0) {
     size_t randBufStart = randBuf.size();
@@ -208,7 +207,7 @@ void Search::applyRecursivelyAnyOrderMulithreaded(const vector<SearchNode*>& nod
     }
     randBuf.resize(randBufStart);
   };
-  performTaskWithThreads(&g);
+  performTaskWithThreads(&g, 0x3fffFFFF);
   for(int threadIdx = 1; threadIdx<numAdditionalThreads+1; threadIdx++)
     delete rands[threadIdx];
 }
@@ -224,9 +223,8 @@ void Search::applyRecursivelyAnyOrderMulithreadedHelper(
     return;
 
   //Recurse on all children
-  int childrenCapacity;
-  SearchChildPointer* children = node->getChildren(childrenCapacity);
-  int numChildren = SearchNode::iterateAndCountChildrenInArray(children,childrenCapacity);
+  SearchNodeChildrenReference children = node->getChildren();
+  int numChildren = children.iterateAndCountChildren();
 
   if(numChildren > 0) {
     size_t randBufStart = randBuf.size();
@@ -252,7 +250,7 @@ void Search::applyRecursivelyAnyOrderMulithreadedHelper(
 //Mainly for testing
 std::vector<SearchNode*> Search::enumerateTreePostOrder() {
   std::atomic<int64_t> sizeCounter(0);
-  std::function<void(SearchNode*,int)> f = [&](SearchNode* node, int threadIdx) {
+  std::function<void(SearchNode*,int)> f = [&](SearchNode* node, int threadIdx) noexcept {
     (void)node;
     (void)threadIdx;
     sizeCounter.fetch_add(1,std::memory_order_relaxed);
@@ -262,7 +260,7 @@ std::vector<SearchNode*> Search::enumerateTreePostOrder() {
   int64_t size = sizeCounter.load(std::memory_order_relaxed);
   std::vector<SearchNode*> nodes(size,NULL);
   std::atomic<int64_t> indexCounter(0);
-  std::function<void(SearchNode*,int)> g = [&](SearchNode* node, int threadIdx) {
+  std::function<void(SearchNode*,int)> g = [&](SearchNode* node, int threadIdx) noexcept {
     (void)threadIdx;
     int64_t index = indexCounter.fetch_add(1,std::memory_order_relaxed);
     assert(index >= 0 && index < size);

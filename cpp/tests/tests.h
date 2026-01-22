@@ -4,6 +4,7 @@
 #include <sstream>
 
 #include "../core/global.h"
+#include "../core/logger.h"
 #include "../core/rand.h"
 #include "../core/test.h"
 #include "../game/board.h"
@@ -37,8 +38,11 @@ namespace Tests {
 
   //testnninputs.cpp
   void runNNInputsV3V4Tests();
+
+  //testsymmetries.cpp
   void runBasicSymmetryTests();
   void runBoardSymmetryTests();
+  void runSymmetryDifferenceTests();
 
   //testsearchnonn.cpp
   void runNNLessSearchTests();
@@ -76,9 +80,37 @@ namespace Tests {
 
   //testnnevalcanary.cpp
   void runCanaryTests(NNEvaluator* nnEval, int symmetry, bool print);
+  bool runBackendErrorTest(
+    NNEvaluator* nnEval,
+    NNEvaluator* nnEval32,
+    Logger& logger,
+    const std::string& boardSizeDataset,
+    int maxBatchSizeCap,
+    bool verbose,
+    bool quickTest,
+    double policyOptimismForTest,
+    double pdaForTest,
+    double nnPolicyTemperatureForTest,
+    bool& fp32BatchSuccessBuf,
+    //Values on disk to compare correctness. We consider the pure-cpu float32 Eigen implementation of the neural network
+    //to be the source of truth, since it is more likely to be stable and doesn't depend special hardware or drivers like
+    //GPUs or other accelerators.
+    //When running with Eigen backend, will overwrite this file with Eigen's results.
+    const std::string& referenceFileName
+  );
 
   //testconfig.cpp
+  void runInlineConfigTests();
   void runConfigTests(const std::vector<std::string>& args);
+  void runParseAllConfigsTest();
+  void runTaskParsingTests();
+
+  //testmisc.cpp
+  void runCollectFilesTests();
+  void runLoadModelTests();
+
+  //testbook.cpp
+  void runBookTests();
 }
 
 namespace TestCommon {
@@ -88,6 +120,12 @@ namespace TestCommon {
   constexpr int MAX_BENCHMARK_SGF_DATA_SIZE = 19;
   constexpr int DEFAULT_BENCHMARK_SGF_DATA_SIZE = std::min(Board::DEFAULT_LEN,MAX_BENCHMARK_SGF_DATA_SIZE);
   std::string getBenchmarkSGFData(int boardSize);
+
+  std::vector<std::string> getMultiGameSize9Data();
+  std::vector<std::string> getMultiGameSize13Data();
+  std::vector<std::string> getMultiGameSize19Data();
+  std::vector<std::string> getMultiGameSize10x14Data();
+  std::vector<std::string> getMultiGameRectangleData();
 
   void overrideForBackends(bool& inputsNHWC, bool& useNHWC);
 }

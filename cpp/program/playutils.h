@@ -25,7 +25,9 @@ namespace PlayUtils {
   ExtraBlackAndKomi chooseExtraBlackAndKomi(
     float base, float stdev, double allowIntegerProb,
     double handicapProb, int numExtraBlackFixed,
-    double bigStdevProb, float bigStdev, double sqrtBoardArea, Rand& rand
+    double bigStdevProb, float bigStdev,
+    double biggerStdevProb, float biggerStdev,
+    double sqrtBoardArea, Rand& rand
   );
   void setKomiWithoutNoise(const ExtraBlackAndKomi& extraBlackAndKomi, BoardHistory& hist); //Also ignores allowInteger
   void setKomiWithNoise(const ExtraBlackAndKomi& extraBlackAndKomi, BoardHistory& hist, Rand& rand);
@@ -60,10 +62,10 @@ namespace PlayUtils {
   void initializeGameUsingPolicy(
     Search* botB, Search* botW, Board& board, BoardHistory& hist, Player& pla,
     Rand& gameRand, bool doEndGameIfAllPassAlive,
-    double proportionOfBoardArea, double temperature
+    double proportionOfBoardArea, double policyInitGammaShape, double temperature
   );
 
-  float roundAndClipKomi(double unrounded, const Board& board, bool looseClipping);
+  float roundAndClipKomi(double unrounded, const Board& board);
 
   void adjustKomiToEven(
     Search* botB,
@@ -148,7 +150,7 @@ namespace PlayUtils {
   //Run benchmark on sgf positions. ALSO prints to stdout the ongoing result as it benchmarks.
   BenchmarkResults benchmarkSearchOnPositionsAndPrint(
     const SearchParams& params,
-    const CompactSgf* sgf,
+    const CompactSgf& sgf,
     int numPositionsToUse,
     NNEvaluator* nnEval,
     const BenchmarkResults* baseline,
@@ -156,7 +158,15 @@ namespace PlayUtils {
     bool printElo
   );
 
-  void printGenmoveLog(std::ostream& out, const AsyncBot* bot, const NNEvaluator* nnEval, Loc moveLoc, double timeTaken, Player perspective);
+  void printGenmoveLog(
+    std::ostream& out,
+    const Search* search,
+    const NNEvaluator* nnEval,
+    Loc moveLoc,
+    double timeTaken,
+    Player perspective,
+    bool logSearchInfoForChosenMove
+  );
 
   Rules genRandomRules(Rand& rand);
 
@@ -175,6 +185,10 @@ namespace PlayUtils {
     Loc moveLoc,
     Search* bot,
     int64_t numVisits
+  );
+
+  std::shared_ptr<NNOutput> getFullSymmetryNNOutput(
+    const Board& board, const BoardHistory& hist, Player pla, bool includeOwnerMap, const SGFMetadata* sgfMeta, NNEvaluator* nnEval
   );
 
 }

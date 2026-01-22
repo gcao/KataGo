@@ -18,7 +18,14 @@ namespace FileUtils {
   void open(std::ofstream& out, const std::string& filename, std::ios_base::openmode mode = std::ios_base::out);
 
   void loadFileIntoString(const std::string& filename, const std::string& expectedSha256, std::string& buf);
+  void loadFileIntoString(const std::string& filename, const std::string& expectedSha256, std::string& buf, std::string* actualSha256Buf);
   void uncompressAndLoadFileIntoString(const std::string& filename, const std::string& expectedSha256, std::string& buf);
+  void uncompressAndLoadFileIntoString(const std::string& filename, const std::string& expectedSha256, std::string& buf, std::string* actualSha256Buf);
+
+  bool isDirectory(const std::string& filename);
+  bool tryRemoveFile(const std::string& filename);
+
+  std::string weaklyCanonical(const std::string& path);
 
   bool tryRename(const std::string& src, const std::string& dst);
   void rename(const std::string& src, const std::string& dst);
@@ -33,6 +40,9 @@ namespace FileUtils {
   // The delimiter characters are NOT included.
   std::vector<std::string> readFileLines(const char* filename, char delimiter);
   std::vector<std::string> readFileLines(const std::string& filename, char delimiter);
+
+  // Return list of filenames of files in a directory
+  std::vector<std::string> listFiles(const std::string& dirname);
 
   // Recursively walk a directory and find all the files that match fileFilter.
   // fileFilter receives just the file name and not the full path, but collected contains the paths.

@@ -15,6 +15,7 @@
 #include "../game/rules.h"
 #include "../neuralnet/nneval.h"
 #include "../search/analysisdata.h"
+#include "../search/evalcache.h"
 #include "../search/mutexpool.h"
 #include "../search/reportedsearchvalues.h"
 #include "../search/searchparams.h"
@@ -22,6 +23,8 @@
 #include "../search/timecontrols.h"
 
 #include "../external/nlohmann_json/json.hpp"
+
+typedef int SearchNodeState; // See SearchNode::STATE_*
 
 struct SearchNode;
 struct SearchThread;
@@ -34,6 +37,8 @@ struct ReportedSearchValues;
 struct SearchChildPointer;
 struct SubtreeValueBiasTable;
 struct SearchNodeTable;
+struct SearchNodeChildrenReference;
+struct ConstSearchNodeChildrenReference;
 
 //Per-thread state
 struct SearchThread {
@@ -45,6 +50,10 @@ struct SearchThread {
   Hash128 graphHash;
   //The path we trace down the graph as we do a playout
   std::unordered_set<SearchNode*> graphPath;
+
+  //Tracks whether this thread did something that "should" be counted as a playout
+  //for the purpose of playout limits
+  bool shouldCountPlayout;
 
   Rand rand;
 
@@ -84,6 +93,7 @@ struct Search {
   //of depth that it should be banned.
   std::vector<int> avoidMoveUntilByLocBlack;
   std::vector<int> avoidMoveUntilByLocWhite;
+  bool avoidMoveUntilRescaleRoot; // When avoiding moves at the root, rescale the root policy to sum to 1.
 
   //If rootSymmetryPruning==true and the board is symmetric, mask all the equivalent copies of each move except one.
   bool rootSymDupLoc[Board::MAX_ARR_SIZE];
@@ -128,6 +138,8 @@ struct Search {
   PatternBonusTable* patternBonusTable;
   std::unique_ptr<PatternBonusTable> externalPatternBonusTable;
 
+  std::shared_ptr<EvalCacheTable> evalCache;
+
   Rand nonSearchRand; //only for use not in search, since rand isn't threadsafe
 
   //================================================================================================================
@@ -136,6 +148,7 @@ struct Search {
 
   Logger* logger;
   NNEvaluator* nnEvaluator;
+  NNEvaluator* humanEvaluator;
   int nnXLen;
   int nnYLen;
   int policySize;
@@ -168,7 +181,19 @@ struct Search {
 
   //Note - randSeed controls a few things in the search, but a lot of the randomness actually comes from
   //random symmetries of the neural net evaluations, see nneval.h
-  Search(SearchParams params, NNEvaluator* nnEval, Logger* logger, const std::string& randSeed);
+  Search(
+    SearchParams params,
+    NNEvaluator* nnEval,
+    Logger* logger,
+    const std::string& randSeed
+  );
+  Search(
+    SearchParams params,
+    NNEvaluator* nnEval,
+    NNEvaluator* humanEval,
+    Logger* logger,
+    const std::string& randSeed
+  );
   ~Search();
 
   Search(const Search&) = delete;
@@ -200,12 +225,14 @@ struct Search {
   void setKomiIfNew(float newKomi); //Does not clear history, does clear search unless komi is equal.
   void setRootHintLoc(Loc hintLoc);
   void setAvoidMoveUntilByLoc(const std::vector<int>& bVec, const std::vector<int>& wVec);
+  void setAvoidMoveUntilRescaleRoot(bool b);
   void setAlwaysIncludeOwnerMap(bool b);
   void setRootSymmetryPruningOnly(const std::vector<int>& rootPruneOnlySymmetries);
   void setParams(SearchParams params);
   void setParamsNoClearing(SearchParams params); //Does not clear search
   void setExternalPatternBonusTable(std::unique_ptr<PatternBonusTable>&& table);
   void setCopyOfExternalPatternBonusTable(const std::unique_ptr<PatternBonusTable>& table);
+  void setExternalEvalCache(std::shared_ptr<EvalCacheTable> cache);
   void setNNEval(NNEvaluator* nnEval);
 
   //If the number of threads is reduced, this can free up some excess threads in the thread pool.
@@ -229,20 +256,23 @@ struct Search {
   //Run an entire search from start to finish
   Loc runWholeSearchAndGetMove(Player movePla);
   void runWholeSearch(Player movePla);
-  void runWholeSearch(std::atomic<bool>& shouldStopNow);
+  void runWholeSearch(Player movePla, std::function<bool()>* shouldStopEarly);
 
   //Pondering indicates that we are searching "for" the last player that we did a non-ponder search for, and should use ponder search limits.
   Loc runWholeSearchAndGetMove(Player movePla, bool pondering);
   void runWholeSearch(Player movePla, bool pondering);
-  void runWholeSearch(std::atomic<bool>& shouldStopNow, bool pondering);
+  void runWholeSearch(Player movePla, bool pondering, std::function<bool()>* shouldStopEarly);
 
   void runWholeSearch(
-    std::atomic<bool>& shouldStopNow,
     std::function<void()>* searchBegun, //If not null, will be called once search has begun and tree inspection is safe
+    std::function<bool()>* shouldStopEarly, //If not null and returns true, search will stop soon after
     bool pondering,
     const TimeControls& tc,
     double searchFactor
   );
+
+  //Without performing a whole search, recompute the root nn output for any root-level parameters.
+  void maybeRecomputeRootNNOutput();
 
   //Expert manual playout-by-playout interface
   void beginSearch(bool pondering);
@@ -369,7 +399,7 @@ struct Search {
   ) const;
 
 
-  std::pair<double,double> getAverageShorttermWLAndScoreError(const SearchNode* node = NULL) const;
+  std::pair<double,double> getShallowAverageShorttermWLAndScoreError(const SearchNode* node = NULL) const;
   bool getSharpScore(const SearchNode* node, double& ret) const;
 
   //Fill json with analysis engine format information about search results
@@ -377,6 +407,7 @@ struct Search {
     const Player perspective,
     int analysisPVLen, bool preventEncore, bool includePolicy,
     bool includeOwnership, bool includeOwnershipStdev, bool includeMovesOwnership, bool includeMovesOwnershipStdev, bool includePVVisits,
+    bool includeNoResultValue,
     nlohmann::json& ret
   ) const;
 
@@ -395,7 +426,9 @@ private:
   // searchhelpers.cpp
   //----------------------------------------------------------------------------------------
 public:
-  static uint32_t chooseIndexWithTemperature(Rand& rand, const double* relativeProbs, int numRelativeProbs, double temperature);
+  static uint32_t chooseIndexWithTemperature(
+    Rand& rand, const double* relativeProbs, int numRelativeProbs, double temperature, double onlyBelowProb, double* processedRelProbsBuf
+  );
   static void computeDirichletAlphaDistribution(int policySize, const float* policyProbs, double* alphaDistr);
   static void addDirichletNoise(const SearchParams& searchParams, Rand& rand, int policySize, float* policyProbs);
 private:
@@ -424,10 +457,8 @@ private:
   double interpolateEarly(double halflife, double earlyValue, double value) const;
 
   // LCB helpers
-  static constexpr int64_t MIN_VISITS_FOR_LCB = 3;
-  void maybeRecomputeNormToTApproxTable();
-  double getNormToTApproxForLCB(int64_t numVisits) const;
   void getSelfUtilityLCBAndRadius(const SearchNode& parent, const SearchNode* child, int64_t edgeVisits, Loc moveLoc, double& lcbBuf, double& radiusBuf) const;
+  void getSelfUtilityLCBAndRadiusZeroVisits(double& lcbBuf, double& radiusBuf) const;
 
   //----------------------------------------------------------------------------------------
   // Mirror handling logic
@@ -462,7 +493,7 @@ private:
   int numAdditionalThreadsToUseForTasks() const;
   void spawnThreadsIfNeeded();
   void killThreads();
-  void performTaskWithThreads(std::function<void(int)>* task);
+  void performTaskWithThreads(std::function<void(int)>* task, int capThreads);
 
   void applyRecursivelyPostOrderMulithreaded(const std::vector<SearchNode*>& nodes, std::function<void(SearchNode*,int)>* f);
   void applyRecursivelyPostOrderMulithreadedHelper(
@@ -496,40 +527,64 @@ private:
     SearchThread& thread, SearchNode& node,
     bool isRoot, bool skipCache, bool isReInit
   );
-  void maybeRecomputeExistingNNOutput(
+  // Returns true if any recomputation happened
+  bool maybeRecomputeExistingNNOutput(
     SearchThread& thread, SearchNode& node, bool isRoot
   );
+
+  bool needsHumanOutputAtRoot() const;
+  bool needsHumanOutputInTree() const;
 
   //----------------------------------------------------------------------------------------
   // Move selection during search
   // searchexplorehelpers.cpp
   //----------------------------------------------------------------------------------------
+  double getExploreScaling(
+    double totalChildWeight, double parentUtilityStdevFactor
+  ) const;
+  double getExploreScalingHuman(
+    double totalChildWeight
+  ) const;
   double getExploreSelectionValue(
-    double nnPolicyProb, double totalChildWeight, double childWeight,
-    double childUtility, double parentUtilityStdevFactor, Player pla
+    double exploreScaling,
+    double nnPolicyProb,
+    double childWeight,
+    double childUtility,
+    Player pla
   ) const;
   double getExploreSelectionValueInverse(
-    double exploreSelectionValue, double nnPolicyProb, double totalChildWeight,
-    double childUtility, double parentUtilityStdevFactor, Player pla
+    double exploreScaling,
+    double exploreSelectionValue,
+    double nnPolicyProb,
+    double childUtility,
+    Player pla
   ) const;
   double getExploreSelectionValueOfChild(
     const SearchNode& parent, const float* parentPolicyProbs, const SearchNode* child,
     Loc moveLoc,
+    double exploreScaling,
     double totalChildWeight, int64_t childEdgeVisits, double fpuValue,
-    double parentUtility, double parentWeightPerVisit, double parentUtilityStdevFactor,
-    bool isDuringSearch, bool antiMirror, double maxChildWeight, SearchThread* thread
+    double parentUtility, double parentWeightPerVisit,
+    bool isDuringSearch, bool antiMirror, double maxChildWeight,
+    bool countEdgeVisit,
+    SearchThread* thread
   ) const;
   double getNewExploreSelectionValue(
-    const SearchNode& parent, float nnPolicyProb,
-    double totalChildWeight, double fpuValue,
-    double parentWeightPerVisit, double parentUtilityStdevFactor,
-    double maxChildWeight, SearchThread* thread
+    const SearchNode& parent,
+    double exploreScaling,
+    float nnPolicyProb,
+    double fpuValue,
+    double parentWeightPerVisit,
+    double maxChildWeight,
+    bool countEdgeVisit,
+    SearchThread* thread
   ) const;
   double getReducedPlaySelectionWeight(
     const SearchNode& parent, const float* parentPolicyProbs, const SearchNode* child,
     Loc moveLoc,
-    double totalChildWeight, int64_t childEdgeVisits,
-    double parentUtilityStdevFactor, double bestChildExploreSelectionValue
+    double exploreScaling,
+    int64_t childEdgeVisits,
+    double bestChildExploreSelectionValue
   ) const;
 
   double getFpuValueForChildrenAssumeVisited(
@@ -538,9 +593,8 @@ private:
   ) const;
 
   void selectBestChildToDescend(
-    SearchThread& thread, const SearchNode& node, int nodeState,
-    int& numChildrenFound, int& bestChildIdx, Loc& bestChildMoveLoc,
-    bool posesWithChildBuf[NNPos::MAX_NN_POLICY_SIZE],
+    SearchThread& thread, const SearchNode& node, SearchNodeState nodeState,
+    int& numChildrenFound, int& bestChildIdx, Loc& bestChildMoveLoc, bool& countEdgeVisit,
     bool isRoot
   ) const;
 
@@ -566,6 +620,17 @@ private:
 
   void updateStatsAfterPlayout(SearchNode& node, SearchThread& thread, bool isRoot);
   void recomputeNodeStats(SearchNode& node, SearchThread& thread, int32_t numVisitsToAdd, bool isRoot);
+
+  void adjustEvalsFromCacheHelper(
+    const std::shared_ptr<EvalCacheEntry>& evalCacheEntry,
+    int64_t thisNodeVisits,
+    double& winLossValueAvg,
+    double& noResultValueAvg,
+    double& scoreMeanAvg,
+    double& scoreMeanSqAvg,
+    double& leadAvg,
+    double* utilityAvg
+  );
 
   void downweightBadChildrenAndNormalizeWeight(
     int numChildren,
@@ -596,14 +661,20 @@ private:
   //----------------------------------------------------------------------------------------
   void computeRootValues(); // Helper for begin search
   void recursivelyRecomputeStats(SearchNode& node); // Helper for search initialization
+  void recursivelyRecordEvalCache(SearchNode& n);
 
   bool playoutDescend(
     SearchThread& thread, SearchNode& node,
-    bool posesWithChildBuf[NNPos::MAX_NN_POLICY_SIZE],
     bool isRoot
   );
 
-  bool maybeCatchUpEdgeVisits(SearchThread& thread, SearchNode& node, SearchNode* child, const int& nodeState, const int bestChildIdx);
+  bool maybeCatchUpEdgeVisits(
+    SearchThread& thread,
+    SearchNode& node,
+    SearchNode* child,
+    const SearchNodeState& nodeState,
+    const int bestChildIdx
+  );
 
   //----------------------------------------------------------------------------------------
   // Private helpers for search results and analysis and top level move selection
@@ -629,13 +700,23 @@ private:
     std::string& prefix, int64_t origVisits, int depth, const AnalysisData& data, Player perspective
   ) const;
 
-  double getSharpScoreHelper(
+  bool getSharpScoreHelper(
     const SearchNode* node,
     std::unordered_set<const SearchNode*>& graphPath,
-    double policyProbsBuf[NNPos::MAX_NN_POLICY_SIZE]
+    double policyProbsBuf[NNPos::MAX_NN_POLICY_SIZE],
+    double minProp,
+    double desiredProp,
+    double& ret
   ) const;
-
-  std::pair<double,double> getAverageShorttermWLAndScoreErrorHelper(const SearchNode* node) const;
+  void getShallowAverageShorttermWLAndScoreErrorHelper(
+    const SearchNode* node,
+    std::unordered_set<const SearchNode*>& graphPath,
+    double policyProbsBuf[NNPos::MAX_NN_POLICY_SIZE],
+    double minProp,
+    double desiredProp,
+    double& wlError,
+    double& scoreError
+  ) const;
 
   template<typename Func>
   bool traverseTreeForOwnership(
@@ -652,13 +733,14 @@ private:
     double pruneProp,
     double desiredProp,
     double thisNodeWeight,
-    const SearchChildPointer* children,
+    ConstSearchNodeChildrenReference children,
     double* childWeightBuf,
     int childrenCapacity,
     std::unordered_set<const SearchNode*>& graphPath,
     Func& averaging
   ) const;
 
+  void debugPrintChildrenSummary(std::ostream& out, const SearchNode& node, NNOutput* nnOutput);
 
 };
 

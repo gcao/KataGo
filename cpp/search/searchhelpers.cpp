@@ -1,6 +1,7 @@
 #include "../search/search.h"
 
 #include "../core/fancymath.h"
+#include "../core/test.h"
 #include "../search/searchnode.h"
 #include "../search/patternbonustable.h"
 
@@ -8,41 +9,68 @@
 #include "../core/using.h"
 //------------------------
 
-uint32_t Search::chooseIndexWithTemperature(Rand& rand, const double* relativeProbs, int numRelativeProbs, double temperature) {
-  assert(numRelativeProbs > 0);
-  assert(numRelativeProbs <= Board::MAX_ARR_SIZE); //We're just doing this on the stack
+uint32_t Search::chooseIndexWithTemperature(
+  Rand& rand,
+  const double* relativeProbs,
+  int numRelativeProbs,
+  double temperature,
+  double onlyBelowProb,
+  double* processedRelProbsBuf
+) {
+  testAssert(numRelativeProbs > 0);
+  testAssert(numRelativeProbs <= Board::MAX_ARR_SIZE); //We're just doing this on the stack
   double processedRelProbs[Board::MAX_ARR_SIZE];
+  if(processedRelProbsBuf == NULL)
+    processedRelProbsBuf = &processedRelProbs[0];
 
-  double maxValue = 0.0;
+  double maxRelProb = 0.0;
+  double sumRelProb = 0.0;
   for(int i = 0; i<numRelativeProbs; i++) {
-    if(relativeProbs[i] > maxValue)
-      maxValue = relativeProbs[i];
+    sumRelProb += std::max(0.0, relativeProbs[i]);
+    if(relativeProbs[i] > maxRelProb)
+      maxRelProb = relativeProbs[i];
   }
-  assert(maxValue > 0.0);
+  testAssert(maxRelProb > 0.0);
+  testAssert(sumRelProb > 0.0);
 
   //Temperature so close to 0 that we just calculate the max directly
-  if(temperature <= 1.0e-4) {
+  if(temperature <= 1.0e-4 && onlyBelowProb >= 1.0) {
     double bestProb = relativeProbs[0];
     int bestIdx = 0;
+    processedRelProbsBuf[0] = 0;
     for(int i = 1; i<numRelativeProbs; i++) {
+      processedRelProbsBuf[i] = 0;
       if(relativeProbs[i] > bestProb) {
         bestProb = relativeProbs[i];
         bestIdx = i;
       }
     }
+    processedRelProbsBuf[bestIdx] = 1.0;
     return bestIdx;
   }
   //Actual temperature
   else {
-    double logMaxValue = log(maxValue);
+    double logMaxRelProb = log(maxRelProb);
+    double logSumRelProb = log(sumRelProb);
+    double logOnlyBelowProb = log(std::max(1e-50,onlyBelowProb));
     double sum = 0.0;
     for(int i = 0; i<numRelativeProbs; i++) {
-      //Numerically stable way to raise to power and normalize
-      processedRelProbs[i] = relativeProbs[i] <= 0.0 ? 0.0 : exp((log(relativeProbs[i]) - logMaxValue) / temperature);
-      sum += processedRelProbs[i];
+      if(relativeProbs[i] <= 0.0)
+        processedRelProbsBuf[i] = 0.0;
+      else {
+        double logRelProb = log(relativeProbs[i]) - logMaxRelProb;
+        double logRelProbThreshold = std::min(0.0, logOnlyBelowProb + logSumRelProb - logMaxRelProb);
+        double newLogRelProb;
+        if(logRelProb > logRelProbThreshold)
+          newLogRelProb = logRelProb;
+        else
+          newLogRelProb = (logRelProb - logRelProbThreshold) / temperature + logRelProbThreshold;
+        processedRelProbsBuf[i] = exp(newLogRelProb);
+      }
+      sum += processedRelProbsBuf[i];
     }
-    assert(sum > 0.0);
-    uint32_t idxChosen = rand.nextUInt(processedRelProbs,numRelativeProbs);
+    testAssert(sum > 0.0);
+    uint32_t idxChosen = rand.nextUInt(processedRelProbsBuf,numRelativeProbs);
     return idxChosen;
   }
 }
@@ -124,7 +152,12 @@ void Search::addDirichletNoise(const SearchParams& searchParams, Rand& rand, int
 std::shared_ptr<NNOutput>* Search::maybeAddPolicyNoiseAndTemp(SearchThread& thread, bool isRoot, NNOutput* oldNNOutput) const {
   if(!isRoot)
     return NULL;
-  if(!searchParams.rootNoiseEnabled && searchParams.rootPolicyTemperature == 1.0 && searchParams.rootPolicyTemperatureEarly == 1.0 && rootHintLoc == Board::NULL_LOC)
+  if(!searchParams.rootNoiseEnabled &&
+     searchParams.rootPolicyTemperature == 1.0 &&
+     searchParams.rootPolicyTemperatureEarly == 1.0 &&
+     rootHintLoc == Board::NULL_LOC &&
+     !avoidMoveUntilRescaleRoot
+  )
     return NULL;
   if(oldNNOutput == NULL)
     return NULL;
@@ -176,6 +209,29 @@ std::shared_ptr<NNOutput>* Search::maybeAddPolicyNoiseAndTemp(SearchThread& thre
     addDirichletNoise(searchParams, thread.rand, policySize, noisedPolicyProbs);
   }
 
+  if(avoidMoveUntilRescaleRoot) {
+    const std::vector<int>& avoidMoveUntilByLoc = rootPla == P_BLACK ? avoidMoveUntilByLocBlack : avoidMoveUntilByLocWhite;
+    if(avoidMoveUntilByLoc.size() > 0) {
+      assert(avoidMoveUntilByLoc.size() >= Board::MAX_ARR_SIZE);
+      double policySum = 0.0;
+      for(Loc loc = 0; loc<Board::MAX_ARR_SIZE; loc++) {
+        if((rootBoard.isOnBoard(loc) || loc == Board::PASS_LOC) && avoidMoveUntilByLoc[loc] <= 0) {
+          int pos = getPos(loc);
+          if(noisedPolicyProbs[pos] > 0) {
+            policySum += noisedPolicyProbs[pos];
+          }
+        }
+      }
+      if(policySum > 0.0) {
+        for(int i = 0; i<policySize; i++) {
+          if(noisedPolicyProbs[i] > 0) {
+            noisedPolicyProbs[i] = (float)(noisedPolicyProbs[i] / policySum);
+          }
+        }
+      }
+    }
+  }
+
   //Move a small amount of policy to the hint move, around the same level that noising it would achieve
   if(rootHintLoc != Board::NULL_LOC) {
     const float propToMove = 0.02f;
@@ -216,8 +272,9 @@ double Search::getScoreUtility(double scoreMeanAvg, double scoreMeanSqAvg) const
   double scoreMean = scoreMeanAvg;
   double scoreMeanSq = scoreMeanSqAvg;
   double scoreStdev = ScoreValue::getScoreStdev(scoreMean, scoreMeanSq);
-  double staticScoreValue = ScoreValue::expectedWhiteScoreValue(scoreMean,scoreStdev,0.0,2.0,rootBoard);
-  double dynamicScoreValue = ScoreValue::expectedWhiteScoreValue(scoreMean,scoreStdev,recentScoreCenter,searchParams.dynamicScoreCenterScale,rootBoard);
+  double sqrtBoardArea = rootBoard.sqrtBoardArea();
+  double staticScoreValue = ScoreValue::expectedWhiteScoreValue(scoreMean,scoreStdev,0.0,2.0, sqrtBoardArea);
+  double dynamicScoreValue = ScoreValue::expectedWhiteScoreValue(scoreMean,scoreStdev,recentScoreCenter,searchParams.dynamicScoreCenterScale, sqrtBoardArea);
   return staticScoreValue * searchParams.staticScoreUtilityFactor + dynamicScoreValue * searchParams.dynamicScoreUtilityFactor;
 }
 
@@ -225,19 +282,21 @@ double Search::getScoreUtilityDiff(double scoreMeanAvg, double scoreMeanSqAvg, d
   double scoreMean = scoreMeanAvg;
   double scoreMeanSq = scoreMeanSqAvg;
   double scoreStdev = ScoreValue::getScoreStdev(scoreMean, scoreMeanSq);
+  double sqrtBoardArea = rootBoard.sqrtBoardArea();
   double staticScoreValueDiff =
-    ScoreValue::expectedWhiteScoreValue(scoreMean + delta,scoreStdev,0.0,2.0,rootBoard)
-    -ScoreValue::expectedWhiteScoreValue(scoreMean,scoreStdev,0.0,2.0,rootBoard);
+    ScoreValue::expectedWhiteScoreValue(scoreMean + delta,scoreStdev,0.0,2.0, sqrtBoardArea)
+    -ScoreValue::expectedWhiteScoreValue(scoreMean,scoreStdev,0.0,2.0, sqrtBoardArea);
   double dynamicScoreValueDiff =
-    ScoreValue::expectedWhiteScoreValue(scoreMean + delta,scoreStdev,recentScoreCenter,searchParams.dynamicScoreCenterScale,rootBoard)
-    -ScoreValue::expectedWhiteScoreValue(scoreMean,scoreStdev,recentScoreCenter,searchParams.dynamicScoreCenterScale,rootBoard);
+    ScoreValue::expectedWhiteScoreValue(scoreMean + delta,scoreStdev,recentScoreCenter,searchParams.dynamicScoreCenterScale, sqrtBoardArea)
+    -ScoreValue::expectedWhiteScoreValue(scoreMean,scoreStdev,recentScoreCenter,searchParams.dynamicScoreCenterScale, sqrtBoardArea);
   return staticScoreValueDiff * searchParams.staticScoreUtilityFactor + dynamicScoreValueDiff * searchParams.dynamicScoreUtilityFactor;
 }
 
 //Ignores scoreMeanSq's effect on the utility, since that's complicated
 double Search::getApproxScoreUtilityDerivative(double scoreMean) const {
-  double staticScoreValueDerivative = ScoreValue::whiteDScoreValueDScoreSmoothNoDrawAdjust(scoreMean,0.0,2.0,rootBoard);
-  double dynamicScoreValueDerivative = ScoreValue::whiteDScoreValueDScoreSmoothNoDrawAdjust(scoreMean,recentScoreCenter,searchParams.dynamicScoreCenterScale,rootBoard);
+  double sqrtBoardArea = rootBoard.sqrtBoardArea();
+  double staticScoreValueDerivative = ScoreValue::whiteDScoreValueDScoreSmoothNoDrawAdjust(scoreMean,0.0,2.0, sqrtBoardArea);
+  double dynamicScoreValueDerivative = ScoreValue::whiteDScoreValueDScoreSmoothNoDrawAdjust(scoreMean,recentScoreCenter,searchParams.dynamicScoreCenterScale, sqrtBoardArea);
   return staticScoreValueDerivative * searchParams.staticScoreUtilityFactor + dynamicScoreValueDerivative * searchParams.dynamicScoreUtilityFactor;
 }
 
@@ -311,15 +370,17 @@ double Search::getEndingWhiteScoreBonus(const SearchNode& parent, Loc moveLoc) c
   if(isAreaIsh) {
     //Areaish scoring - in an effort to keep the game short and slightly discourage pointless territory filling at the end
     //discourage any move that, except in case of ko, is either:
-    // * On a spot that the opponent almost surely owns
+    // * On a spot that the opponent almost surely owns, unless it captures stones.
     // * On a spot that the player almost surely owns and it is not adjacent to opponent stones and is not a connection of non-pass-alive groups.
     //These conditions should still make it so that "cleanup" and dame-filling moves are not discouraged.
     // * When playing button go, very slightly discourage passing - so that if there are an even number of dame, filling a dame is still favored over passing.
     if(moveLoc != Board::PASS_LOC && rootBoard.ko_loc == Board::NULL_LOC) {
       int pos = NNPos::locToPos(moveLoc,rootBoard.x_size,nnXLen,nnYLen);
       double plaOwnership = rootPla == P_WHITE ? whiteOwnerMap[pos] : -whiteOwnerMap[pos];
-      if(plaOwnership <= -extreme)
-        extraRootPoints -= searchParams.rootEndingBonusPoints * ((-extreme - plaOwnership) / tail);
+      if(plaOwnership <= -extreme) {
+        if(!rootBoard.wouldBeCapture(moveLoc,rootPla))
+          extraRootPoints -= searchParams.rootEndingBonusPoints * ((-extreme - plaOwnership) / tail);
+      }
       else if(plaOwnership >= extreme) {
         if(!rootBoard.isAdjacentToPla(moveLoc,getOpp(rootPla)) &&
            !rootBoard.isNonPassAliveSelfConnection(moveLoc,rootPla,rootSafeArea)) {
@@ -382,16 +443,17 @@ bool Search::shouldSuppressPass(const SearchNode* n) const {
   const SearchNode* passNode = NULL;
   int64_t passEdgeVisits = 0;
 
-  int childrenCapacity;
-  const SearchChildPointer* children = node.getChildren(childrenCapacity);
+  ConstSearchNodeChildrenReference children = node.getChildren();
+  int childrenCapacity = children.getCapacity();
   for(int i = 0; i<childrenCapacity; i++) {
-    const SearchNode* child = children[i].getIfAllocated();
+    const SearchChildPointer& childPointer = children[i];
+    const SearchNode* child = childPointer.getIfAllocated();
     if(child == NULL)
       break;
-    Loc moveLoc = children[i].getMoveLocRelaxed();
+    Loc moveLoc = childPointer.getMoveLocRelaxed();
     if(moveLoc == Board::PASS_LOC) {
       passNode = child;
-      passEdgeVisits = children[i].getEdgeVisits();
+      passEdgeVisits = childPointer.getEdgeVisits();
       break;
     }
   }
@@ -422,10 +484,11 @@ bool Search::shouldSuppressPass(const SearchNode* n) const {
   //Suppress pass if we find a move that is not a spot that the opponent almost certainly owns
   //or that is adjacent to a pla owned spot, and is not greatly worse than pass.
   for(int i = 0; i<childrenCapacity; i++) {
-    const SearchNode* child = children[i].getIfAllocated();
+    const SearchChildPointer& childPointer = children[i];
+    const SearchNode* child = childPointer.getIfAllocated();
     if(child == NULL)
       break;
-    Loc moveLoc = children[i].getMoveLocRelaxed();
+    Loc moveLoc = childPointer.getMoveLocRelaxed();
     if(moveLoc == Board::PASS_LOC)
       continue;
     int pos = NNPos::locToPos(moveLoc,rootBoard.x_size,nnXLen,nnYLen);
@@ -434,17 +497,19 @@ bool Search::shouldSuppressPass(const SearchNode* n) const {
     bool adjToPlaOwned = false;
     for(int j = 0; j<4; j++) {
       Loc adj = moveLoc + rootBoard.adj_offsets[j];
-      int adjPos = NNPos::locToPos(adj,rootBoard.x_size,nnXLen,nnYLen);
-      double adjPlaOwnership = rootPla == P_WHITE ? whiteOwnerMap[adjPos] : -whiteOwnerMap[adjPos];
-      if(adjPlaOwnership > extreme) {
-        adjToPlaOwned = true;
-        break;
+      if(rootBoard.isOnBoard(adj)) {
+        int adjPos = NNPos::locToPos(adj,rootBoard.x_size,nnXLen,nnYLen);
+        double adjPlaOwnership = rootPla == P_WHITE ? whiteOwnerMap[adjPos] : -whiteOwnerMap[adjPos];
+        if(adjPlaOwnership > extreme) {
+          adjToPlaOwned = true;
+          break;
+        }
       }
     }
     if(oppOwned && !adjToPlaOwned)
       continue;
 
-    int64_t edgeVisits = children[i].getEdgeVisits();
+    int64_t edgeVisits = childPointer.getEdgeVisits();
 
     double scoreMeanAvg = child->stats.scoreMeanAvg.load(std::memory_order_acquire);
     double leadAvg = child->stats.leadAvg.load(std::memory_order_acquire);
@@ -474,28 +539,17 @@ bool Search::shouldSuppressPass(const SearchNode* n) const {
 }
 
 double Search::interpolateEarly(double halflife, double earlyValue, double value) const {
-  double rawHalflives = (rootHistory.initialTurnNumber + rootHistory.moveHistory.size()) / halflife;
+  double rawHalflives = (double)rootHistory.getCurrentTurnNumber() / halflife;
   double halflives = rawHalflives * 19.0 / sqrt(rootBoard.x_size*rootBoard.y_size);
   return value + (earlyValue - value) * pow(0.5, halflives);
 }
 
-
-void Search::maybeRecomputeNormToTApproxTable() {
-  if(normToTApproxZ <= 0.0 || normToTApproxZ != searchParams.lcbStdevs || normToTApproxTable.size() <= 0) {
-    normToTApproxZ = searchParams.lcbStdevs;
-    normToTApproxTable.clear();
-    for(int i = 0; i < 512; i++)
-      normToTApproxTable.push_back(FancyMath::normToTApprox(normToTApproxZ,(double)(i+MIN_VISITS_FOR_LCB)));
-  }
-}
-
-double Search::getNormToTApproxForLCB(int64_t numVisits) const {
-  assert(numVisits >= MIN_VISITS_FOR_LCB);
-  uint64_t idx = (uint64_t)(numVisits - MIN_VISITS_FOR_LCB);
-  assert(normToTApproxTable.size() > 0);
-  if(idx >= normToTApproxTable.size())
-    idx = normToTApproxTable.size()-1;
-  return normToTApproxTable[idx];
+void Search::getSelfUtilityLCBAndRadiusZeroVisits(double& lcbBuf, double& radiusBuf) const {
+  // Max radius of the entire utility range
+  double utilityRangeRadius = searchParams.winLossUtilityFactor + searchParams.staticScoreUtilityFactor + searchParams.dynamicScoreUtilityFactor;
+  radiusBuf = 2.0 * utilityRangeRadius * searchParams.lcbStdevs;
+  lcbBuf = -radiusBuf;
+  return;
 }
 
 void Search::getSelfUtilityLCBAndRadius(const SearchNode& parent, const SearchNode* child, int64_t edgeVisits, Loc moveLoc, double& lcbBuf, double& radiusBuf) const {
@@ -507,25 +561,37 @@ void Search::getSelfUtilityLCBAndRadius(const SearchNode& parent, const SearchNo
   double weightSum = child->stats.getChildWeight(edgeVisits,childVisits);
   double weightSqSum = child->stats.getChildWeightSq(edgeVisits,childVisits);
 
-  radiusBuf = 2.0 * (searchParams.winLossUtilityFactor + searchParams.staticScoreUtilityFactor + searchParams.dynamicScoreUtilityFactor);
+  // Max radius of the entire utility range
+  double utilityRangeRadius = searchParams.winLossUtilityFactor + searchParams.staticScoreUtilityFactor + searchParams.dynamicScoreUtilityFactor;
+  radiusBuf = 2.0 * utilityRangeRadius * searchParams.lcbStdevs;
   lcbBuf = -radiusBuf;
   if(childVisits <= 0 || weightSum <= 0.0 || weightSqSum <= 0.0)
     return;
 
+  // Effective sample size for weighted data
   double ess = weightSum * weightSum / weightSqSum;
-  int64_t essInt = (int64_t)round(ess);
-  if(essInt < MIN_VISITS_FOR_LCB)
-    return;
 
-  double utilityNoBonus = utilityAvg;
+  // To behave well at low playouts, we'd like a variance approximation that makes sense even with very small sample sizes.
+  // We'd like to avoid using a T distribution approximation because we actually know a bound on the scale of the utilities
+  // involved, namely utilityRangeRadius. So instead add a prior with a small weight that the variance is the largest it can be.
+  // This should give a relatively smooth scaling that works for small discrete samples but diminishes for larger playouts.
+  double priorWeight = weightSum / (ess * ess * ess);
+  utilitySqAvg = std::max(utilitySqAvg, utilityAvg * utilityAvg + 1e-8);
+  utilitySqAvg = (utilitySqAvg * weightSum + (utilitySqAvg + utilityRangeRadius * utilityRangeRadius) * priorWeight) / (weightSum + priorWeight);
+  weightSum += priorWeight;
+  weightSqSum += priorWeight*priorWeight;
+
+  // Recompute effective sample size now that we have the prior
+  ess = weightSum * weightSum / weightSqSum;
+
   double endingScoreBonus = getEndingWhiteScoreBonus(parent,moveLoc);
   double utilityDiff = getScoreUtilityDiff(scoreMeanAvg, scoreMeanSqAvg, endingScoreBonus);
-  double utilityWithBonus = utilityNoBonus + utilityDiff;
+  double utilityWithBonus = utilityAvg + utilityDiff;
   double selfUtility = parent.nextPla == P_WHITE ? utilityWithBonus : -utilityWithBonus;
 
-  double utilityVariance = std::max(1e-8, utilitySqAvg - utilityNoBonus * utilityNoBonus);
+  double utilityVariance = utilitySqAvg - utilityAvg * utilityAvg;
   double estimateStdev = sqrt(utilityVariance / ess);
-  double radius = estimateStdev * getNormToTApproxForLCB(essInt);
+  double radius = estimateStdev * searchParams.lcbStdevs;
 
   lcbBuf = selfUtility - radius;
   radiusBuf = radius;

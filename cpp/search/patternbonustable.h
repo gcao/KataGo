@@ -36,9 +36,20 @@ struct PatternBonusTable {
     const std::vector<std::string>& sgfsDirsOrFiles,
     double penalty,
     double decayOlderFilesLambda,
-    int minTurnNumber,
+    int64_t minTurnNumber,
     size_t maxFiles,
     const std::vector<std::string>& allowedPlayerNames,
+    Logger& logger,
+    const std::string& logSource
+  );
+
+  void avoidRepeatedPosMovesAndDeleteExcessFiles(
+    const std::vector<std::string>& posesDirsToLoadAndPrune,
+    double penalty,
+    double decayOlderPosesLambda,
+    int64_t minTurnNumber,
+    int64_t maxTurnNumber,
+    size_t maxPoses,
     Logger& logger,
     const std::string& logSource
   );
